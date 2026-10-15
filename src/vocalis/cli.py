@@ -27,6 +27,7 @@ from vocalis.config import VocalisConfig, default_config_path, load_config
 from vocalis.daemon import DaemonAlreadyRunningError, VocalisDaemon
 from vocalis.engines.parakeet import ParakeetSTT
 from vocalis.features.dictation import DictationFeature
+from vocalis.hardware import log_hardware_summary
 from vocalis.hotkeys.numlock import NumlockListener, list_numlock_capable_devices
 from vocalis.logging_setup import configure_logging
 from vocalis.model_manager import ModelManager
@@ -766,6 +767,7 @@ def main() -> None:
     settings = LiveSettings(config, default_config_path())
     output_chooser = OutputDeviceChooser(preference=settings.audio_output_device)
     threading.Thread(target=_warm_up_pace_changer, daemon=True).start()
+    threading.Thread(target=log_hardware_summary, daemon=True).start()
     codes = resolve_shortcuts(config)
     app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))
     app.setQuitOnLastWindowClosed(False)

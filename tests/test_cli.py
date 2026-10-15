@@ -56,6 +56,12 @@ def _no_real_audio_device_listing() -> Iterator[None]:
         yield
 
 
+@pytest.fixture(autouse=True)
+def _no_real_hardware_probe() -> Iterator[None]:
+    with patch("vocalis.cli.log_hardware_summary"):
+        yield
+
+
 def test_build_dictation_wires_engine_factory_to_configured_model_dir() -> None:
     config = VocalisConfig()
     manager = ModelManager()
