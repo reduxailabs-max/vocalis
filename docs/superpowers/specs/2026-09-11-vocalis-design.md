@@ -1387,7 +1387,13 @@ thread cap; model unload calls `gc.collect()` in addition to the existing
 
 ### Out of scope (and why)
 
-- Any UI visuals/theming/highlighting: Stage 7.
+- Any UI visuals/theming/highlighting: Stage 7. User requirement recorded
+  2026-10-16: the redesigned Settings window must expose EVERY configurable
+  setting (including the new 6a engine choice and 6d CPU/RAM/GPU limits
+  built in this stage), the Document Reader must highlight the line being
+  read, and the look is a modern red-and-black theme with a new widget.
+  Stage 6 therefore must add each new setting to `config.py`,
+  `LiveSettings` and the current Settings window so Stage 7 only restyles.
 - Installer wizard, CPU-only install path, the mic test page: Stage 8 (6a's
   Kokoro model download is added to the EXISTING installer scripts now;
   Stage 8 is about making the installer itself easier to use, not about
