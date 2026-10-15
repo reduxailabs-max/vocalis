@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Vocalis
+Comment=Offline voice dictation and read-aloud
+Exec=__VOCALIS_EXEC__ --settings
+Icon=audio-input-microphone
+Terminal=false
+Categories=Utility;Accessibility;AudioVideo;

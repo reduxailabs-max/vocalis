@@ -14,10 +14,11 @@ setup() {
   # copy, even though SCRIPT_DIR below points at an isolated fixture
   # directory rather than the real packaging/installer/ -- fake but
   # present install.sh/uninstall.sh/lib/ are enough.
-  mkdir -p "$WORKDIR/packaging/installer/lib" "$WORKDIR/packaging/systemd"
+  mkdir -p "$WORKDIR/packaging/installer/lib" "$WORKDIR/packaging/systemd" "$WORKDIR/packaging/desktop"
   touch "$WORKDIR/packaging/installer/install.sh" "$WORKDIR/packaging/installer/uninstall.sh"
   touch "$WORKDIR/packaging/installer/lib/preflight.sh"
   touch "$WORKDIR/packaging/systemd/vocalis.service"
+  touch "$WORKDIR/packaging/desktop/vocalis.desktop"
 }
 
 teardown() {
@@ -55,4 +56,14 @@ teardown() {
   [ "$status" -eq 0 ]
   [ "$(grep -c "EXEC_OK" "$CALL_LOG")" -eq 2 ]
   ! grep -q "EXEC_MISSING" "$CALL_LOG"
+}
+
+@test "main stages the desktop launcher template for both .run files" {
+  build_run_run_makeself() {
+    [ -f "$2/packaging/desktop/vocalis.desktop" ] && echo DESKTOP_OK >> "$CALL_LOG"
+    touch "$4"
+  }
+  SCRIPT_DIR="$WORKDIR/packaging/installer" REPO_ROOT="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  [ "$(grep -c "DESKTOP_OK" "$CALL_LOG")" -eq 2 ]
 }

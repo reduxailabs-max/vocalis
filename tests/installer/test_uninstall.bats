@@ -31,6 +31,14 @@ teardown() {
   [ ! -e "$WORKDIR/.local/share/vocalis/venv" ]
 }
 
+@test "main removes the application-menu launcher" {
+  mkdir -p "$WORKDIR/.local/share/applications"
+  touch "$WORKDIR/.local/share/applications/vocalis.desktop"
+  HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  [ ! -e "$WORKDIR/.local/share/applications/vocalis.desktop" ]
+}
+
 @test "main without --purge keeps config and models and says so" {
   mkdir -p "$WORKDIR/.config/vocalis" "$WORKDIR/.local/share/vocalis/venv/bin"
   touch "$WORKDIR/.local/share/vocalis/venv/bin/python"

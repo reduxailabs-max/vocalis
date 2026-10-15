@@ -47,6 +47,8 @@ main() {
   cp "$wheel_dist_dir"/vocalis-*.whl "$staging_dir/dist/"
   mkdir -p "$staging_dir/packaging/systemd"
   cp "${repo_root}/packaging/systemd/vocalis.service" "$staging_dir/packaging/systemd/"
+  mkdir -p "$staging_dir/packaging/desktop"
+  cp "${repo_root}/packaging/desktop/vocalis.desktop" "$staging_dir/packaging/desktop/"
 
   build_run_run_makeself "Vocalis installer" "$staging_dir" "install.sh" "${script_dir}/install.run"
   build_run_run_makeself "Vocalis uninstaller" "$staging_dir" "uninstall.sh" "${script_dir}/uninstall.run"

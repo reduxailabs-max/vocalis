@@ -29,6 +29,9 @@ source "${_INSTALL_SCRIPT_DIR}/lib/models.sh"
 # shellcheck source=lib/service.sh
 # shellcheck disable=SC1091
 source "${_INSTALL_SCRIPT_DIR}/lib/service.sh"
+# shellcheck source=lib/desktop.sh
+# shellcheck disable=SC1091
+source "${_INSTALL_SCRIPT_DIR}/lib/desktop.sh"
 
 main() {
   # Read fresh on every call (not computed once at source time) so a
@@ -85,10 +88,19 @@ main() {
   service_substitute_unit "$unit_template" "${HOME}/.local/bin/vocalis" "$HOME" "$unit_output"
   service_enable_and_start
 
+  # Same script-relative-else-repo-root lookup as the unit template above.
+  local desktop_template="${script_dir}/packaging/desktop/vocalis.desktop"
+  if [[ ! -f "$desktop_template" ]]; then
+    desktop_template="${repo_root}/packaging/desktop/vocalis.desktop"
+  fi
+  desktop_install_launcher "$desktop_template" "${HOME}/.local/bin/vocalis" "${HOME}/.local/share/applications/vocalis.desktop" \
+    || echo "(The menu entry could not be added; Vocalis still works.)"
+
   echo ""
   echo "Vocalis is installed and running."
   echo "It will start automatically the next time you log in."
-  echo "To check on it later: systemctl --user status vocalis"
+  echo "To open it: click the small round Vocalis icon in your panel's system tray,"
+  echo "or choose \"Vocalis\" in your applications menu, or run: vocalis --settings"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

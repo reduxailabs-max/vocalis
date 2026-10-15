@@ -39,6 +39,7 @@ main() {
   local symlink="${HOME}/.local/bin/vocalis"
   local venv_dir="${HOME}/.local/share/vocalis/venv"
   local venv_python="${venv_dir}/bin/python"
+  local launcher="${HOME}/.local/share/applications/vocalis.desktop"
 
   local config_dir="" parakeet_dir="" qwen3_tts_dir="" piper_binary="" piper_voice=""
   local piper_binary_dir="" piper_voice_dir=""
@@ -68,6 +69,11 @@ main() {
   if [[ -e "$symlink" ]]; then
     found_anything=1
     rm -f "$symlink"
+  fi
+
+  if [[ -e "$launcher" ]]; then
+    found_anything=1
+    rm -f "$launcher"
   fi
 
   if [[ -d "$venv_dir" ]]; then

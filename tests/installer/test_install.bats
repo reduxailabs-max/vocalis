@@ -16,6 +16,7 @@ setup() {
   models_ensure_piper_binary() { echo "models_ensure_piper_binary: $*" >> "$CALL_LOG"; }
   service_substitute_unit() { echo "service_substitute_unit: $*" >> "$CALL_LOG"; }
   service_enable_and_start() { echo "service_enable_and_start" >> "$CALL_LOG"; }
+  desktop_install_launcher() { echo "desktop_install_launcher: $*" >> "$CALL_LOG"; }
 
   # install.sh queries four paths and runs fetch_models.py via the
   # venv's python -- stub that interpreter itself so no real python runs.
@@ -108,4 +109,18 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"Could not install required system packages"* ]]
   ! grep -q "pyenv_ensure_uv" "$CALL_LOG"
+}
+
+@test "main installs the menu launcher and tells the user how to open Vocalis" {
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  grep -q "desktop_install_launcher: .* $WORKDIR/.local/bin/vocalis $WORKDIR/.local/share/applications/vocalis.desktop" "$CALL_LOG"
+  [[ "$output" == *"vocalis --settings"* ]]
+}
+
+@test "a failing menu launcher does not fail the whole install" {
+  desktop_install_launcher() { return 1; }
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"menu entry could not be added"* ]]
 }
