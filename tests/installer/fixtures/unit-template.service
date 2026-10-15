@@ -1,0 +1,10 @@
+[Unit]
+Description=Vocalis voice AI workstation
+
+[Service]
+Type=simple
+ExecStart=__VOCALIS_EXEC__
+WorkingDirectory=__VOCALIS_WORKDIR__
+
+[Install]
+WantedBy=xdg-desktop-autostart.target

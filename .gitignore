@@ -1,0 +1,45 @@
+# Python environments and caches
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local tool folders
+.superpowers/
+.remember/
+.claude/worktrees/
+.claude/settings.local.json
+.claude/scheduled_tasks*
+
+# Build output
+packaging/installer/*.run
+packaging/installer/dist/
+
+# Large model files
+*.onnx
+*.safetensors
+*.gguf
+*.bin
+*.pt
+models/
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db
+*.swp
+.idea/
+.vscode/
+.env
+.env.*

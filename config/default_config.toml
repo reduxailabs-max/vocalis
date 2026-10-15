@@ -1,0 +1,27 @@
+# Reference copy of VocalisConfig's built-in defaults, kept here for
+# visibility/documentation. load_config() does NOT read this file — when
+# ~/.config/vocalis/config.toml is missing, it returns VocalisConfig()'s
+# in-code defaults directly. test_default_toml_matches_model_defaults (in
+# tests/test_config.py) keeps this file and the model's defaults in sync.
+
+[shortcuts]
+numlock_key = "NUMLOCK"
+quick_reader = "Ctrl+Alt+R"
+document_reader = "Ctrl+Alt+D"
+ocr_reader = "Ctrl+Alt+O"
+
+[engines]
+stt = "parakeet"
+quick_tts = "qwen3_tts"
+doc_tts = "qwen3_tts"
+parakeet_model_dir = "/home/redx/.local/share/voxtype/models/parakeet-tdt-0.6b-v3-int8"
+qwen3_tts_speaker = "Ryan"
+
+notifications_enabled = true
+floating_widget_enabled = true
+# Sound output: "auto" picks one that works, or give a device name.
+audio_output_device = "auto"
+# Speaking pace, 0.7 (slow) to 1.6 (fast).
+speaking_speed = 1.15
+model_idle_timeout_seconds = 30.0
+gpu_vram_ceiling_mb = 6144

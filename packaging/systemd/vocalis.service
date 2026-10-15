@@ -1,0 +1,16 @@
+[Unit]
+Description=Vocalis voice AI workstation
+After=pipewire.service pipewire-pulse.service wireplumber.service
+Wants=pipewire.service pipewire-pulse.service wireplumber.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+Type=simple
+ExecStart=__VOCALIS_EXEC__
+WorkingDirectory=__VOCALIS_WORKDIR__
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=xdg-desktop-autostart.target
