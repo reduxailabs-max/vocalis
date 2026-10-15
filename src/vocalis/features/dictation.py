@@ -18,6 +18,10 @@ logger = logging.getLogger("vocalis")
 
 _ENGINE_ID = "parakeet"
 _TITLE = "Vocalis — Dictation"
+NO_AUDIO_MESSAGE = (
+    "No sound was recorded. Check that your microphone is plugged in, not muted, "
+    "and chosen as the input device, then try again."
+)
 
 
 class Transcriber(Protocol):
@@ -121,7 +125,7 @@ class DictationFeature:
             return
 
         if audio.size == 0:
-            self._notifier.notify(_TITLE, "No audio captured")
+            self._notifier.notify(_TITLE, NO_AUDIO_MESSAGE)
             return
 
         self._notifier.notify(_TITLE, "Transcribing...")

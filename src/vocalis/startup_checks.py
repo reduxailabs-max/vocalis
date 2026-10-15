@@ -6,6 +6,9 @@ Vocalis still starts. A missing piece only means the ONE feature that
 needs it will fail per-request later, exactly as it does today -- these
 checks exist purely to tell the user that up front instead of leaving
 them to discover it the first time they use that feature.
+
+Checks run in a fixed order: the Parakeet model, then Qwen3-TTS, then
+ydotoold, then the capture tools, then a stale ~/.asoundrc.
 """
 import logging
 import os
@@ -85,6 +88,26 @@ def check_capture_tools(which: Callable[[str], str | None] = shutil.which) -> st
     return f"The OCR Reader needs {names}, which are not installed."
 
 
+def check_stale_asoundrc(path: Path) -> str | None:
+    """Whether an old Voxtype ~/.asoundrc is still overriding the system's sound.
+
+    Returns:
+        None if the file is absent, unreadable, or not from Voxtype; otherwise
+        a plain message saying what it does and how to retire it.
+    """
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    if "voxtype" not in content.lower():
+        return None
+    return (
+        f"An old sound settings file from Voxtype is still at {path}. "
+        "It can make the microphone silent in other apps. Vocalis works around it, "
+        f"but you can rename it to {path.name}.old to fix it everywhere."
+    )
+
+
 def run_startup_checks(config: VocalisConfig) -> list[str]:
     """Run every startup check and collect the real problems, in a fixed order.
 
@@ -97,7 +120,8 @@ def run_startup_checks(config: VocalisConfig) -> list[str]:
 
     Returns:
         Zero or more human-readable messages, Parakeet first, then
-        Qwen3-TTS, then ydotoold, then the capture tools.
+        Qwen3-TTS, then ydotoold, then the capture tools, then a stale
+        ~/.asoundrc.
     """
     runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/run/user/0"))
     checks: "list[Callable[[], str | None]]" = [
@@ -109,6 +133,7 @@ def run_startup_checks(config: VocalisConfig) -> list[str]:
         # which binds to shutil.which once at module-import time and would
         # not observe a test's `monkeypatch.setattr("...shutil.which", ...)`.
         lambda: check_capture_tools(shutil.which),
+        lambda: check_stale_asoundrc(Path(os.environ.get("HOME", str(Path.home()))) / ".asoundrc"),
     ]
     messages: "list[str]" = []
     for check in checks:

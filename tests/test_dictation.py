@@ -11,7 +11,7 @@ from typing import Callable
 import numpy as np
 import numpy.typing as npt
 
-from vocalis.features.dictation import DictationFeature
+from vocalis.features.dictation import NO_AUDIO_MESSAGE, DictationFeature
 from vocalis.model_manager import ModelManager
 
 
@@ -153,7 +153,11 @@ def test_empty_audio_skips_transcription() -> None:
     feature.on_release()
     assert engine.transcribe_calls == []
     assert text_output.delivered == []
-    assert any("No audio" in message for _, message in notifier.messages)
+    assert any(message == NO_AUDIO_MESSAGE for _, message in notifier.messages)
+
+
+def test_no_audio_message_tells_the_user_what_to_check() -> None:
+    assert "microphone" in NO_AUDIO_MESSAGE and "muted" in NO_AUDIO_MESSAGE
 
 
 def test_blank_transcript_skips_output() -> None:

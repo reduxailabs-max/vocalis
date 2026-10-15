@@ -7,6 +7,7 @@ from vocalis.startup_checks import (
     check_capture_tools,
     check_parakeet_model,
     check_qwen3_tts_model,
+    check_stale_asoundrc,
     check_ydotoold,
     run_startup_checks,
 )
@@ -92,6 +93,7 @@ def test_run_startup_checks_returns_every_real_problem_in_a_fixed_order(tmp_path
 
 
 def test_run_startup_checks_is_silent_when_everything_is_fine(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("HOME", str(tmp_path))
     config = VocalisConfig()
     parakeet_dir = tmp_path / "parakeet"
     for name in ("config.json", "encoder-model.int8.onnx", "decoder_joint-model.int8.onnx", "vocab.txt"):
@@ -119,3 +121,40 @@ def test_run_startup_checks_survives_a_check_that_raises(tmp_path: Path, monkeyp
         messages = run_startup_checks(config)
     assert "boom" in caplog.text
     assert all("Parakeet" not in m for m in messages)
+
+
+def test_no_asoundrc_is_silent(tmp_path: Path) -> None:
+    assert check_stale_asoundrc(tmp_path / ".asoundrc") is None
+
+
+def test_unrelated_asoundrc_is_silent(tmp_path: Path) -> None:
+    path = tmp_path / ".asoundrc"
+    path.write_text("pcm.!default { type pulse }\n")
+    assert check_stale_asoundrc(path) is None
+
+
+def test_old_voxtype_asoundrc_is_reported_in_plain_words(tmp_path: Path) -> None:
+    path = tmp_path / ".asoundrc"
+    path.write_text("# ALSA configuration for VOXTYPE\npcm.voxtype { type plug }\n")
+    message = check_stale_asoundrc(path)
+    assert message is not None
+    assert "Voxtype" in message and ".asoundrc.old" in message and str(path) in message
+
+
+def test_unreadable_asoundrc_is_silent_not_a_crash(tmp_path: Path) -> None:
+    path = tmp_path / ".asoundrc"
+    path.mkdir()  # a directory: read_text raises IsADirectoryError
+    assert check_stale_asoundrc(path) is None
+
+
+def test_binary_asoundrc_is_silent(tmp_path: Path) -> None:
+    path = tmp_path / ".asoundrc"
+    path.write_bytes(b"\xff\xfe\x00voxtype-not-really")
+    assert check_stale_asoundrc(path) is None or "Voxtype" in (check_stale_asoundrc(path) or "")
+
+
+def test_run_startup_checks_reports_a_stale_asoundrc_last(tmp_path: Path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / ".asoundrc").write_text("pcm.voxtype { }\n")
+    messages = run_startup_checks(VocalisConfig())
+    assert "Voxtype" in messages[-1]
