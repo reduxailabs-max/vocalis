@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from vocalis.cli import (
+    _SettingsBridge,
     build_daemon,
     build_dictation,
     build_doc_reader,
@@ -20,6 +21,7 @@ from vocalis.cli import (
 )
 from vocalis.config import VocalisConfig
 from vocalis.daemon import DaemonAlreadyRunningError
+from vocalis.remote import SHOW_SETTINGS
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import ModelManager
 
@@ -1339,3 +1341,33 @@ def test_build_daemon_passes_the_command_handler(tmp_path: Path) -> None:
     handler = MagicMock()
     daemon = build_daemon(model_manager=ModelManager(), socket_path=tmp_path / "s.sock", command_handler=handler)
     assert daemon._command_handler is handler  # noqa: SLF001
+
+
+def test_settings_bridge_emits_show_settings_for_that_command(qtbot) -> None:  # type: ignore[no-untyped-def]
+    bridge = _SettingsBridge()
+    with qtbot.waitSignal(bridge.show_settings, timeout=1000):
+        bridge.handle_command(SHOW_SETTINGS)
+
+
+def test_settings_bridge_ignores_other_commands(qtbot) -> None:  # type: ignore[no-untyped-def]
+    bridge = _SettingsBridge()
+    received: list[int] = []
+    bridge.show_settings.connect(lambda: received.append(1))
+    bridge.handle_command("something-else")
+    assert received == []
+
+
+def test_settings_bridge_delivers_a_background_threads_command_to_the_main_thread(qtbot) -> None:  # type: ignore[no-untyped-def]
+    """The daemon calls handle_command() on its own socket thread; the
+    show_settings signal must still be delivered to a slot on the Qt main
+    thread -- this is the cross-thread risk the bridge exists to cover."""
+    bridge = _SettingsBridge()
+    seen_threads: list[threading.Thread] = []
+    bridge.show_settings.connect(lambda: seen_threads.append(threading.current_thread()))
+
+    with qtbot.waitSignal(bridge.show_settings, timeout=2000):
+        worker = threading.Thread(target=bridge.handle_command, args=(SHOW_SETTINGS,))
+        worker.start()
+        worker.join()
+
+    assert seen_threads == [threading.main_thread()]
