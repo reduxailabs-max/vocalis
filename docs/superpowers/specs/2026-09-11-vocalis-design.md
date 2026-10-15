@@ -1275,3 +1275,144 @@ existing patterns (`FakeStream`, injectable runner functions).
 3. Dropped the vague "speaking_speed messaging" item; Stage 6 owns speed.
 4. `--settings` starts the service itself when needed, so the application-menu
    launcher works whether or not Vocalis is already running.
+
+## Stage 6 amendment — Voice engine overhaul (confirmed via superpowers:brainstorming, 2026-10-16)
+
+### Why this stage exists
+
+The user's hands-on test of the real installer (2026-10-15) found the reading
+voice unclear, slow, and heavy enough to heat the laptop, and found long
+documents pause between pieces. Research and code reading (done in the prior
+session) found concrete, fixable causes rather than a fundamentally broken
+design. This stage fixes those causes and adds a second, lighter voice engine
+plus user-visible resource limits, so Vocalis works well on both the user's
+RTX 4060 laptop and on weaker or GPU-less machines.
+
+### Decisions already made with the user (2026-10-15, carried in from the
+approved roadmap `humming-wobbling-wreath.md`; not re-asked here)
+
+- **Engines to ship:** Qwen3-TTS (kept, highest quality), **Kokoro** (new,
+  light, Apache-2.0, native speed control), Piper (kept, emergency fallback
+  only). VoxCPM and any online voice are explicitly NOT built now.
+- **Automatic engine choice, the user's own rule, refined once for a real
+  conflict found in testing:** GPU total > 4 GB AND free VRAM enough for
+  Qwen3 AND the PC not under stress -> Qwen3-TTS; PC stressed or too little
+  free VRAM -> Kokoro; no usable GPU -> Piper (or Kokoro on CPU if Piper is
+  missing). The user can always force an engine per feature in Settings.
+- **Root causes identified in the code** (all drive this stage's tasks):
+  - Voice quality: non-English-native speaker in the user's own config;
+    `librosa` phase-vocoder time-stretch (`audio/pace.py`) applied per chunk
+    with no crossfade; Qwen3's own generation defaults (temperature 0.9,
+    top_k 50, uncapped `max_new_tokens`); the sentence splitter
+    (`text/chunker.py`) breaks on abbreviations and joins unpunctuated
+    lines; no number/URL/symbol normalization; a new audio stream opened per
+    chunk (`audio/playback.py`) causing clicks; Quick Reader synthesizes an
+    entire clipboard in one call.
+  - Heat/speed: no CPU/RAM/GPU limit anywhere; `gpu_vram_ceiling_mb` and
+    `engines.quick_tts`/`engines.doc_tts` are dead config (declared, never
+    read — confirmed again just now: `model_manager.py:26`'s
+    `TTS_ENGINE_ID = "qwen3_tts"` is still the only engine id, shared by both
+    features via `_ENGINE_ID = TTS_ENGINE_ID` in `quick_reader.py:30` and
+    `doc_reader.py:49`); the idle-unload timer (30s default) starts before
+    playback ends and forces a 15-45s reload.
+  - Gaps in long reading: `doc_reader.py`'s `_read_worker` is strictly
+    synthesize -> pace -> play, one chunk at a time; since synthesis
+    (~1.0x real time) is slower than playback once sped up, even a
+    one-chunk lookahead would still underrun.
+
+### Scope, in the same 4 groups the roadmap already named (6a-6d), each its
+own implementation plan, built in order in one Stage 6 worktree
+
+**6a — Engine plumbing.** A single `TTSEngine` protocol replacing the
+duplicated `Synthesizer` Protocol in `quick_reader.py`/`doc_reader.py`; a new
+`engines/registry.py` factory; `Literal["auto","qwen3_tts","kokoro","piper"]`
+validation on `config.engines.quick_tts`/`doc_tts`; `TTS_ENGINE_ID` replaced
+by a per-feature, per-selection engine id (still shared when both features
+pick the same engine, so `tests/test_shared_tts_engine.py`'s "no reload"
+guarantee survives); a new `engines/kokoro_tts.py` using the `kokoro-onnx`
+PyPI package (MIT; depends on `onnxruntime`, `espeakng-loader`,
+`phonemizer-fork`; a `[gpu]` extra pulls `onnxruntime-gpu`; model weights —
+`kokoro-v1.0.onnx` ~310MB and `voices-v1.0.bin` ~27MB — are NOT in the
+package and must be fetched by the installer, same as the existing models);
+a new pure, fully unit-tested `engines/auto_select.py` implementing the rule
+above from a `HardwareInfo` snapshot (`src/vocalis/hardware.py`, built in
+Stage 5) plus Vocalis's own current VRAM use; a Settings engine picker
+(Auto/Qwen3-TTS/Kokoro/Piper per feature) with fall-down-the-chain-with-a-
+notification if a forced engine fails to load.
+  **Known risk, to be solved in this group:** installing plain `onnxruntime`
+  (pulled in by `kokoro-onnx`) alongside `onnxruntime-gpu` (already required
+  by `onnx-asr[gpu]`/Parakeet) can silently disable CUDA for Parakeet — a
+  documented ONNX Runtime issue where whichever package installs last wins
+  in the same `onnxruntime/` directory. The plan must pin the install order
+  or exclude the dependency, and add a startup check that
+  `CUDAExecutionProvider` is still available when a GPU is present.
+
+**6b — Gapless long reading.** A shared `ChunkedSpeaker` used by both
+features: a producer thread holds ONE `ModelManager.acquire()` for the whole
+reading and fills a bounded (2-3 item) queue, synthesizing ahead with
+back-pressure; the consumer feeds a persistent `sd.OutputStream` (replacing
+today's per-chunk stream in `audio/playback.py`) with a small fade at chunk
+joins and zero-fill on underrun instead of a gap; Quick Reader gains the same
+chunking Document Reader already has (`text/chunker.py`) instead of
+synthesizing its whole input in one call; the chunker becomes sentence-aware
+(abbreviations, bare newlines) and gains true `(start, end)` character spans
+(needed again in Stage 7 for highlighting); the idle-unload timer must not
+fire while a reading is actively in progress, and should start counting from
+when playback ends, not when synthesis ends. Pause/resume/stop keep their
+current user-visible behaviour; the existing test fakes
+(`GatedSynthesizer`, `LengthRecordingPlayer`, etc. in `tests/test_doc_reader.py`)
+are rewritten for the new producer/consumer shape, not discarded.
+
+**6c — Clarity.** Each engine's native speed control is used instead of the
+lossy `librosa` time-stretch (Kokoro has a `speed` parameter; Piper has
+`--length_scale`); Qwen3-TTS keeps a stretch only as its own fallback, capped
+near 1.0-1.2x; Qwen3-TTS's generation call gets a lower, steadier
+`temperature` (~0.6-0.7), a lower `top_k`, and a `max_new_tokens` scaled to
+the text length instead of the fixed 8192; the default voice becomes an
+English-native speaker (Ryan or Aiden), with a warning if a mismatched
+language/speaker pair is configured; basic text normalization for numbers,
+URLs and symbols is added to `text/normalizer.py`.
+
+**6d — Resource limits.** New Settings controls (and matching `LiveSettings`
+getters) for a maximum CPU thread count (`torch.set_num_threads`, ONNX
+`intra_op_num_threads`) and maximum RAM; `gpu_vram_ceiling_mb` is finally
+enforced (`torch.cuda.set_per_process_memory_fraction`, ONNX
+`gpu_mem_limit`), replacing its current dead-setting status; the 6a
+auto-selection policy is re-run adaptively (checked at the start of each
+reading, and again only on a load/synthesis failure, with at least a 60s
+hysteresis before downshifting again — never flip-flopping mid-reading); the
+systemd unit template gains a `Nice=` line; the Piper subprocess gets a
+thread cap; model unload calls `gc.collect()` in addition to the existing
+`torch.cuda.empty_cache()`.
+
+### Out of scope (and why)
+
+- Any UI visuals/theming/highlighting: Stage 7.
+- Installer wizard, CPU-only install path, the mic test page: Stage 8 (6a's
+  Kokoro model download is added to the EXISTING installer scripts now;
+  Stage 8 is about making the installer itself easier to use, not about
+  which models it fetches).
+- VoxCPM, any online/API voice: explicitly declined by the user this session.
+
+### Testing
+
+Same gates as every stage: tests >= 85% coverage, mypy strict clean, zero
+warnings. All hardware, GPU, audio devices, and the `kokoro-onnx`/Qwen3/Piper
+libraries themselves stay faked in tests — nothing here changes the project's
+standing rule that automated tests never touch real hardware. The auto-select
+policy (6a) is pure and injectable, so its decision table is fully covered
+without any real GPU. The gapless-queue rewrite (6b) is tested with the
+existing fake-synthesizer/fake-player patterns, verifying ordering and timing
+without real audio.
+
+### Rulings the assistant made (not asked of the user)
+
+1. 6a builds the engine registry and auto-selector FIRST, because 6b-6d all
+   depend on "which engine is this reading using right now" being a stable,
+   queryable concept.
+2. Qwen3-TTS keeps a (capped) time-stretch as ITS OWN fallback speed control,
+   since the model has no native speed parameter — only Kokoro and Piper get
+   a true native-speed path. This is a deliberate asymmetry, not an oversight.
+3. The Kokoro model download is added to the Stage 1-era installer scripts
+   now (6a), not deferred to Stage 8, since 6a's Settings engine picker is
+   useless to the user if the model it names is never fetched.
