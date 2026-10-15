@@ -165,7 +165,7 @@ class SettingsWindow(QWidget):
         """Bring the window to the front; refresh it from saved settings only if it was hidden."""
         if not self.isVisible():
             self.load_from_settings()
-        self.show()
+        self.showNormal()
         self.raise_()
         self.activateWindow()
 

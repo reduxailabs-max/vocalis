@@ -16,7 +16,6 @@ from vocalis.cli import (
     build_doc_reader,
     build_ocr_reader,
     build_quick_reader,
-    entrypoint,
     main,
 )
 from vocalis.config import VocalisConfig
@@ -382,6 +381,39 @@ def test_main_starts_and_stops_the_ocr_listener(tmp_path: Path, qapp) -> None:  
 
     listener.start.assert_called_once_with()
     listener.stop.assert_called_once_with()
+
+
+def test_main_connects_the_bridges_show_settings_signal_to_settings_window_present(  # type: ignore[no-untyped-def]
+    tmp_path: Path, qapp
+):
+    """If main() ever drops `bridge.show_settings.connect(settings_window.present)`,
+    this must fail: it captures the real _SettingsBridge main() builds, emits its
+    show_settings signal (direct call, same thread, no event loop needed), and
+    checks SettingsWindow.present actually ran."""
+    captured_bridges: list[_SettingsBridge] = []
+
+    class CapturingBridge(_SettingsBridge):
+        def __init__(self) -> None:
+            super().__init__()
+            captured_bridges.append(self)
+
+    def exec_side_effect() -> None:
+        captured_bridges[0].show_settings.emit()
+        raise KeyboardInterrupt
+
+    with (
+        patch("vocalis.cli.default_config_path", return_value=tmp_path / "config.toml"),
+        patch("vocalis.cli._socket_path", return_value=tmp_path / "vocalis.sock"),
+        patch("vocalis.cli.list_numlock_capable_devices", return_value=[]),
+        patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]),
+        patch("vocalis.cli.list_devices_with_key", return_value=[]),
+        patch("vocalis.cli._SettingsBridge", CapturingBridge),
+        patch("vocalis.cli.SettingsWindow.present") as mock_present,
+        patch("vocalis.cli.QApplication.exec", side_effect=exec_side_effect),
+    ):
+        main()
+
+    mock_present.assert_called_once_with()
 
 
 @pytest.mark.parametrize("exec_side_effect", [None, KeyboardInterrupt])
@@ -1320,21 +1352,6 @@ def test_main_never_attempts_a_real_startup_notification_without_patching_it(  #
         main()
 
     assert command_calls == []
-
-
-def test_entrypoint_without_flags_runs_main() -> None:
-    with patch("vocalis.cli.main") as fake_main:
-        entrypoint([])
-    fake_main.assert_called_once_with()
-
-
-def test_entrypoint_settings_flag_opens_settings_and_exits_with_its_code() -> None:
-    with patch("vocalis.cli.open_settings", return_value=0) as fake_open, patch("vocalis.cli.main") as fake_main:
-        with pytest.raises(SystemExit) as exited:
-            entrypoint(["--settings"])
-    assert exited.value.code == 0
-    fake_open.assert_called_once()
-    fake_main.assert_not_called()
 
 
 def test_build_daemon_passes_the_command_handler(tmp_path: Path) -> None:

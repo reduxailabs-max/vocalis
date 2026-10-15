@@ -3,7 +3,28 @@ import socket
 import threading
 from pathlib import Path
 
+from vocalis.notify import Notifier
 from vocalis.remote import SHOW_SETTINGS, open_settings, send_command
+
+
+class FakeNotifier(Notifier):
+    """Records notify() calls instead of running a real notify-send."""
+
+    def __init__(self) -> None:
+        self.messages: list[tuple[str, str]] = []
+
+    def notify(self, title: str, message: str = "") -> None:
+        self.messages.append((title, message))
+
+
+class _RaisingNotifier(Notifier):
+    """A notifier whose notify() must never be called (the success path)."""
+
+    def __init__(self) -> None:
+        pass
+
+    def notify(self, title: str, message: str = "") -> None:
+        raise AssertionError(f"notify() should not be called on success, got ({title!r}, {message!r})")
 
 
 def _serve_once(path: Path, replies: list[bytes]) -> threading.Thread:
@@ -63,15 +84,27 @@ def test_open_settings_starts_the_service_then_retries_until_it_answers(tmp_path
 
 def test_open_settings_gives_up_after_the_wait_limit_with_a_plain_message(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
     slept: list[float] = []
+    fake_notifier = FakeNotifier()
     code = open_settings(tmp_path / "v.sock", start_service=lambda: True, send=lambda _p, _c: False,
-                         sleep=slept.append, wait_seconds=2.0, poll_seconds=0.5)
+                         sleep=slept.append, wait_seconds=2.0, poll_seconds=0.5, notifier=fake_notifier)
     assert code == 1
     assert sum(slept) <= 2.0
     assert "Vocalis did not start" in capsys.readouterr().err
+    assert len(fake_notifier.messages) == 1
+    assert "long time" in fake_notifier.messages[0][1].lower()
 
 
 def test_open_settings_reports_a_failed_service_start(tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    fake_notifier = FakeNotifier()
     code = open_settings(tmp_path / "v.sock", start_service=lambda: False,
-                         send=lambda _p, _c: False, sleep=lambda _s: None)
+                         send=lambda _p, _c: False, sleep=lambda _s: None, notifier=fake_notifier)
     assert code == 1
     assert "could not start" in capsys.readouterr().err.lower()
+    assert len(fake_notifier.messages) == 1
+    assert "could not start" in fake_notifier.messages[0][1].lower()
+
+
+def test_open_settings_never_notifies_on_success(tmp_path: Path) -> None:
+    code = open_settings(tmp_path / "v.sock", start_service=lambda: True, send=lambda _p, _c: True,
+                         sleep=lambda _s: None, notifier=_RaisingNotifier())
+    assert code == 0

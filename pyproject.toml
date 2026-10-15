@@ -40,7 +40,7 @@ dev = [
 ]
 
 [project.scripts]
-vocalis = "vocalis.cli:entrypoint"
+vocalis = "vocalis.entry:entrypoint"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vocalis"]

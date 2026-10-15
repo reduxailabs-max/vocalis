@@ -644,8 +644,10 @@ before giving up with a plain error on stderr.
 from the tray's right-click menu. Now: (1) a left-click on the tray icon
 (`QSystemTrayIcon.ActivationReason.Trigger`) opens it directly, the same
 `settings_window.present()` call the menu entry already used; (2)
-`vocalis --settings` (the `entrypoint()` function, now the package's
-console-script target instead of `main()` directly) opens it in the
+`vocalis --settings` (the `entrypoint()` function in the small, separate
+`vocalis.entry` module, now the package's console-script target instead
+of `cli.py`'s `main()` directly — kept apart from `cli.py` specifically so
+this fast path never pays `cli.py`'s heavy import cost) opens it in the
 already-running process via the socket, starting the service first if
 needed; (3) the application-menu launcher this task adds runs the exact
 same `vocalis --settings` command from a normal desktop menu click.

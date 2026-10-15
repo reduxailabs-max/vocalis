@@ -240,3 +240,11 @@ def test_present_keeps_unsaved_edits_when_already_open(qtbot, tmp_path) -> None:
     window._voice_combo.setCurrentText("Aiden")  # noqa: SLF001
     window.present()
     assert window._voice_combo.currentText() == "Aiden"  # noqa: SLF001
+
+
+def test_present_restores_a_minimized_window(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, window, _applied, _path = make(qtbot, tmp_path)
+    window.present()
+    window.showMinimized()
+    window.present()
+    assert not window.isMinimized()

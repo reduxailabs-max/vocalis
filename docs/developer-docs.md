@@ -430,14 +430,20 @@ pick up the change automatically.
 ## `vocalis --settings` and the console-script entrypoint (Stage 5)
 
 The `vocalis` console script (`[project.scripts]` in `pyproject.toml`)
-points at `vocalis.cli:entrypoint`, not `vocalis.cli:main` directly.
+points at `vocalis.entry:entrypoint`, a small, deliberately separate
+module that imports nothing from `vocalis.cli` (and therefore nothing it
+pulls in — `torch`, `transformers`, PySide6, ...) at module load time.
 `entrypoint()` parses `sys.argv` for a `--settings` flag: with it, it
 calls `vocalis.remote.open_settings()` and exits with that function's
-return code *without* running the rest of the app in this process; without
-it, it calls `main()` exactly as before. This split exists so a quick
+return code *without* ever importing `vocalis.cli`; without it, it
+imports `vocalis.cli.main` lazily (right there, inside the `else`
+branch) and calls it exactly as before. This split exists so a quick
 `vocalis --settings` from a terminal (or the application-menu launcher —
 see `packaging/installer/README.md`) is cheap and talks to whichever
 Vocalis is already running, instead of starting a second full instance.
+If you ever add a new import to the top of `vocalis/entry.py`, make sure
+it is not one that drags in `vocalis.cli` or any of its heavy
+dependencies — that would silently defeat the whole point of this split.
 
 `open_settings()` (`remote.py`) tries `send_command(socket_path,
 SHOW_SETTINGS)` first; everything else (starting the service, the 20

@@ -10,7 +10,6 @@ Both SIGINT (Ctrl+C) and SIGTERM (systemd `stop`/`restart`) call app.quit()
 through the identical handler pattern, so the shutdown code in main()'s
 finally block runs the same way regardless of which signal arrived.
 """
-import argparse
 import logging
 import signal
 import sys
@@ -34,7 +33,7 @@ from vocalis.logging_setup import configure_logging
 from vocalis.model_manager import ModelManager
 from vocalis.notify import Notifier
 from vocalis.output.typer import TextOutput
-from vocalis.remote import SHOW_SETTINGS, open_settings
+from vocalis.remote import SHOW_SETTINGS, default_socket_path, open_settings
 from vocalis.startup_checks import run_startup_checks
 from vocalis.audio.capture import MicRecorder, pick_input_device
 from vocalis.audio.output_device import AUTO, OutputDeviceChooser
@@ -108,7 +107,7 @@ def _warm_up_pace_changer() -> None:
 
 def _socket_path() -> Path:
     """Return the standard runtime location for the daemon's Unix socket."""
-    return Path.home() / ".local" / "state" / "vocalis" / "vocalis.sock"
+    return default_socket_path()
 
 
 def build_daemon(
@@ -790,7 +789,6 @@ def main() -> None:
     settings = LiveSettings(config, default_config_path())
     output_chooser = OutputDeviceChooser(preference=settings.audio_output_device)
     threading.Thread(target=_warm_up_pace_changer, daemon=True).start()
-    threading.Thread(target=log_hardware_summary, daemon=True).start()
     codes = resolve_shortcuts(config)
     app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))
     app.setQuitOnLastWindowClosed(False)
@@ -801,6 +799,7 @@ def main() -> None:
     daemon = build_daemon(
         model_manager=model_manager, socket_path=_socket_path(), command_handler=bridge.handle_command
     )
+    threading.Thread(target=log_hardware_summary, daemon=True).start()
     _, dictation_listener = build_dictation(
         config=config, model_manager=model_manager, settings=settings, hub=hub,
         key_code=codes.push_to_talk,
@@ -866,14 +865,3 @@ def main() -> None:
                 ("floating widget window", widget.close),
             ]
         )
-
-
-def entrypoint(argv: "list[str] | None" = None) -> None:
-    """The `vocalis` console command: run the app, or with --settings open its window."""
-    parser = argparse.ArgumentParser(prog="vocalis", description="Offline voice AI workstation.")
-    parser.add_argument("--settings", action="store_true",
-                        help="open the Settings window of the running Vocalis (starting it if needed)")
-    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
-    if args.settings:
-        sys.exit(open_settings(_socket_path()))
-    main()

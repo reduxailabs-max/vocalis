@@ -7,7 +7,7 @@
 | `src/vocalis/logging_setup.py` | `configure_logging()` — sets up the shared `"vocalis"` logger (console + optional file handler), idempotent. |
 | `src/vocalis/model_manager.py` | `ModelManager` — enforces single-model VRAM residency and idle-unload; defines the `ModelEngine`/`TimerHandle` protocols later engine wrappers implement. |
 | `src/vocalis/daemon.py` | `VocalisDaemon` — Unix socket server lifecycle: start/stop, stale-socket cleanup, graceful shutdown (calls `ModelManager.shutdown()`). |
-| `src/vocalis/cli.py` | `vocalis` console-script entrypoint: loads config, builds the daemon and the dictation, quick reader, document reader and OCR reader features (`build_ocr_reader()` wires the Ctrl+Alt+O listener), then runs a Qt event loop until Ctrl+C (a SIGINT handler quits it so shutdown runs). |
+| `src/vocalis/cli.py` | `main()` — the heavy app startup: loads config, builds the daemon and the dictation, quick reader, document reader and OCR reader features (`build_ocr_reader()` wires the Ctrl+Alt+O listener), then runs a Qt event loop until Ctrl+C (a SIGINT handler quits it so shutdown runs). Imported lazily by `vocalis.entry.entrypoint()`, the actual `vocalis` console-script target (Stage 5). |
 | `config/default_config.toml` | First-run configuration template. |
 | `pyproject.toml` | Package metadata, dependencies, mypy/pytest/coverage configuration. |
 | `src/vocalis/engines/parakeet.py` | `ParakeetSTT` — wraps `onnx-asr` running the existing Voxtype Parakeet TDT ONNX model; implements `ModelEngine`. |
@@ -145,7 +145,8 @@
 | `packaging/desktop/vocalis.desktop` | Application-menu launcher **template** — `__VOCALIS_EXEC__` placeholder, `Exec=... --settings`, filled in and installed by `install.sh` via `desktop_install_launcher()`. |
 | `packaging/installer/lib/desktop.sh` | `desktop_install_launcher()` — fills the desktop template's `__VOCALIS_EXEC__` placeholder with the quoted, sed-escaped exec path and writes it atomically (temp file + `mv`), mirroring `service_substitute_unit()`'s pattern. |
 | `tests/test_hardware.py` | Tests for `probe_hardware()`/`describe()`/`log_hardware_summary()` with every source (GPU query, `/proc/meminfo`, `/proc/loadavg`, `cpu_count`) faked — no real `/proc` or GPU touched. |
-| `tests/test_remote.py` | Tests for `send_command()`/`open_settings()` against a real Unix socket bound in `tmp_path`, with `start_user_service` faked so no real `systemctl` runs. |
+| `tests/test_remote.py` | Tests for `send_command()`/`open_settings()` against a real Unix socket bound in `tmp_path`, with `start_user_service` faked so no real `systemctl` runs, and a `FakeNotifier` proving the failure paths notify and the success path never does. |
+| `tests/test_entry.py` | Tests for `vocalis.entry.entrypoint()`: no flags imports and calls `vocalis.cli.main()`; `--settings` calls `open_settings()` and exits with its code without ever touching `main()`. |
 | `tests/test_package_metadata.py` | Confirms `LICENSE` is MIT with the right copyright line and that `pyproject.toml` declares `license = "MIT"` and `license-files = ["LICENSE"]`. |
 | `tests/installer/test_desktop.bats` | `bats` tests for `desktop_install_launcher()`: fills in and quotes the exec path, and leaves an existing launcher untouched if the template is missing. |
 
@@ -157,8 +158,9 @@
 | `src/vocalis/features/dictation.py` | The old "No audio captured" notification text was replaced by `NO_AUDIO_MESSAGE`, a longer, more actionable message telling the user to check their microphone is plugged in, not muted, and selected as the input device. |
 | `src/vocalis/ui/tray.py` | `TrayIcon` now also opens Settings on a left-click (`QSystemTrayIcon.ActivationReason.Trigger`), not just from its right-click menu's **Settings…** entry. |
 | `src/vocalis/daemon.py` | `VocalisDaemon` gained an optional `command_handler` constructor argument, called with each received command line (on the accept-loop thread, before the ack is sent); a raising handler is logged and never blocks the ack. |
-| `src/vocalis/cli.py` | `main()` wires the daemon's `command_handler` to show the Settings window on `SHOW_SETTINGS`, starts a background thread calling `log_hardware_summary()` right after `LiveSettings`/`OutputDeviceChooser` are built, and gained `entrypoint()`, the new `vocalis` console-script target — `--settings` calls `vocalis.remote.open_settings()` instead of running the full app. |
-| `pyproject.toml` | `license`/`license-files` metadata added; `[project.scripts] vocalis` now points at `vocalis.cli:entrypoint` instead of `vocalis.cli:main`. |
+| `src/vocalis/cli.py` | `main()` wires the daemon's `command_handler` to show the Settings window on `SHOW_SETTINGS`, and starts a background thread calling `log_hardware_summary()` right after `build_daemon()` (so `configure_logging()` has already run and the summary line is never silently dropped). |
+| `src/vocalis/entry.py` | `entrypoint()`, the actual `vocalis` console-script target — imports nothing from `vocalis.cli` at module load time, so `--settings` stays cheap; it calls `vocalis.remote.open_settings()` directly, or lazily imports and calls `vocalis.cli.main()` otherwise. |
+| `pyproject.toml` | `license`/`license-files` metadata added; `[project.scripts] vocalis` now points at `vocalis.entry:entrypoint` instead of `vocalis.cli:main`. |
 | `packaging/installer/install.sh` | Sources `lib/desktop.sh` and, right after `service_enable_and_start()`, installs the application-menu launcher via `desktop_install_launcher()` (a failure there is logged but never fails the install); the closing message now explains the three ways to open Vocalis instead of just pointing at `systemctl status`. |
 | `packaging/installer/uninstall.sh` | Also removes `~/.local/share/applications/vocalis.desktop` if present. |
 | `packaging/installer/build-run.sh` | Also stages `packaging/desktop/vocalis.desktop` into both `.run` files' payload. |

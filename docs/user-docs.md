@@ -10,9 +10,9 @@ there are three ways to open it:
 - **Use the applications menu.** Vocalis adds a normal "Vocalis" entry to
   your desktop's applications menu, the same as any other installed
   program — look for it there and click it like you would any app.
-- **Run `vocalis --settings` from a terminal.** This opens Settings too,
-  and if Vocalis isn't running yet, it starts it for you first (this can
-  take a few seconds).
+- **Run `vocalis --settings` from a terminal.** If Vocalis is already
+  running, this opens Settings right away. If it isn't running yet, this
+  starts it for you first, which can take a few seconds.
 
 Two messages you might see are worth knowing about:
 

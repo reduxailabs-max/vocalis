@@ -10,7 +10,7 @@ src/vocalis/
 │   ├── output_device.py   # OutputDeviceChooser: probes and caches a working sound output
 │   ├── pace.py            # apply_speed/paced_audio: pitch-preserving speaking-pace change
 │   └── playback.py        # AudioPlayer: sounddevice-based interruptible playback
-├── cli.py               # `vocalis` console-script entrypoint
+├── cli.py               # main(): the heavy app startup (imported lazily by entry.py)
 ├── config.py           # VocalisConfig pydantic model + TOML load/save
 ├── daemon.py            # Unix socket server lifecycle (start/stop)
 ├── engines/
@@ -18,6 +18,7 @@ src/vocalis/
 │   ├── piper_tts.py        # PiperTTS: CPU-only fallback voice, never GPU-managed
 │   ├── qwen3_tts.py        # Qwen3TTS: primary voice, GPU, via ModelManager
 │   └── tesseract_ocr.py    # TesseractOCR: CPU-only text recognition, never GPU-managed
+├── entry.py              # `vocalis` console-script entrypoint — stays light so --settings is fast (Stage 5 fix)
 ├── features/
 │   ├── dictation.py       # DictationFeature: press/release orchestration
 │   ├── doc_reader.py       # DocumentReaderFeature: extract/chunk/speak/pause/stop
@@ -59,6 +60,7 @@ tests/                    # pytest suite mirroring src/vocalis/ (≥85% coverage
                           #   shared ModelManager, not a single feature in isolation
 ├── test_hardware.py       # probe_hardware/describe/log_hardware_summary, every source faked
 ├── test_remote.py         # vocalis --settings client, against a real socket in tmp_path
+├── test_entry.py          # vocalis.entry.entrypoint(): --settings vs. the lazy main() import (Stage 5 fix)
 ├── test_package_metadata.py  # LICENSE + pyproject.toml license metadata
 └── installer/            # bats suite mirroring packaging/installer/
     ├── test_preflight.bats
@@ -146,3 +148,8 @@ template), `packaging/installer/lib/desktop.sh` (with
 it extended `startup_checks.py`, `daemon.py`, `cli.py`,
 `features/dictation.py`, `ui/tray.py`, `pyproject.toml`, `install.sh`,
 `uninstall.sh` and `build-run.sh` in place.
+Stage 5's final-review fix wave added `entry.py` (with `tests/test_entry.py`)
+so `vocalis --settings` no longer pays `cli.py`'s heavy import cost, moved
+the `vocalis` console-script target from `vocalis.cli:entrypoint` to
+`vocalis.entry:entrypoint`, and extended `remote.py`, `cli.py` and
+`ui/settings_window.py` in place (no other new files).
