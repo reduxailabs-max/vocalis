@@ -83,8 +83,13 @@ def probe_hardware(
     except Exception:
         logger.debug("GPU query failed; treating as no GPU", exc_info=True)
         gpu = None
+    try:
+        cpus = cpu_count()
+    except Exception:
+        logger.debug("CPU count failed; treating as unknown", exc_info=True)
+        cpus = None
     ram_total, ram_available = _read_meminfo(meminfo_path)
-    return HardwareInfo(gpu, ram_total, ram_available, cpu_count(), _read_load(loadavg_path))
+    return HardwareInfo(gpu, ram_total, ram_available, cpus, _read_load(loadavg_path))
 
 
 def describe(info: HardwareInfo) -> str:

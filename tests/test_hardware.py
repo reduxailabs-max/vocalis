@@ -40,6 +40,15 @@ def test_a_raising_gpu_query_means_no_gpu(tmp_path: Path) -> None:
     assert probe_hardware(m, l, cpu_count=lambda: 4, gpu_query=boom).gpu is None
 
 
+def test_a_raising_cpu_count_means_cpu_count_is_none(tmp_path: Path) -> None:
+    m, l = _files(tmp_path)
+
+    def boom() -> int | None:
+        raise RuntimeError("cpu count unavailable")
+
+    assert probe_hardware(m, l, cpu_count=boom, gpu_query=lambda: None).cpu_count is None
+
+
 def test_describe_is_one_plain_line() -> None:
     line = describe(HardwareInfo(GpuInfo("RTX 4060", 8188, 7000), 15625, 7812, 8, 1.5))
     assert "RTX 4060" in line and "8188" in line and "8 CPU" in line and "\n" not in line
