@@ -2,6 +2,7 @@
 
 ```
 README.md                 # top-level project README: what Vocalis is, links to the docs below
+LICENSE                    # MIT license text
 src/vocalis/
 ├── __init__.py         # package version
 ├── audio/
@@ -29,10 +30,12 @@ src/vocalis/
 │   ├── numlock.py         # NumlockListener: evdev push-to-talk (NUMLOCK by default)
 │   ├── shortcut_parser.py  # shortcut text <-> evdev key codes, validation
 │   └── stoppable_device.py # StoppableEvdevDevice: read loop that stops on close()
+├── hardware.py          # probe_hardware/describe/log_hardware_summary (Stage 5)
 ├── logging_setup.py     # shared "vocalis" logger configuration
 ├── model_manager.py     # GPU single-residency + idle-unload policy
+├── remote.py             # vocalis --settings client: talks to the daemon's socket (Stage 5)
 ├── settings.py          # LiveSettings: shared live config holder + voice list
-├── startup_checks.py    # four non-fatal checks run once at startup (Stage 2)
+├── startup_checks.py    # five non-fatal checks run once at startup (Stage 2, Stage 5)
 ├── notify.py               # Notifier: desktop notifications (notify-send)
 ├── output/
 │   ├── clipboard.py        # ClipboardReader/ClipboardWriter: clipboard text via xclip
@@ -54,16 +57,20 @@ tests/                    # pytest suite mirroring src/vocalis/ (≥85% coverage
                           #   conftest.py sets QT_QPA_PLATFORM=offscreen for Qt tests
 ├── test_cross_feature_integration.py  # whole-system tests: real build_*() + one
                           #   shared ModelManager, not a single feature in isolation
+├── test_hardware.py       # probe_hardware/describe/log_hardware_summary, every source faked
+├── test_remote.py         # vocalis --settings client, against a real socket in tmp_path
+├── test_package_metadata.py  # LICENSE + pyproject.toml license metadata
 └── installer/            # bats suite mirroring packaging/installer/
     ├── test_preflight.bats
     ├── test_apt.bats
     ├── test_pyenv.bats
     ├── test_models.bats
     ├── test_service.bats
+    ├── test_desktop.bats
     ├── test_install.bats
     ├── test_uninstall.bats
     ├── test_build_run.bats
-    └── fixtures/          # fake os-release files, fake systemd unit template
+    └── fixtures/          # fake os-release files, fake systemd unit template, fake vocalis.desktop
 config/
 └── default_config.toml   # first-run config template
 
@@ -71,8 +78,10 @@ packaging/
 ├── systemd/
 │   ├── vocalis.service    # systemd --user unit file template (placeholders filled in by Stage 3's installer)
 │   └── README.md          # placeholder and design notes for the unit file; the systemd-analyze verify command
+├── desktop/
+│   └── vocalis.desktop    # application-menu launcher template (Stage 5); __VOCALIS_EXEC__ filled in by the installer
 └── installer/
-    ├── install.sh          # end-to-end, idempotent installer (preflight -> apt -> python env -> models -> service)
+    ├── install.sh          # end-to-end, idempotent installer (preflight -> apt -> python env -> models -> service -> menu launcher)
     ├── uninstall.sh        # reverses install.sh; --purge also removes config/models/Piper
     ├── build-run.sh        # wraps install.sh/uninstall.sh into install.run/uninstall.run via makeself
     ├── README.md           # how to run/rebuild everything in this folder
@@ -82,7 +91,8 @@ packaging/
         ├── pyenv.sh        # uv install, wheel find-or-build, venv creation, wheel install
         ├── fetch_models.py # Parakeet/Qwen3-TTS/Piper-voice reuse-or-download via huggingface_hub
         ├── models.sh       # Piper binary reuse-or-download (the one non-Hugging-Face asset)
-        └── service.sh      # systemd unit placeholder substitution + enable/start
+        ├── service.sh      # systemd unit placeholder substitution + enable/start
+        └── desktop.sh      # application-menu launcher placeholder substitution (Stage 5)
 
 docs/
 ├── superpowers/
@@ -128,3 +138,11 @@ scope.
 Stage 4 (whole-system testing and docs hardening) added
 `tests/test_cross_feature_integration.py` (above) and the top-level
 `README.md`; it made no changes to `src/vocalis/`.
+Stage 5 (license, hardware probe, findable Settings, desktop launcher)
+added the top-level `LICENSE` file, `hardware.py` and `remote.py` (each
+with a matching test file), the `packaging/desktop/` folder (the launcher
+template), `packaging/installer/lib/desktop.sh` (with
+`tests/installer/test_desktop.bats`), and `tests/test_package_metadata.py`;
+it extended `startup_checks.py`, `daemon.py`, `cli.py`,
+`features/dictation.py`, `ui/tray.py`, `pyproject.toml`, `install.sh`,
+`uninstall.sh` and `build-run.sh` in place.

@@ -256,7 +256,8 @@ To add one:
 2. Add a `lambda: check_<thing>(...)` to the `checks` list in
    `run_startup_checks()`, in the position where its message should
    appear (messages are collected in a fixed order — Parakeet model
-   first, then Qwen3-TTS model, then `ydotoold`, then the capture tools).
+   first, then Qwen3-TTS model, then `ydotoold`, then the capture tools,
+   then a stale `~/.asoundrc` last).
 3. If the check depends on something that can be monkeypatched at module
    level (like `shutil.which`), pass it explicitly at the call site
    inside `run_startup_checks()` rather than relying on the check
@@ -425,6 +426,40 @@ exactly one place that list is written down. If you ever need to change
 which files count as "the model is present" for either Parakeet or
 Qwen3-TTS, change it here; both the installer and `run_startup_checks()`
 pick up the change automatically.
+
+## `vocalis --settings` and the console-script entrypoint (Stage 5)
+
+The `vocalis` console script (`[project.scripts]` in `pyproject.toml`)
+points at `vocalis.cli:entrypoint`, not `vocalis.cli:main` directly.
+`entrypoint()` parses `sys.argv` for a `--settings` flag: with it, it
+calls `vocalis.remote.open_settings()` and exits with that function's
+return code *without* running the rest of the app in this process; without
+it, it calls `main()` exactly as before. This split exists so a quick
+`vocalis --settings` from a terminal (or the application-menu launcher —
+see `packaging/installer/README.md`) is cheap and talks to whichever
+Vocalis is already running, instead of starting a second full instance.
+
+`open_settings()` (`remote.py`) tries `send_command(socket_path,
+SHOW_SETTINGS)` first; everything else (starting the service, the 20
+second poll loop) only runs if that first attempt gets no answer. Keep
+this order if you ever touch it — `start_user_service()` calls `systemctl
+--user start vocalis`, which is a no-op but not free if Vocalis is
+already running, and the whole point of trying `send_command()` first is
+to skip it in the common case.
+
+On the receiving end, `VocalisDaemon`'s new `command_handler` argument
+(see `daemon.py`) is wired in `main()` to `_SettingsBridge.handle_command`,
+a one-method `QObject` whose only job is `emit()`-ing a Qt signal
+connected to `settings_window.present()`. This indirection is required,
+not optional: `command_handler` runs on the daemon's own socket-accept
+thread, and Qt widgets may only be touched from the thread that owns the
+`QApplication`. A Qt signal's queued connection is the safe way across
+that boundary — calling `settings_window.present()` straight from the
+socket thread would be a race at best and a crash at worst. If you ever
+add a second remote command, route it through the same bridge pattern
+(a dedicated signal per command, or one signal carrying the command as
+its argument) rather than calling into any Qt object directly from
+`handle_command()`.
 
 ## Running the UI without a screen
 

@@ -90,7 +90,7 @@ NUMLOCK pressed (evdev event, NumlockListener)
 NUMLOCK released (evdev event, NumlockListener)
   -> DictationFeature.on_release()
        -> audio = recorder.stop()
-       -> if no audio captured: notify("No audio captured"), stop
+       -> if no audio captured: notify(NO_AUDIO_MESSAGE), stop   # Stage 5: longer, actionable message
        -> notify("Transcribing...")
        -> engine = model_manager.acquire("parakeet", parakeet_factory)
        -> text = engine.transcribe(audio, sample_rate=16000)
@@ -356,8 +356,9 @@ main(), immediately after load_config():
        startup_notifier.notify("Vocalis", message)
 
 run_startup_checks(config):
-  -> for each of the four checks, in a fixed order
-       (Parakeet model, Qwen3-TTS model, ydotoold, OCR capture tools):
+  -> for each of the five checks, in a fixed order
+       (Parakeet model, Qwen3-TTS model, ydotoold, OCR capture tools,
+        a stale Voxtype ~/.asoundrc — the last one added in Stage 5):
        -> try: result = check()
           except Exception: log a warning, skip this check, continue
        -> if result is not None: collect it
@@ -422,3 +423,44 @@ uninstall.sh main()
      above; print what was removed
   -> no --purge -> print what was kept (config + models) and how to purge
 ```
+
+## Opening Settings three ways (Stage 5)
+
+User perspective: a left-click on the tray icon, choosing "Vocalis" in the
+applications menu, or running `vocalis --settings` in a terminal all open
+the same Settings window. See `docs/user-docs.md`'s "How to open Vocalis"
+section.
+
+```
+Tray left-click (TrayIcon._on_activated, reason == Trigger)
+  -> on_open_settings() -> settings_window.present()
+
+Applications-menu click (packaging/desktop/vocalis.desktop)
+  -> runs: <installed vocalis> --settings     # same command as below
+
+`vocalis --settings` (entrypoint(), the vocalis console-script target)
+  -> open_settings(socket_path)                        # remote.py
+       -> send_command(socket_path, SHOW_SETTINGS)
+            -> if the daemon answers: ack received, exit 0, done
+       -> else: start_user_service()                    # systemctl --user start vocalis
+            -> if it could not even be started: print error, exit 1
+            -> else: poll send_command() every 0.5s for up to 20s
+                 -> first ack: exit 0
+                 -> still nothing after 20s: print error, exit 1
+
+Inside the now-running daemon, when SHOW_SETTINGS arrives:
+  VocalisDaemon._handle_connection()           # on the daemon's own socket thread
+    -> command_handler(command)                # == bridge.handle_command
+         -> bridge.show_settings.emit()          # _SettingsBridge(QObject)
+              -> (Qt queued connection, delivered on the GUI thread)
+              -> settings_window.present()
+    -> sends ack:show-settings regardless of what the handler did
+```
+
+`_SettingsBridge` exists only because the socket thread must never touch a
+Qt widget directly; its signal is the one safe way to hand the request
+over to the GUI thread that owns `settings_window`.
+
+`present()` is safe to call from any of the three paths more than once in
+a row — a second call while the window is already open just raises it to
+the front instead of opening a duplicate.

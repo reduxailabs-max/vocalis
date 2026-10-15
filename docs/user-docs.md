@@ -1,5 +1,33 @@
 # User Documentation
 
+## How to open Vocalis
+
+Once Vocalis is installed and running (see "Installing Vocalis" below),
+there are three ways to open it:
+
+- **Click the tray icon.** A single left-click on the small round Vocalis
+  icon in your system tray opens the Settings window.
+- **Use the applications menu.** Vocalis adds a normal "Vocalis" entry to
+  your desktop's applications menu, the same as any other installed
+  program — look for it there and click it like you would any app.
+- **Run `vocalis --settings` from a terminal.** This opens Settings too,
+  and if Vocalis isn't running yet, it starts it for you first (this can
+  take a few seconds).
+
+Two messages you might see are worth knowing about:
+
+- **"An old sound settings file from Voxtype is still at ~/.asoundrc..."**
+  — a leftover file from the previous "Voxtype" app is still changing
+  your computer's default sound settings. Vocalis works around it
+  automatically, so you don't have to do anything, but if it's causing
+  problems in other programs too, you can rename it (for example to
+  `.asoundrc.old`) to retire it everywhere.
+- **"No sound was recorded. Check that your microphone is plugged in,
+  not muted, and chosen as the input device, then try again."** — you
+  held the dictation key but nothing was picked up from your microphone.
+  Check the microphone is plugged in, not muted, and selected as your
+  system's input device, then try dictating again.
+
 ## Installing Vocalis (Phase 8)
 
 On a Debian/Ubuntu-family 64-bit machine with a working NVIDIA graphics
@@ -302,11 +330,11 @@ Vocalis will:
 - Stop trying to restart if it crashes 5 times within one minute, rather
   than looping forever.
 
-### What the four start-up notifications mean
+### What the five start-up notifications mean
 
-Every time Vocalis starts, it quickly checks four things and tells you
+Every time Vocalis starts, it quickly checks five things and tells you
 about any problem it finds with a desktop notification. **None of these
-four notifications is an error, and none of them stops Vocalis from
+five notifications is an error, and none of them stops Vocalis from
 starting.** Each one is a heads-up about one specific feature — that one
 feature won't work right until you fix the thing it mentions, but
 everything else keeps working normally:
@@ -323,6 +351,9 @@ everything else keeps working normally:
 - **"The OCR Reader needs tesseract/xclip..."** — Reading text off the
   screen (OCR Reader) won't work until the program(s) the message names
   are installed.
+- **"An old sound settings file from Voxtype is still at ~/.asoundrc..."**
+  — see "How to open Vocalis" at the top of this document for what this
+  means and what to do about it.
 
 ### About "Vocalis could not start"
 

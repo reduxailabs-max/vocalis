@@ -88,7 +88,7 @@
 
 | File | Purpose |
 |---|---|
-| `src/vocalis/startup_checks.py` | Four independent, non-fatal startup checks (Parakeet model files, Qwen3-TTS model files, `ydotoold`'s socket, OCR's `tesseract`/`xclip`), each a function returning a human-readable message or `None`; `run_startup_checks(config)` runs all four in a fixed order and never lets one raising stop the rest. |
+| `src/vocalis/startup_checks.py` | Five independent, non-fatal startup checks (Parakeet model files, Qwen3-TTS model files, `ydotoold`'s socket, OCR's `tesseract`/`xclip`, and — added in Stage 5 — a stale Voxtype `~/.asoundrc`), each a function returning a human-readable message or `None`; `run_startup_checks(config)` runs all five in a fixed order and never lets one raising stop the rest. |
 | `packaging/systemd/vocalis.service` | systemd `--user` unit file **template** — `__VOCALIS_EXEC__`/`__VOCALIS_WORKDIR__` placeholders, `Restart=on-failure`/`RestartSec=3`/`StartLimitBurst=5`/`StartLimitIntervalSec=60`, `WantedBy=xdg-desktop-autostart.target`, `After=`/`Wants=` on the three PipeWire user services. Not installed, enabled, or started by this stage. |
 | `packaging/systemd/README.md` | Explains the two placeholders and who fills them in (Stage 3's installer), why `xdg-desktop-autostart.target` is used instead of `default.target`, the PipeWire ordering rationale, the crash-recovery settings, and the text-only `systemd-analyze --user verify` command. |
 | `tests/test_systemd_unit.py` | Text-only checks on the unit file's content: restart policy, autostart target (not `default.target`), PipeWire `After=`/`Wants=`, the `__VOCALIS_EXEC__` placeholder (never a real path), and that the README documents it. Never starts a real service. |
@@ -134,3 +134,31 @@
 |---|---|
 | `tests/test_cross_feature_integration.py` | Whole-system tests that reuse `cli.py`'s own `build_*` functions against one real, shared `ModelManager` and `LiveSettings` — unlike every other test file, which tests one feature in isolation with its own fakes. Covers: single-GPU-model residency held across features, Quick Reader/Document Reader reusing the already-loaded Qwen3-TTS engine, hotkeys never cross-triggering another feature's handler, a settings change picked up by a different feature's next reading, two features' notifications both reaching the one shared notifier, and a full two-feature lifecycle ending in a clean shutdown. See `docs/developer-docs.md` for how this differs from the rest of the test suite. |
 | `README.md` (repo root) | Top-level project README: what Vocalis is, quick links to install/usage/developer docs, and an accurate list of every network download the installer performs (added after an initial privacy-claim fix). |
+
+## Stage 5 (License, hardware probe, findable Settings, desktop launcher) — new files
+
+| File | Purpose |
+|---|---|
+| `LICENSE` | The project's MIT license text (copyright reduxailabs-max, 2026). |
+| `src/vocalis/hardware.py` | `GpuInfo`/`HardwareInfo` dataclasses, `probe_hardware()` (GPU via `query_gpu_with_torch()`, RAM from `/proc/meminfo`, CPU count/load from `os.cpu_count()`/`/proc/loadavg` — every source independently optional and never raises), `describe()` (one plain-English summary line), and `log_hardware_summary()` (probes and logs that line at INFO, downgrading any failure to a WARNING). |
+| `src/vocalis/remote.py` | The client side of `vocalis --settings`: `send_command()` talks to the daemon's Unix socket; `start_user_service()` runs `systemctl --user start vocalis`; `open_settings()` sends `SHOW_SETTINGS`, starting the service and polling for up to 20 seconds first if nothing answered. |
+| `packaging/desktop/vocalis.desktop` | Application-menu launcher **template** — `__VOCALIS_EXEC__` placeholder, `Exec=... --settings`, filled in and installed by `install.sh` via `desktop_install_launcher()`. |
+| `packaging/installer/lib/desktop.sh` | `desktop_install_launcher()` — fills the desktop template's `__VOCALIS_EXEC__` placeholder with the quoted, sed-escaped exec path and writes it atomically (temp file + `mv`), mirroring `service_substitute_unit()`'s pattern. |
+| `tests/test_hardware.py` | Tests for `probe_hardware()`/`describe()`/`log_hardware_summary()` with every source (GPU query, `/proc/meminfo`, `/proc/loadavg`, `cpu_count`) faked — no real `/proc` or GPU touched. |
+| `tests/test_remote.py` | Tests for `send_command()`/`open_settings()` against a real Unix socket bound in `tmp_path`, with `start_user_service` faked so no real `systemctl` runs. |
+| `tests/test_package_metadata.py` | Confirms `LICENSE` is MIT with the right copyright line and that `pyproject.toml` declares `license = "MIT"` and `license-files = ["LICENSE"]`. |
+| `tests/installer/test_desktop.bats` | `bats` tests for `desktop_install_launcher()`: fills in and quotes the exec path, and leaves an existing launcher untouched if the template is missing. |
+
+## Stage 5 — changed files
+
+| File | Change |
+|---|---|
+| `src/vocalis/startup_checks.py` | Gained `check_stale_asoundrc()`, the fifth and last check in `run_startup_checks()`'s fixed order — warns when `~/.asoundrc` still mentions "voxtype". |
+| `src/vocalis/features/dictation.py` | The old "No audio captured" notification text was replaced by `NO_AUDIO_MESSAGE`, a longer, more actionable message telling the user to check their microphone is plugged in, not muted, and selected as the input device. |
+| `src/vocalis/ui/tray.py` | `TrayIcon` now also opens Settings on a left-click (`QSystemTrayIcon.ActivationReason.Trigger`), not just from its right-click menu's **Settings…** entry. |
+| `src/vocalis/daemon.py` | `VocalisDaemon` gained an optional `command_handler` constructor argument, called with each received command line (on the accept-loop thread, before the ack is sent); a raising handler is logged and never blocks the ack. |
+| `src/vocalis/cli.py` | `main()` wires the daemon's `command_handler` to show the Settings window on `SHOW_SETTINGS`, starts a background thread calling `log_hardware_summary()` right after `LiveSettings`/`OutputDeviceChooser` are built, and gained `entrypoint()`, the new `vocalis` console-script target — `--settings` calls `vocalis.remote.open_settings()` instead of running the full app. |
+| `pyproject.toml` | `license`/`license-files` metadata added; `[project.scripts] vocalis` now points at `vocalis.cli:entrypoint` instead of `vocalis.cli:main`. |
+| `packaging/installer/install.sh` | Sources `lib/desktop.sh` and, right after `service_enable_and_start()`, installs the application-menu launcher via `desktop_install_launcher()` (a failure there is logged but never fails the install); the closing message now explains the three ways to open Vocalis instead of just pointing at `systemctl status`. |
+| `packaging/installer/uninstall.sh` | Also removes `~/.local/share/applications/vocalis.desktop` if present. |
+| `packaging/installer/build-run.sh` | Also stages `packaging/desktop/vocalis.desktop` into both `.run` files' payload. |

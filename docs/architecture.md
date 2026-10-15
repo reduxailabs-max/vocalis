@@ -601,3 +601,69 @@ venv at `~/.local/share/vocalis/venv`, or enables the real `vocalis.
 service` — exactly as every earlier stage deferred all hands-on
 verification. The user's own first real run of `install.sh` is the
 genuine end-to-end check.
+
+## Stage 5 addition: License, hardware probe, and a findable Settings window
+
+Stage 5 is a grab-bag of small, independent polish items rather than one
+feature: an MIT license, a one-line hardware summary at startup, a
+leftover-`.asoundrc` warning, a clearer "no audio" message, and — the
+largest piece — three new ways to reach the Settings window, plus the
+application-menu launcher this task adds on top of them.
+
+**Hardware probe (`hardware.py`).** `probe_hardware()` takes a snapshot of
+the machine — the first CUDA GPU's name and free/total memory (via
+`torch.cuda`, imported lazily inside `query_gpu_with_torch()`), RAM
+total/available from `/proc/meminfo`, and CPU count/1-minute load from
+`os.cpu_count()`/`/proc/loadavg`. Every source is independently optional
+(a missing GPU, an unreadable `/proc` file, or a raising `cpu_count()` each
+degrade that one field to `None` rather than failing the whole probe), and
+`log_hardware_summary()` wraps the whole thing in a `try`/`except` so a
+hardware-probing bug can never stop Vocalis from starting — at worst it
+logs a `WARNING` instead of its usual `INFO` summary line. `main()` runs it
+on its own background thread, the same pattern as `_warm_up_pace_changer()`.
+
+**Daemon command hook and `remote.py`.** `VocalisDaemon` gained an optional
+`command_handler` constructor argument: a callable invoked with each
+received command line, on the accept-loop thread, before the ack is sent.
+A raising handler is logged and never blocks the ack from going out.
+Because that callable runs on the daemon's accept-loop thread, not the Qt
+thread, `main()` cannot have it call `settings_window.present()` directly
+— Qt widgets may only be touched from the GUI thread. Instead it wires the
+handler to `_SettingsBridge.handle_command()`, a tiny `QObject` whose only
+job is to `emit()` a Qt signal (`show_settings`) when it sees
+`vocalis.remote.SHOW_SETTINGS`; the signal is connected to
+`settings_window.present()`, and Qt's queued cross-thread delivery moves
+the actual call onto the GUI thread for it. `remote.py` is the client side, used by the
+new `vocalis --settings` command: `send_command()` talks to the daemon's
+existing Unix socket exactly like any other client; `open_settings()` tries
+that first, and if nothing answers (the service isn't running yet) it runs
+`systemctl --user start vocalis` and polls the socket for up to 20 seconds
+before giving up with a plain error on stderr.
+
+**Three ways to reach Settings.** Before this stage, Settings only opened
+from the tray's right-click menu. Now: (1) a left-click on the tray icon
+(`QSystemTrayIcon.ActivationReason.Trigger`) opens it directly, the same
+`settings_window.present()` call the menu entry already used; (2)
+`vocalis --settings` (the `entrypoint()` function, now the package's
+console-script target instead of `main()` directly) opens it in the
+already-running process via the socket, starting the service first if
+needed; (3) the application-menu launcher this task adds runs the exact
+same `vocalis --settings` command from a normal desktop menu click.
+`present()` is safe to call more than once — a second request while the
+window is already open just raises it, rather than opening a duplicate.
+
+**Application-menu launcher (`packaging/desktop/vocalis.desktop`,
+`packaging/installer/lib/desktop.sh`).** The template follows the same
+single-placeholder pattern as `packaging/systemd/vocalis.service`:
+`Exec=__VOCALIS_EXEC__ --settings`. `desktop_install_launcher()` mirrors
+`service_substitute_unit()`'s atomic temp-file-then-`mv` pattern exactly,
+with one addition: the exec path is wrapped in double quotes (so a path
+containing spaces, like a username with a space in it, still works) before
+being sed-escaped (backslash, pipe and ampersand, since `|` is the `sed`
+delimiter used here). `install.sh` installs it to
+`~/.local/share/applications/vocalis.desktop` right after
+`service_enable_and_start()`, using the same script-relative-else-repo-root
+template lookup as the unit file; a failure there is logged but never fails
+the install, since the tray icon and `vocalis --settings` still work
+without a menu entry. `uninstall.sh` removes it; `build-run.sh` stages the
+template into both `.run` files alongside the systemd unit template.

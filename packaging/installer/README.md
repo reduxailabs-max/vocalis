@@ -13,11 +13,19 @@ that file instead) from inside this folder. It will:
    machine (a few gigabytes — this can take a while).
 5. Set Vocalis up to start automatically whenever you log in, and start
    it right now.
+6. Add a "Vocalis" entry to your desktop's applications menu (if this one
+   step fails for some reason, it just prints a note and keeps going —
+   Vocalis still works fine without it).
+
+Once it's done, there are three ways to open Vocalis: click the small
+round icon it puts in your system tray, choose "Vocalis" in your
+applications menu, or run `vocalis --settings` from a terminal.
 
 It's safe to run more than once — anything already correctly set up is
 left alone, so re-running it also works as a repair command.
 
-To remove Vocalis, run `bash uninstall.sh` (see its own `--help`).
+To remove Vocalis, run `bash uninstall.sh` (see its own `--help`). This
+also removes the applications-menu entry added above.
 
 If you're using the self-extracting `uninstall.run` instead, put `--`
 before any flag meant for the uninstaller itself, because the `.run`
