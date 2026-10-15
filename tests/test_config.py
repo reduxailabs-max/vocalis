@@ -3,9 +3,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+from pydantic import ValidationError
 
 from vocalis.config import (
     ConfigError,
+    EnginesConfig,
     VocalisConfig,
     default_config_path,
     load_config,
@@ -20,8 +22,6 @@ def test_defaults_match_spec() -> None:
     assert config.shortcuts.document_reader == "Ctrl+Alt+D"
     assert config.shortcuts.ocr_reader == "Ctrl+Alt+O"
     assert config.engines.stt == "parakeet"
-    assert config.engines.quick_tts == "qwen3_tts"
-    assert config.engines.doc_tts == "qwen3_tts"
     assert config.notifications_enabled is True
     assert config.floating_widget_enabled is True
     assert config.model_idle_timeout_seconds == 30.0
@@ -172,3 +172,33 @@ def test_sound_and_pace_settings_round_trip(tmp_path: Path) -> None:
     loaded = load_config(path)
     assert loaded.audio_output_device == "hw:1,0"
     assert loaded.speaking_speed == 1.4
+
+
+def test_engine_choice_defaults_to_auto_for_both_readers() -> None:
+    """Both readers start on Automatic voice-engine choice."""
+    engines = VocalisConfig().engines
+    assert engines.quick_reader_engine == "auto"
+    assert engines.document_reader_engine == "auto"
+
+
+def test_engine_choice_rejects_an_unknown_engine_name() -> None:
+    """A typo'd engine name is a validation error, not a silent fallback."""
+    with pytest.raises(ValidationError):
+        EnginesConfig(quick_reader_engine="banana")  # type: ignore[arg-type]
+
+
+def test_old_config_with_the_dead_quick_tts_keys_loads_and_means_auto(tmp_path: Path) -> None:
+    """Config files written by earlier versions still load; their ignored keys mean Auto."""
+    path = tmp_path / "config.toml"
+    path.write_text('[engines]\nquick_tts = "qwen3_tts"\ndoc_tts = "qwen3_tts"\n', encoding="utf-8")
+    config = load_config(path)
+    assert config.engines.quick_reader_engine == "auto"
+    assert config.engines.document_reader_engine == "auto"
+
+
+def test_kokoro_defaults_live_under_the_vocalis_models_folder() -> None:
+    """Kokoro's model files default to ~/.local/share/vocalis/models/kokoro/."""
+    engines = VocalisConfig().engines
+    assert engines.kokoro_model_path.endswith("/.local/share/vocalis/models/kokoro/kokoro-v1.0.onnx")
+    assert engines.kokoro_voices_path.endswith("/.local/share/vocalis/models/kokoro/voices-v1.0.bin")
+    assert engines.kokoro_voice == "af_heart"

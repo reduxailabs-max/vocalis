@@ -17,6 +17,11 @@ VOICES: tuple[str, ...] = (
     "Serena", "Vivian", "Uncle_Fu", "Ryan", "Aiden", "Ono_Anna", "Sohee", "Eric", "Dylan",
 )
 
+KOKORO_VOICES: tuple[str, ...] = (
+    "af_heart", "af_bella", "af_nicole", "af_sarah", "af_sky",
+    "am_adam", "am_michael", "bf_emma", "bf_isabella", "bm_george", "bm_lewis",
+)
+
 
 class LiveSettings:
     """Thread-safe holder of the current VocalisConfig."""
@@ -58,6 +63,18 @@ class LiveSettings:
     def voice(self) -> str:
         """The TTS voice to use for the next reading."""
         return self.config.engines.qwen3_tts_speaker
+
+    def quick_reader_engine(self) -> str:
+        """Which voice engine Quick Reader should use ("auto" lets Vocalis pick)."""
+        return self.config.engines.quick_reader_engine
+
+    def document_reader_engine(self) -> str:
+        """Which voice engine Document Reader should use ("auto" lets Vocalis pick)."""
+        return self.config.engines.document_reader_engine
+
+    def kokoro_voice(self) -> str:
+        """The Kokoro voice to use for the next reading."""
+        return self.config.engines.kokoro_voice
 
     def audio_output_device(self) -> str:
         """The chosen sound output ("auto" lets the program pick one)."""

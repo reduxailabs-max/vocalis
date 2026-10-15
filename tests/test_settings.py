@@ -114,3 +114,24 @@ def test_sound_output_and_speed_accessors_follow_updates(tmp_path: Path) -> None
     settings.update(settings.config.model_copy(update={"audio_output_device": "hw:2,0", "speaking_speed": 1.5}))
     assert settings.audio_output_device() == "hw:2,0"
     assert settings.speaking_speed() == 1.5
+
+
+def test_engine_and_kokoro_voice_getters_follow_the_current_config(tmp_path: Path) -> None:
+    """The three new getters read the live config."""
+    from vocalis.config import EnginesConfig
+
+    config = VocalisConfig(
+        engines=EnginesConfig(quick_reader_engine="kokoro", document_reader_engine="piper", kokoro_voice="bf_emma")
+    )
+    settings = make(tmp_path, config)
+    assert settings.quick_reader_engine() == "kokoro"
+    assert settings.document_reader_engine() == "piper"
+    assert settings.kokoro_voice() == "bf_emma"
+
+
+def test_kokoro_voices_are_real_english_voice_names() -> None:
+    """The Settings shortlist only offers voices that exist in Kokoro's voices file."""
+    from vocalis.settings import KOKORO_VOICES
+
+    assert "af_heart" in KOKORO_VOICES
+    assert all(name[:2] in ("af", "am", "bf", "bm") for name in KOKORO_VOICES)

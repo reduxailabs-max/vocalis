@@ -12,8 +12,9 @@ ocr_reader = "Ctrl+Alt+O"
 
 [engines]
 stt = "parakeet"
-quick_tts = "qwen3_tts"
-doc_tts = "qwen3_tts"
+# Voice engine per reader: "auto" (Vocalis picks from your PC's load), "qwen3_tts", "kokoro", or "piper".
+quick_reader_engine = "auto"
+document_reader_engine = "auto"
 parakeet_model_dir = "/home/redx/.local/share/voxtype/models/parakeet-tdt-0.6b-v3-int8"
 qwen3_tts_speaker = "Ryan"
 

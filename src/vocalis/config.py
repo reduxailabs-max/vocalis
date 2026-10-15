@@ -9,7 +9,7 @@ import os
 import tempfile
 import tomllib
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import tomli_w
 from pydantic import BaseModel, Field, StringConstraints, ValidationError
@@ -59,17 +59,33 @@ def _default_piper_voice_model_path() -> str:
     return str(Path.home() / ".local" / "share" / "piper-voices" / "en_US-lessac-medium.onnx")
 
 
+EngineChoice = Literal["auto", "qwen3_tts", "kokoro", "piper"]
+
+
+def _default_kokoro_model_path() -> str:
+    """Default location of the Kokoro voice model file."""
+    return str(Path.home() / ".local" / "share" / "vocalis" / "models" / "kokoro" / "kokoro-v1.0.onnx")
+
+
+def _default_kokoro_voices_path() -> str:
+    """Default location of Kokoro's voices file."""
+    return str(Path.home() / ".local" / "share" / "vocalis" / "models" / "kokoro" / "voices-v1.0.bin")
+
+
 class EnginesConfig(BaseModel):
     """Which engine implementation each feature should use."""
 
     stt: str = "parakeet"
-    quick_tts: str = "qwen3_tts"
-    doc_tts: str = "qwen3_tts"
+    quick_reader_engine: EngineChoice = "auto"
+    document_reader_engine: EngineChoice = "auto"
     parakeet_model_dir: str = Field(default_factory=_default_parakeet_model_dir)
     qwen3_tts_model_dir: str = Field(default_factory=_default_qwen3_tts_model_dir)
     qwen3_tts_speaker: str = "Ryan"
     piper_binary_path: str = Field(default_factory=_default_piper_binary_path)
     piper_voice_model_path: str = Field(default_factory=_default_piper_voice_model_path)
+    kokoro_model_path: str = Field(default_factory=_default_kokoro_model_path)
+    kokoro_voices_path: str = Field(default_factory=_default_kokoro_voices_path)
+    kokoro_voice: str = "af_heart"
 
 
 class VocalisConfig(BaseModel):
