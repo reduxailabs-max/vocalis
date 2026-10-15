@@ -1165,3 +1165,113 @@ A separate "user guide" document (the existing `docs/user-docs.md` already
 serves that purpose); any new product feature, config field, or CLI
 behavior; a real hands-on test run (still deferred to the user's own final
 install).
+
+## Stage 5 amendment — Foundations and quick wins (confirmed via superpowers:brainstorming, 2026-10-15)
+
+### Why this stage exists
+
+The user installed Vocalis for real for the first time (2026-10-15) and sent a
+long list of problems and wishes. The full roadmap (Stages 5-8) is in the
+approved plan; this stage is the first, smallest one. It fixes things that
+block everything else and adds the small foundations later stages need.
+
+Roadmap (decided with the user, order chosen by the assistant):
+
+- **Stage 5 (this one):** license, hardware probe, clearer microphone
+  problems, a way to find and open the app window.
+- **Stage 6:** voice engine overhaul (Kokoro engine, automatic engine choice,
+  gapless long reading, clearer audio, CPU/RAM/GPU limits).
+- **Stage 7:** red-and-black UI and highlighting of the line being read.
+- **Stage 8:** easy installer with a GUI setup wizard (CPU-only PCs allowed).
+
+Decisions already made by the user: engines Kokoro + Qwen3-TTS + Piper
+(VoxCPM and online voices are NOT built); automatic choice by hardware (strong
+GPU -> Qwen3-TTS, GPU over 2 GB -> Kokoro, no GPU -> Kokoro or Piper); MIT
+license; commit to local `main` after each stage and push automatically to
+`origin/main` only.
+
+### Already done before this stage (committed in the first public commit)
+
+The NumLock "no audio captured" bug has a confirmed root cause: an old
+`~/.asoundrc` left by the previous app ("Voxtype") routes the ALSA "default"
+microphone to nowhere, so the stream opens but no sound ever arrives. The
+PipeWire and Pulse inputs work. `pick_input_device()` in
+`src/vocalis/audio/capture.py` now prefers those; `MicRecorder` takes a
+`device`. The user still has to confirm on a real microphone at the end.
+
+### Scope (five small pieces)
+
+1. **MIT license.** `LICENSE` file (holder: reduxailabs-max, year 2026),
+   `license = "MIT"` and `license-files` in `pyproject.toml`, a License
+   section in `README.md`.
+2. **Hardware probe.** New `src/vocalis/hardware.py`: a frozen
+   `HardwareInfo` (GPU name, GPU total/free MB, RAM total/free MB, CPU core
+   count, 1-minute load) and `probe_hardware()` whose four data sources
+   (`/proc/meminfo`, `/proc/loadavg`, `os.cpu_count`, a GPU query using
+   `torch.cuda`) are injectable so tests never touch real hardware. No new
+   dependency (`psutil` is not declared). It must never raise: any source that
+   fails yields `None` for those fields. In this stage it is used only to
+   write one diagnostic line to the log at startup (in a background thread,
+   because importing torch is slow); Stage 6 uses it to choose engines and
+   enforce limits.
+3. **Clearer microphone problems** (passive, no recording at startup):
+   - New startup check `check_stale_asoundrc(path)`: if `~/.asoundrc` exists
+     and mentions `voxtype` (case-insensitive), return a plain-English message
+     (other apps may have a silent microphone; Vocalis already works around
+     it; the file can be renamed to `.asoundrc.old`). Added to
+     `run_startup_checks` after the capture-tools check.
+   - Dictation's empty-recording notification changes from "No audio
+     captured" to a message that tells the user what to check (microphone on,
+     not muted, right microphone chosen). The chosen input device index/name
+     is written to the log when recording starts.
+   - An active "record two seconds and check the level" test is NOT done at
+     every startup (it would open the microphone each launch). It becomes a
+     page of the Stage 8 setup wizard instead.
+4. **Make the window findable.** Today the only entry is a tray icon with no
+   click handler, and a second `vocalis` launch exits silently, so the user
+   could not find the GUI.
+   - Tray: a left-click (Qt `activated` with `Trigger`) opens Settings.
+   - `SettingsWindow.present()` (load current values, show, raise, activate)
+     replaces the same three lines duplicated in `build_ui`.
+   - `VocalisDaemon` gets an optional `command_handler` called with each
+     received command line (exceptions are logged, the `ack:` reply is
+     unchanged). `cli.main` connects the command `show-settings` to a small
+     Qt bridge object whose signal runs `settings_window.present()` on the GUI
+     thread.
+   - `vocalis --settings` (argparse in `main(argv=None)`): connects to the
+     running daemon's socket and sends `show-settings`. If nothing is running
+     it starts the user service (`systemctl --user start vocalis`, injectable
+     in tests), waits up to 20 seconds for the socket, then sends the command;
+     if that fails it prints a short plain-English message and exits 1.
+   - Installer installs a launcher `~/.local/share/applications/vocalis.desktop`
+     (Name=Vocalis, Exec=`<installed vocalis> --settings`, an icon from the
+     system theme) from a template `packaging/desktop/vocalis.desktop`
+     with a `__VOCALIS_EXEC__` placeholder; `uninstall.sh` removes it; the
+     closing message of `install.sh` says where the window is (the tray icon,
+     or the "Vocalis" entry in the application menu).
+5. **Docs and changelog** for all of the above (user docs gain a short "How to
+   open Vocalis" section).
+
+### Out of scope (and why)
+
+- Speed/voice quality, engines, limits: Stage 6.
+- Theme and highlighting: Stage 7.
+- Wizard, CPU-only install, mic test page: Stage 8.
+- The `gpu_vram_ceiling_mb` / `engines.*` dead settings: Stage 6.
+
+### Testing
+
+Same gates as every stage: tests >= 85% coverage, mypy strict clean, zero
+warnings, shellcheck + bats clean for installer changes. All hardware is faked
+(`/proc` files read from temp files, fake GPU query, fake socket/systemctl
+runner, offscreen Qt). The existing autouse guards stay. New fakes follow the
+existing patterns (`FakeStream`, injectable runner functions).
+
+### Rulings the assistant made (not asked of the user)
+
+1. The roadmap order (5 -> 6 -> 7 -> 8).
+2. Dropped "record at startup" mic test in favour of passive diagnosis now and
+   a wizard page later (privacy, startup time, and a better place for it).
+3. Dropped the vague "speaking_speed messaging" item; Stage 6 owns speed.
+4. `--settings` starts the service itself when needed, so the application-menu
+   launcher works whether or not Vocalis is already running.
