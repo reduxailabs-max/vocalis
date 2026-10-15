@@ -6,6 +6,8 @@ build-backend = "hatchling.build"
 name = "vocalis"
 version = "0.1.0"
 description = "Offline voice AI workstation: dictation, quick reader, document reader, OCR reader"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13,<3.14"
 dependencies = [
     "pydantic>=2.6,<3",

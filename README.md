@@ -24,3 +24,9 @@ Setup, running the test suite, and project conventions are in
 [`docs/developer-docs.md`](docs/developer-docs.md). The design is in
 [`docs/architecture.md`](docs/architecture.md), and the folder layout is in
 [`docs/folder-structure.md`](docs/folder-structure.md).
+
+## License
+
+Vocalis is released under the [MIT License](LICENSE). The voice and speech
+models it downloads come with their own licenses (Qwen3-TTS and Parakeet are
+Apache-2.0 or similar; see each model's page).
