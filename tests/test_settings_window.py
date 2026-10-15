@@ -224,3 +224,19 @@ def test_preview_button_shows_failure_reason(qtbot, tmp_path) -> None:  # type: 
     _settings, window, _applied, _path = make(qtbot, tmp_path, on_preview_voice=on_preview_voice)
     window._preview_button.click()  # noqa: SLF001
     assert window._message_label.text() == "Preview failed: engine busy"  # noqa: SLF001
+
+
+def test_present_shows_and_reloads_saved_values_when_hidden(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings, window, _applied, _path = make(qtbot, tmp_path)
+    window._voice_combo.setCurrentText("Aiden")  # noqa: SLF001 - unsaved edit while hidden
+    window.present()
+    assert window.isVisible()
+    assert window._voice_combo.currentText() == settings.voice()  # noqa: SLF001
+
+
+def test_present_keeps_unsaved_edits_when_already_open(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, window, _applied, _path = make(qtbot, tmp_path)
+    window.present()
+    window._voice_combo.setCurrentText("Aiden")  # noqa: SLF001
+    window.present()
+    assert window._voice_combo.currentText() == "Aiden"  # noqa: SLF001

@@ -10,6 +10,7 @@ Both SIGINT (Ctrl+C) and SIGTERM (systemd `stop`/`restart`) call app.quit()
 through the identical handler pattern, so the shutdown code in main()'s
 finally block runs the same way regardless of which signal arrived.
 """
+import argparse
 import logging
 import signal
 import sys
@@ -20,7 +21,7 @@ from typing import Callable, cast
 import numpy as np
 import numpy.typing as npt
 import sounddevice as sd
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QObject, QTimer, Signal
 from PySide6.QtWidgets import QApplication
 
 from vocalis.config import VocalisConfig, default_config_path, load_config
@@ -33,6 +34,7 @@ from vocalis.logging_setup import configure_logging
 from vocalis.model_manager import ModelManager
 from vocalis.notify import Notifier
 from vocalis.output.typer import TextOutput
+from vocalis.remote import SHOW_SETTINGS, open_settings
 from vocalis.startup_checks import run_startup_checks
 from vocalis.audio.capture import MicRecorder, pick_input_device
 from vocalis.audio.output_device import AUTO, OutputDeviceChooser
@@ -109,7 +111,11 @@ def _socket_path() -> Path:
     return Path.home() / ".local" / "state" / "vocalis" / "vocalis.sock"
 
 
-def build_daemon(model_manager: ModelManager, socket_path: Path) -> VocalisDaemon:
+def build_daemon(
+    model_manager: ModelManager,
+    socket_path: Path,
+    command_handler: Callable[[str], None] | None = None,
+) -> VocalisDaemon:
     """Construct a VocalisDaemon using the given shared ModelManager.
 
     Args:
@@ -119,12 +125,20 @@ def build_daemon(model_manager: ModelManager, socket_path: Path) -> VocalisDaemo
             may exist per running vocalis process, since it enforces
             single-model GPU residency across every feature.
         socket_path: Where the daemon's Unix socket should live.
+        command_handler: Optional callable invoked with each command the
+            daemon receives over its socket (e.g. to bridge "show-settings"
+            onto the Qt main thread).
 
     Returns:
         A VocalisDaemon ready to have .start() called on it.
     """
     logger = configure_logging(level="INFO")
-    return VocalisDaemon(socket_path=socket_path, logger=logger, model_manager=model_manager)
+    return VocalisDaemon(
+        socket_path=socket_path,
+        logger=logger,
+        model_manager=model_manager,
+        command_handler=command_handler,
+    )
 
 
 def resolve_shortcuts(config: VocalisConfig) -> ShortcutSet:
@@ -622,6 +636,17 @@ def build_ocr_reader(
     return feature, listener
 
 
+class _SettingsBridge(QObject):
+    """Carries 'show Settings' requests from the socket thread to the Qt thread."""
+
+    show_settings = Signal()
+
+    def handle_command(self, command: str) -> None:
+        """Called on the daemon's socket thread for every received command."""
+        if command == SHOW_SETTINGS:
+            self.show_settings.emit()
+
+
 def build_ui(
     settings: LiveSettings,
     hub: StatusHub,
@@ -673,10 +698,8 @@ def build_ui(
         doc_popup.raise_()
 
     def open_settings() -> None:
-        """Show the Settings window with the current values."""
-        settings_window.load_from_settings()
-        settings_window.show()
-        settings_window.raise_()
+        """Show the Settings window, reusing saved values only if it was hidden."""
+        settings_window.present()
 
     tray = TrayIcon(
         hub,
@@ -772,9 +795,12 @@ def main() -> None:
     app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))
     app.setQuitOnLastWindowClosed(False)
     hub = StatusHub()
+    bridge = _SettingsBridge()
     model_manager = ModelManager(idle_timeout_seconds=config.model_idle_timeout_seconds)
     reading_coordinator = ReadingCoordinator()
-    daemon = build_daemon(model_manager=model_manager, socket_path=_socket_path())
+    daemon = build_daemon(
+        model_manager=model_manager, socket_path=_socket_path(), command_handler=bridge.handle_command
+    )
     _, dictation_listener = build_dictation(
         config=config, model_manager=model_manager, settings=settings, hub=hub,
         key_code=codes.push_to_talk,
@@ -798,6 +824,7 @@ def main() -> None:
         app.quit()
 
     widget, settings_window, tray = build_ui(settings, hub, doc_popup, quit_app, output_chooser)
+    bridge.show_settings.connect(settings_window.present)
     previous_sigint_handler: "signal.Handlers | int | Callable[..., object] | None" = None
     previous_sigterm_handler: "signal.Handlers | int | Callable[..., object] | None" = None
     keepalive_timer: QTimer | None = None
@@ -839,3 +866,14 @@ def main() -> None:
                 ("floating widget window", widget.close),
             ]
         )
+
+
+def entrypoint(argv: "list[str] | None" = None) -> None:
+    """The `vocalis` console command: run the app, or with --settings open its window."""
+    parser = argparse.ArgumentParser(prog="vocalis", description="Offline voice AI workstation.")
+    parser.add_argument("--settings", action="store_true",
+                        help="open the Settings window of the running Vocalis (starting it if needed)")
+    args = parser.parse_args(sys.argv[1:] if argv is None else argv)
+    if args.settings:
+        sys.exit(open_settings(_socket_path()))
+    main()

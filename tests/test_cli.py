@@ -9,7 +9,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from vocalis.cli import build_daemon, build_dictation, build_doc_reader, build_ocr_reader, build_quick_reader, main
+from vocalis.cli import (
+    build_daemon,
+    build_dictation,
+    build_doc_reader,
+    build_ocr_reader,
+    build_quick_reader,
+    entrypoint,
+    main,
+)
 from vocalis.config import VocalisConfig
 from vocalis.daemon import DaemonAlreadyRunningError
 from vocalis.features.reading_coordinator import ReadingCoordinator
@@ -1310,3 +1318,24 @@ def test_main_never_attempts_a_real_startup_notification_without_patching_it(  #
         main()
 
     assert command_calls == []
+
+
+def test_entrypoint_without_flags_runs_main() -> None:
+    with patch("vocalis.cli.main") as fake_main:
+        entrypoint([])
+    fake_main.assert_called_once_with()
+
+
+def test_entrypoint_settings_flag_opens_settings_and_exits_with_its_code() -> None:
+    with patch("vocalis.cli.open_settings", return_value=0) as fake_open, patch("vocalis.cli.main") as fake_main:
+        with pytest.raises(SystemExit) as exited:
+            entrypoint(["--settings"])
+    assert exited.value.code == 0
+    fake_open.assert_called_once()
+    fake_main.assert_not_called()
+
+
+def test_build_daemon_passes_the_command_handler(tmp_path: Path) -> None:
+    handler = MagicMock()
+    daemon = build_daemon(model_manager=ModelManager(), socket_path=tmp_path / "s.sock", command_handler=handler)
+    assert daemon._command_handler is handler  # noqa: SLF001

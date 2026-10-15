@@ -161,6 +161,14 @@ class SettingsWindow(QWidget):
         self._speed_slider.setValue(round(config.speaking_speed * _SPEED_SCALE))
         self._update_speed_label(self._speed_slider.value())
 
+    def present(self) -> None:
+        """Bring the window to the front; refresh it from saved settings only if it was hidden."""
+        if not self.isVisible():
+            self.load_from_settings()
+        self.show()
+        self.raise_()
+        self.activateWindow()
+
     def _fill_output_combo(self, stored_device: str) -> None:
         """Fill the sound output drop-down with "Automatic" plus the
         currently available outputs, keeping a stored but no-longer-listed

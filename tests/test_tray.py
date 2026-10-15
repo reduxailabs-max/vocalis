@@ -2,6 +2,8 @@
 import logging
 from unittest.mock import patch
 
+from PySide6.QtWidgets import QSystemTrayIcon
+
 from vocalis.ui.status_hub import ReadingControls, StatusHub
 from vocalis.ui.tray import TrayIcon
 
@@ -134,3 +136,15 @@ def test_a_closed_tray_ignores_hub_signals(qtbot, capsys) -> None:  # type: igno
     hub.set_listening(True)
     hub.end_reading()
     assert "RuntimeError" not in capsys.readouterr().err
+
+
+def test_left_click_opens_settings(qtbot) -> None:  # type: ignore[no-untyped-def]
+    _hub, tray, calls = make(qtbot)
+    tray._tray.activated.emit(QSystemTrayIcon.ActivationReason.Trigger)  # noqa: SLF001
+    assert calls == ["settings"]
+
+
+def test_right_click_does_not_open_settings(qtbot) -> None:  # type: ignore[no-untyped-def]
+    _hub, tray, calls = make(qtbot)
+    tray._tray.activated.emit(QSystemTrayIcon.ActivationReason.Context)  # noqa: SLF001
+    assert calls == []

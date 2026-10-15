@@ -1,9 +1,9 @@
 """The vocalis background daemon: a long-lived process listening on a Unix
 domain socket for commands from the `vocalis` CLI and hotkey layer.
 
-This module only implements the socket lifecycle (start/stop/accept-loop).
-Command handling for real features (dictation, quick reader, document
-reader, OCR) is added in their own phases on top of this skeleton.
+The socket answers every received line with an `ack:<line>` reply and, when
+an optional `command_handler` was given, also passes the line to it (on the
+daemon's own accept-loop thread, not the caller's) before sending the ack.
 """
 import contextlib
 import logging
@@ -42,6 +42,7 @@ class VocalisDaemon:
         socket_factory: "Callable[[], socket.socket]" = lambda: socket.socket(
             socket.AF_UNIX, socket.SOCK_STREAM
         ),
+        command_handler: "Callable[[str], None] | None" = None,
     ) -> None:
         """Create a VocalisDaemon.
 
@@ -52,11 +53,16 @@ class VocalisDaemon:
             socket_factory: Constructs a fresh socket, used only to probe
                 whether an existing socket file is still alive before
                 deleting it as stale. Injectable for tests.
+            command_handler: Optional callable invoked with each received
+                command line (on the accept-loop thread) before the ack is
+                sent. A handler that raises is logged and never prevents
+                the ack from being sent.
         """
         self._socket_path = socket_path
         self._logger = logger
         self._model_manager = model_manager
         self._socket_factory = socket_factory
+        self._command_handler = command_handler
         self._server_socket: socket.socket | None = None
         self._accept_thread: threading.Thread | None = None
         self._stop_requested = threading.Event()
@@ -205,15 +211,21 @@ class VocalisDaemon:
                 connection.close()
 
     def _handle_connection(self, connection: socket.socket) -> None:
-        """Read one line and echo it back as an acknowledgement.
+        """Read one line, pass it to the optional command handler, and
+        always echo it back as an acknowledgement.
 
-        Real command dispatch (dictation/quick-reader/document-reader/ocr)
-        is added by later phases; this skeleton only proves the socket
-        round-trip works.
+        A raising command handler is logged (with its traceback) and
+        otherwise ignored: the ack is still sent so the client never
+        hangs or sees a failure just because the handler misbehaved.
         """
         data = connection.recv(1024)
         if not data:
             return
         command = data.decode("utf-8").strip()
         self._logger.info("Received command: %s", command)
+        if self._command_handler is not None:
+            try:
+                self._command_handler(command)
+            except Exception:
+                self._logger.exception("Command handler failed for %r", command)
         connection.sendall(f"ack:{command}\n".encode("utf-8"))

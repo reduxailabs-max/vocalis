@@ -67,6 +67,8 @@ class TrayIcon(QObject):
         self._docs_action.triggered.connect(lambda _checked=False: on_open_document_reader())
         self._settings_action.triggered.connect(lambda _checked=False: on_open_settings())
         self._quit_action.triggered.connect(lambda _checked=False: on_quit())
+        self._on_open_settings = on_open_settings
+        self._tray.activated.connect(self._on_activated)
         hub.state_changed.connect(self._on_state_changed)
         hub.reading_started.connect(self._on_reading_started)
         hub.reading_finished.connect(self._on_reading_finished)
@@ -107,6 +109,7 @@ class TrayIcon(QObject):
             (self._hub.reading_started, self._on_reading_started),
             (self._hub.reading_finished, self._on_reading_finished),
             (self._hub.paused_changed, self._on_paused_changed),
+            (self._tray.activated, self._on_activated),
         ):
             try:
                 signal.disconnect(slot)
@@ -160,3 +163,10 @@ class TrayIcon(QObject):
         if self._closed:
             return
         self._pause_action.setText("Resume" if paused else "Pause")
+
+    def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
+        """A plain left-click on the icon opens Settings; other clicks keep their default."""
+        if self._closed:
+            return
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:
+            self._on_open_settings()

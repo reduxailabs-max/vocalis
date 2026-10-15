@@ -296,3 +296,37 @@ def test_an_ambiguous_probe_failure_is_treated_as_stale_not_blocking(
     assert daemon.is_running
     assert "Could not verify" in caplog.text
     daemon.stop()
+
+
+def test_command_handler_receives_each_command_and_reply_is_unchanged(tmp_path: Path) -> None:
+    received: list[str] = []
+    daemon = VocalisDaemon(socket_path=tmp_path / "vocalis.sock", logger=configure_logging(),
+                           model_manager=ModelManager(), command_handler=received.append)
+    daemon.start()
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.connect(str(tmp_path / "vocalis.sock"))
+        client.sendall(b"show-settings\n")
+        assert client.recv(1024) == b"ack:show-settings\n"
+        client.close()
+    finally:
+        daemon.stop()
+    assert received == ["show-settings"]
+
+
+def test_a_raising_command_handler_is_logged_and_still_acked(tmp_path: Path, caplog) -> None:  # type: ignore[no-untyped-def]
+    def boom(_command: str) -> None:
+        raise RuntimeError("handler broke")
+
+    daemon = VocalisDaemon(socket_path=tmp_path / "vocalis.sock", logger=configure_logging(),
+                           model_manager=ModelManager(), command_handler=boom)
+    daemon.start()
+    try:
+        client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        client.connect(str(tmp_path / "vocalis.sock"))
+        client.sendall(b"show-settings\n")
+        assert client.recv(1024) == b"ack:show-settings\n"
+        client.close()
+    finally:
+        daemon.stop()
+    assert "handler broke" in caplog.text
