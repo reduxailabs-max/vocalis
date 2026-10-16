@@ -21,14 +21,14 @@
 | `src/vocalis/audio/playback.py` | `AudioPlayer` — sounddevice-based, interruptible speech playback. |
 | `src/vocalis/hotkeys/ctrl_alt_r.py` | `CtrlAltRListener` — thin wrapper over `CtrlAltKeyListener` fixed to the R key; `list_hotkey_capable_devices()` is its real device enumerator. |
 | `src/vocalis/output/clipboard.py` | `ClipboardReader` — reads clipboard text via `xclip`, the read-side counterpart to `TextOutput`. |
-| `src/vocalis/features/quick_reader.py` | `QuickReaderFeature` — wires Ctrl+Alt+R trigger/stop to clipboard-read → speak (with fallback) → play, with notifications at each stage. |
+| `src/vocalis/features/quick_reader.py` | `QuickReaderFeature` — wires Ctrl+Alt+R trigger/stop to clipboard-read → speak → play (the voice engine is chosen per reading, Automatic or the Settings choice, and falls down the chain Qwen3-TTS → Kokoro → Piper), with notifications at each stage. |
 | `src/vocalis/hotkeys/ctrl_alt_key.py` | `CtrlAltKeyListener` — evdev Ctrl+Alt+<any key> detection (one thread per device); `list_devices_with_key(code)` is the real enumerator. Used for Ctrl+Alt+R, Ctrl+Alt+D and Ctrl+Alt+O. |
 | `src/vocalis/hotkeys/stoppable_device.py` | `StoppableEvdevDevice` — wraps a real `evdev.InputDevice` so `close()` wakes a blocked `read_loop()` immediately (via a private wake-up pipe). Applied by both real enumerators to the devices they return. Its read loop ends quietly (no error log) if `close()` happens while the watcher is busy. |
 | `src/vocalis/features/reading_coordinator.py` | `ReadingCoordinator` — remembers which of Quick Reader / Document Reader owns audio playback and stops the previous owner when the other starts. |
 | `src/vocalis/text/normalizer.py` | `normalize_markdown()` — strips markdown syntax (code fences, links, headings, bold/italic) so text is speakable. |
 | `src/vocalis/text/chunker.py` | `chunk_text()` — splits text into sentence-bounded chunks (default 300 characters) for chunk-by-chunk speech and progress. |
 | `src/vocalis/text/extractors.py` | `extract_text()` — reads .txt/.md/.pdf/.docx/.html/.htm files; reads merged Word table cells (side by side or across rows) once, warns about tables nested deeper than 10 levels; raises typed errors (`UnsupportedFileTypeError`, `DocumentOpenError`, `NoReadableTextError`, `DocumentTooLargeError`). |
-| `src/vocalis/features/doc_reader.py` | `DocumentReaderFeature` — extract → normalize → chunk → synthesize (Qwen3-TTS, Piper fallback) → play, with pause/resume/stop and progress callbacks; control notifications are sent in order from one background thread. No Qt import. |
+| `src/vocalis/features/doc_reader.py` | `DocumentReaderFeature` — extract → normalize → chunk → synthesize (voice engine chosen per reading, Automatic or the Settings choice, falling down the chain Qwen3-TTS → Kokoro → Piper) → play, with pause/resume/stop and progress callbacks; control notifications are sent in order from one background thread. No Qt import. |
 | `src/vocalis/ui/doc_popup.py` | `DocumentReaderPopup` — the PySide6 window (Open file, text box, Read, Pause/Resume, Stop, status and progress labels). Its signals are the only way other threads reach the window. |
 | `src/vocalis/output/screen_capture.py` | `ScreenRegionCapture` — lets the user drag a box (spectacle with temp dir, else maim, else flameshot, else slurp+grim) and returns the picture as PNG bytes in memory, or `None` if cancelled; `ScreenCaptureUnavailable` when no tool is installed. Only accepts an ASCII `x,y WxH` region from slurp. |
 | `src/vocalis/engines/tesseract_ocr.py` | `TesseractOCR` — runs the `tesseract` binary (CPU only, never via `ModelManager`) on PNG bytes, English, whitespace collapsed; raises `TesseractError` with a user-readable message. |
@@ -46,7 +46,7 @@
 | `src/vocalis/ui/status_hub.py` | `StatusHub` (Qt signals: state, status, progress, reading started/finished, paused) and `ReadingControls` (stop/pause/resume callables). |
 | `src/vocalis/ui/tray.py` | `TrayIcon` — coloured dot drawn in code, tooltip, right-click menu (status, Pause/Resume, Stop, Open Document Reader, Settings, Quit); `close()` for safe teardown. |
 | `src/vocalis/ui/floating_widget.py` | `FloatingWidget` — frameless always-on-top box shown only while reading, never takes focus, Pause/Resume + Stop. |
-| `src/vocalis/ui/settings_window.py` | `SettingsWindow` — two switches, four shortcut drop-downs and the voice drop-down; Save / Close; shows "Saved." or "Not saved: …". |
+| `src/vocalis/ui/settings_window.py` | `SettingsWindow` — two switches, four shortcut drop-downs, the voice drop-down, the Quick Reader / Document Reader voice-engine drop-downs and the Kokoro voice drop-down (Stage 6a), the Sound output drop-down with Test sound, the Speaking speed slider and Preview voice (Stage 1); Save / Close; shows "Saved." or "Not saved: …". |
 | `tests/test_settings.py`, `test_shortcut_parser.py`, `test_status_hub.py`, `test_tray.py`, `test_floating_widget.py`, `test_settings_window.py` | Tests for the six new modules above. |
 | `tests/test_reading_hooks_integration.py` | Checks that Quick Reader, Document Reader, dictation and OCR report correctly into a real `StatusHub`. |
 
@@ -88,11 +88,11 @@
 
 | File | Purpose |
 |---|---|
-| `src/vocalis/startup_checks.py` | Five independent, non-fatal startup checks (Parakeet model files, Qwen3-TTS model files, `ydotoold`'s socket, OCR's `tesseract`/`xclip`, and — added in Stage 5 — a stale Voxtype `~/.asoundrc`), each a function returning a human-readable message or `None`; `run_startup_checks(config)` runs all five in a fixed order and never lets one raising stop the rest. |
+| `src/vocalis/startup_checks.py` | Seven independent, non-fatal startup checks (Parakeet model files, Qwen3-TTS model files, the Kokoro voice files (Stage 6a), `ydotoold`'s socket, OCR's `tesseract`/`xclip`, the onnxruntime graphics-card check, and a stale Voxtype `~/.asoundrc` (Stage 5)), each a function returning a human-readable message or `None`; `run_startup_checks(config)` runs all seven in a fixed order and never lets one raising stop the rest. |
 | `packaging/systemd/vocalis.service` | systemd `--user` unit file **template** — `__VOCALIS_EXEC__`/`__VOCALIS_WORKDIR__` placeholders, `Restart=on-failure`/`RestartSec=3`/`StartLimitBurst=5`/`StartLimitIntervalSec=60`, `WantedBy=xdg-desktop-autostart.target`, `After=`/`Wants=` on the three PipeWire user services. Not installed, enabled, or started by this stage. |
 | `packaging/systemd/README.md` | Explains the two placeholders and who fills them in (Stage 3's installer), why `xdg-desktop-autostart.target` is used instead of `default.target`, the PipeWire ordering rationale, the crash-recovery settings, and the text-only `systemd-analyze --user verify` command. |
 | `tests/test_systemd_unit.py` | Text-only checks on the unit file's content: restart policy, autostart target (not `default.target`), PipeWire `After=`/`Wants=`, the `__VOCALIS_EXEC__` placeholder (never a real path), and that the README documents it. Never starts a real service. |
-| `tests/test_startup_checks.py` | 13 tests for the four checks (present/missing/partially-missing) and `run_startup_checks()`'s fixed ordering, silence-when-everything-is-fine, and survival of a check that raises. |
+| `tests/test_startup_checks.py` | Tests for each startup check (present/missing/partially-missing) and `run_startup_checks()`'s fixed ordering, silence-when-everything-is-fine, and survival of a check that raises. |
 
 ## Stage 2 (Service and autostart) — changed files
 

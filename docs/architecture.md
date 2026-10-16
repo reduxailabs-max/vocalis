@@ -99,7 +99,9 @@ Pressing Ctrl+Alt+R now works end-to-end:
    `Qwen3TTS` engine — obeying the same single-residency and idle-unload
    policy every GPU engine uses. If that fails for any reason, it falls
    back to an always-loaded `PiperTTS` instance, which runs entirely on
-   CPU and is never routed through `ModelManager`.
+   CPU and is never routed through `ModelManager`. (Phase 3 design; since
+   Stage 6a the voice is chosen per reading and falls down the chain
+   Qwen3-TTS -> Kokoro -> Piper — see "Stage 6a addition" below.)
 4. The generated speech is played via `AudioPlayer` (sounddevice-based,
    the same library `MicRecorder` uses for capture), which can be
    interrupted mid-playback. Its `wait_until_done()` is bounded by the
@@ -134,8 +136,9 @@ documents aloud:
 3. `DocumentReaderFeature` extracts text (`text/extractors.py`), strips
    markdown (`text/normalizer.py`), splits it into sentence-bounded chunks
    (`text/chunker.py`), then synthesizes and plays one chunk at a time,
-   using the same `ModelManager` single-residency policy and Piper
-   fallback as Quick Reader. Both readers use the one shared engine id
+   using the same `ModelManager` single-residency policy and the same
+   voice-engine chain (Qwen3-TTS -> Kokoro -> Piper since Stage 6a) as
+   Quick Reader. Both readers use the one shared engine id
    `TTS_ENGINE_ID` (`"qwen3_tts"`, defined in `model_manager.py`), so
    switching between them reuses the already-loaded Qwen3-TTS model
    instead of reloading it. Its Paused/Resuming.../Stopped notifications
@@ -483,8 +486,9 @@ nothing checked here should depend on anything built later in `main()` —
 `main()` builds a plain `Notifier` from `config.notifications_enabled` and
 calls `run_startup_checks(config)`. Every message it returns is sent
 through that notifier, one at a time. See `src/vocalis/startup_checks.py`
-for the four checks themselves (Parakeet model, Qwen3-TTS model,
-`ydotoold`, OCR capture tools) and "Running automatically" in
+for the seven checks themselves (Parakeet model, Qwen3-TTS model,
+Kokoro voice files, `ydotoold`, OCR capture tools, onnxruntime
+graphics-card check, stale `~/.asoundrc`) and "Running automatically" in
 `docs/user-docs.md` for what each message means in plain language. Every
 check is independent and strictly non-fatal: a missing dependency only
 means the one affected feature fails per-request later, exactly as it did

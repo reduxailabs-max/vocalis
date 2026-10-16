@@ -120,7 +120,8 @@ Background thread:
   -> try: engine = model_manager.acquire("qwen3_tts", qwen3_tts_factory)
           audio, sr = engine.synthesize(text)
           model_manager.release("qwen3_tts")
-     except: notify("Primary voice unavailable — using backup voice"), audio, sr = piper.synthesize(text)
+     except: notify("Primary voice unavailable — using backup voice"), try the next engine in the plan
+             (originally Piper; since Stage 6a see "Choosing a voice engine" below)
   -> if cancelled while synthesizing: stop, never start playback
   -> notify(text)                              # live transcript notification
   -> player.play(audio, sr); finished = player.wait_until_done()
@@ -168,8 +169,10 @@ Worker thread (_prepare_and_read, then _read_worker):
   -> for each chunk (index i of N):
        on_progress(i, N)
        synthesize: Qwen3-TTS via model_manager.acquire("qwen3_tts", ...);
-                   on the first failure switch to Piper for the REST of this
-                   document and notify once ("Primary voice unavailable...")
+                   on the first failure move down the engine chain for the REST
+                   of this document and notify once ("Primary voice unavailable...");
+                   since Stage 6a the chain is Qwen3-TTS -> Kokoro -> Piper, or
+                   the one the user chose in Settings
        wait if paused, then player.play(); wait_until_done()
        finished naturally -> next chunk
        stopped early by pause() -> wait for resume(), replay the SAME chunk
@@ -356,9 +359,10 @@ main(), immediately after load_config():
        startup_notifier.notify("Vocalis", message)
 
 run_startup_checks(config):
-  -> for each of the five checks, in a fixed order
-       (Parakeet model, Qwen3-TTS model, ydotoold, OCR capture tools,
-        a stale Voxtype ~/.asoundrc — the last one added in Stage 5):
+  -> for each of the seven checks, in a fixed order
+       (Parakeet model, Qwen3-TTS model, Kokoro voice files, ydotoold,
+        OCR capture tools, onnxruntime graphics-card check, a stale
+        Voxtype ~/.asoundrc — the last two added in Stages 5 and 6a):
        -> try: result = check()
           except Exception: log a warning, skip this check, continue
        -> if result is not None: collect it

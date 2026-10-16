@@ -65,7 +65,7 @@ To remove Vocalis, run `bash uninstall.sh` from the same folder. By
 default this keeps your settings and your downloaded models (in case you
 install again later); run `bash uninstall.sh --purge` instead to remove
 everything, including your settings, every downloaded model, and the
-backup Piper voice (its binary and its voice files) — a full, clean
+Piper backup voice (its binary and its voice files) and the Kokoro voice — a full, clean
 removal. Run `bash uninstall.sh --help` any time to see this usage
 summary without removing anything.
 
@@ -96,10 +96,12 @@ key, it doesn't suppress it.
    immediately.
 4. If nothing is copied, you'll see "Nothing copied" instead.
 
-Quick Reader uses a local AI voice (Qwen3-TTS) by default. If that voice
-ever fails to load or generate speech for any reason, it automatically
-switches to a simpler backup voice (Piper) and tells you so — you'll
-still hear your text read aloud either way.
+Quick Reader picks its voice for each reading (see "Voice engines"
+below). If that voice ever fails to load or generate speech for any
+reason, it automatically switches to a lighter backup voice and tells you
+so — you'll still hear your text read aloud either way. Which backup
+voice depends on the chain: usually Kokoro, then Piper as the last
+resort.
 
 Vocalis now finds a working sound output automatically — see "Sound and
 speaking pace" below for how that works and what to do if you ever see a
@@ -135,7 +137,8 @@ What the messages mean:
   a scanned PDF (just pictures of pages) is the usual cause.
 - **... too large** — the file has more than 5,000,000 characters of text.
 - **Primary voice unavailable — using backup voice** — the main AI voice
-  failed, so the rest of that document is read with the simpler Piper voice.
+  failed, so the rest of that document is read with a lighter backup voice
+  (the next one down the chain: usually Kokoro, then Piper).
 - **Nothing to read** — the text had nothing speakable in it.
 
 ## Reading text off the screen (OCR Reader)
@@ -254,7 +257,7 @@ preview your voice before you commit to it.
   pace). It applies from the next piece of speech it generates — if you
   change it while something is already mid-sentence, that part keeps its
   old speed and the new speed takes over from the next piece onward. This
-  is the same for the backup voice (Piper) as for the main AI voice.
+  is the same for every voice (Qwen3-TTS, Kokoro and Piper).
   **Note:** if you change the speed while a Document Reader reading is
   *paused*, the new speed takes effect from the next chunk once you
   resume — the paused chunk itself resumes at the speed it was already
@@ -394,8 +397,8 @@ everything else keeps working normally:
   Dictation (hold NUMLOCK to speak) will not work until this model is
   installed in the folder the message names.
 - **"The primary voice model is missing..."** — Reading aloud will use
-  the simpler backup voice (Piper) instead of the main AI voice until
-  this model is installed. You will still hear your text read out loud.
+  a lighter backup voice (Kokoro, or Piper if that is missing too)
+  instead of the main AI voice until this model is installed. You will still hear your text read out loud.
 - **"The light Kokoro voice is missing..."** — Reading aloud will use
   another voice until the Kokoro voice is installed in the folder the
   message names (re-run the installer).
