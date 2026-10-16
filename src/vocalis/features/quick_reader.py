@@ -13,13 +13,16 @@ delayed or missed until that call returned.
 """
 import logging
 import threading
-from typing import Callable, Protocol, cast
+from typing import Callable, Mapping
 
 import numpy as np
 import numpy.typing as npt
 
 from vocalis.audio.pace import paced_audio
 from vocalis.audio.playback import AudioPlayer
+from vocalis.engines.base import Synthesizer
+from vocalis.engines.chain import EngineChain
+from vocalis.engines.registry import EnginePlan, EngineSelector
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import ModelEngine, ModelManager, TTS_ENGINE_ID
 from vocalis.notify import Notifier
@@ -27,14 +30,7 @@ from vocalis.output.clipboard import ClipboardReader
 
 logger = logging.getLogger("vocalis")
 
-_ENGINE_ID = TTS_ENGINE_ID
 _TITLE = "Vocalis — Quick Reader"
-
-
-class Synthesizer(Protocol):
-    """The subset of a TTS engine this module depends on."""
-
-    def synthesize(self, text: str) -> "tuple[npt.NDArray[np.float32], int]": ...
 
 
 class QuickReaderFeature:
@@ -52,6 +48,8 @@ class QuickReaderFeature:
         reading_coordinator: ReadingCoordinator | None = None,
         on_reading_changed: Callable[[bool], None] | None = None,
         speed_provider: Callable[[], float] | None = None,
+        engine_selector: EngineSelector | None = None,
+        engine_factories: Mapping[str, Callable[[], ModelEngine]] | None = None,
     ) -> None:
         """Create a QuickReaderFeature.
 
@@ -83,6 +81,11 @@ class QuickReaderFeature:
                 default) means no pacing is applied. A failure reading
                 the speed or applying it never breaks the reading -- see
                 vocalis.audio.pace.paced_audio.
+            engine_selector: Chooses which voice engines to try, in order,
+                for each reading. None (the default) means the fixed
+                built-in Qwen3-TTS voice, then the backup voice.
+            engine_factories: Maps an engine id to a function that builds
+                that engine; used together with engine_selector.
         """
         self._model_manager = model_manager
         self._primary_engine_factory = primary_engine_factory
@@ -94,6 +97,8 @@ class QuickReaderFeature:
         self._reading_coordinator = reading_coordinator
         self._on_reading_changed = on_reading_changed
         self._speed_provider = speed_provider
+        self._engine_selector = engine_selector
+        self._engine_factories = engine_factories
         self._report_lock = threading.Lock()
         self._last_reported = False
         self._lock = threading.Lock()
@@ -277,15 +282,22 @@ class QuickReaderFeature:
         if finished_naturally:
             self._notifier.notify(_TITLE, "Done")
 
+    def _new_chain(self) -> EngineChain:
+        """Build the engine chain for one reading: the selector's plan, or the old Qwen3-TTS-then-Piper."""
+        if self._engine_selector is not None:
+            plan = self._engine_selector.plan()
+            factories = self._engine_factories or {}
+        else:
+            plan = EnginePlan((TTS_ENGINE_ID,), "Fixed to the built-in voice.")
+            factories = {TTS_ENGINE_ID: self._primary_engine_factory}
+        return EngineChain(plan, factories, self._model_manager, self._fallback_engine, self._notify_downshift)
+
+    def _notify_downshift(self, failed_engine_id: str, next_engine_id: "str | None") -> None:
+        """Tell the user the first-choice voice failed (silent if the backup voice itself failed)."""
+        if failed_engine_id == "piper":
+            return
+        self._notifier.notify(_TITLE, "Primary voice unavailable — using backup voice")
+
     def _synthesize_with_fallback(self, text: str) -> "tuple[npt.NDArray[np.float32], int]":
-        """Try the primary engine; fall back to the secondary on any failure."""
-        try:
-            engine = self._model_manager.acquire(_ENGINE_ID, self._primary_engine_factory)
-            try:
-                return cast(Synthesizer, engine).synthesize(text)
-            finally:
-                self._model_manager.release(_ENGINE_ID)
-        except Exception:
-            logger.exception("Primary TTS engine failed; falling back to Piper")
-            self._notifier.notify(_TITLE, "Primary voice unavailable — using backup voice")
-            return self._fallback_engine.synthesize(text)
+        """Speak `text` with the planned engines, falling down the chain on failure."""
+        return self._new_chain().synthesize(text)

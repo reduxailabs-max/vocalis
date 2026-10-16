@@ -1219,3 +1219,85 @@ def test_a_raising_speed_provider_still_plays_the_original_chunk(
 
     assert player.play_lengths == [int(primary.sample_rate * 2.0)]  # unchanged
     assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+def _make_selector_feature(
+    preference: str,
+    factories: "dict[str, Callable[[], Any]]",
+    fallback: FakeSynthesizer,
+    notifier: RecordingNotifier,
+) -> "tuple[DocumentReaderFeature, list[str], list[None]]":
+    """Build a feature whose engines are chosen by a selector (no real hardware)."""
+    from vocalis.engines.registry import EngineSelector
+    from vocalis.hardware import HardwareInfo
+
+    statuses: "list[str]" = []
+    finishes: "list[None]" = []
+    selector = EngineSelector(
+        preference=lambda: preference,
+        hardware_probe=lambda: HardwareInfo(None, None, None, None, None),
+    )
+    feature = DocumentReaderFeature(
+        model_manager=ModelManager(),
+        primary_engine_factory=lambda: pytest.fail("the old primary factory must not be used"),
+        fallback_engine=fallback,
+        player=AudioPlayer(stream_factory=_fake_stream_factory),
+        notifier=notifier,  # type: ignore[arg-type]
+        reading_coordinator=ReadingCoordinator(),
+        on_status=statuses.append,
+        on_progress=lambda current, total: None,
+        on_finished=lambda: finishes.append(None),
+        engine_selector=selector,
+        engine_factories=factories,
+    )
+    return feature, statuses, finishes
+
+
+def test_a_selector_planned_engine_speaks_the_document() -> None:
+    kokoro = FakeSynthesizer()
+    fallback = FakeSynthesizer()
+    notifier = RecordingNotifier()
+    feature, _statuses, finishes = _make_selector_feature(
+        "kokoro", {"kokoro": lambda: kokoro}, fallback, notifier
+    )
+
+    feature.read_text("One. Two. Three. Four. Five. Six. Seven. Eight.")
+    wait_until(lambda: bool(finishes))
+
+    assert kokoro.calls
+    assert fallback.calls == []
+    assert "Primary voice unavailable — using backup voice" not in notifier.messages
+
+
+def test_a_failed_planned_engine_is_not_retried_and_is_announced_once() -> None:
+    fallback = FakeSynthesizer()
+    notifier = RecordingNotifier()
+    factory_calls: "list[int]" = []
+
+    def broken_kokoro() -> Any:
+        factory_calls.append(1)
+        raise RuntimeError("kokoro will not load")
+
+    feature, statuses, finishes = _make_selector_feature(
+        "kokoro", {"kokoro": broken_kokoro}, fallback, notifier
+    )
+
+    feature.read_text("One. Two. Three. Four. Five. Six. Seven. Eight.")
+    wait_until(lambda: bool(finishes))
+
+    assert fallback.calls
+    assert len(factory_calls) == 1  # never retried for later chunks
+    assert notifier.messages.count("Primary voice unavailable — using backup voice") == 1
+    assert statuses.count("Using backup voice") == 1
+
+
+def test_a_failing_backup_voice_sends_no_downshift_notification() -> None:
+    notifier = RecordingNotifier()
+    feature, statuses, _finishes = _make_selector_feature(
+        "kokoro", {}, FakeSynthesizer(), notifier
+    )
+
+    feature._notify_downshift("piper", None)  # noqa: SLF001
+
+    assert notifier.messages == []
+    assert "Using backup voice" not in statuses

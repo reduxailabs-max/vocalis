@@ -646,3 +646,72 @@ def test_a_raising_speed_provider_still_plays_the_original_audio(
     played_audio, _ = player.play_calls[0]
     assert played_audio is audio
     assert any(record.levelno == logging.WARNING for record in caplog.records)
+
+
+def _build_with_selector(
+    preference: str,
+    factories: "dict[str, Callable[[], object]]",
+    fallback: FakeSynthesizer,
+) -> "tuple[QuickReaderFeature, FakeNotifier]":
+    """Build a feature whose engines are chosen by a selector (no real hardware)."""
+    from vocalis.engines.registry import EngineSelector
+    from vocalis.hardware import HardwareInfo
+
+    notifier = FakeNotifier()
+    selector = EngineSelector(
+        preference=lambda: preference,
+        hardware_probe=lambda: HardwareInfo(None, None, None, None, None),
+    )
+    feature = QuickReaderFeature(
+        model_manager=ModelManager(),
+        primary_engine_factory=lambda: pytest.fail("the old primary factory must not be used"),
+        fallback_engine=fallback,
+        clipboard_reader=FakeClipboardReader("Hello."),  # type: ignore[arg-type]
+        player=FakePlayer(),  # type: ignore[arg-type]
+        notifier=notifier,  # type: ignore[arg-type]
+        engine_selector=selector,
+        engine_factories=factories,  # type: ignore[arg-type]
+    )
+    return feature, notifier
+
+
+def test_a_selector_chooses_the_engine_for_each_reading() -> None:
+    """With a selector, the planned engine is used and the primary factory is ignored."""
+    kokoro = FakeSynthesizer(audio=np.ones(3, dtype=np.float32), sample_rate=24000)
+    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    feature, notifier = _build_with_selector("kokoro", {"kokoro": lambda: kokoro}, fallback)
+
+    audio, rate = feature._synthesize_with_fallback("Hello.")  # noqa: SLF001
+
+    assert kokoro.calls == ["Hello."]
+    assert fallback.calls == []
+    assert rate == 24000
+    assert len(audio) == 3
+    assert notifier.messages == []
+
+
+def test_a_failing_planned_engine_notifies_the_user_and_uses_the_next() -> None:
+    """The downshift text is unchanged: 'Primary voice unavailable — using backup voice'."""
+    fallback = FakeSynthesizer(audio=np.ones(2, dtype=np.float32), sample_rate=22050)
+
+    def broken_kokoro() -> object:
+        raise RuntimeError("kokoro will not load")
+
+    feature, notifier = _build_with_selector("kokoro", {"kokoro": broken_kokoro}, fallback)
+
+    _audio, rate = feature._synthesize_with_fallback("Hello.")  # noqa: SLF001
+
+    assert fallback.calls == ["Hello."]
+    assert rate == 22050
+    assert [msg for _title, msg in notifier.messages] == ["Primary voice unavailable — using backup voice"]
+
+
+def test_a_failing_backup_voice_sends_no_downshift_notification() -> None:
+    """When Piper itself fails there is no backup left, so nothing is announced."""
+    feature, notifier = _build_with_selector(
+        "kokoro", {}, FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    )
+
+    feature._notify_downshift("piper", None)  # noqa: SLF001
+
+    assert notifier.messages == []

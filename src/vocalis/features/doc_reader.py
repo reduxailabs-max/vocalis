@@ -24,13 +24,16 @@ import logging
 import queue
 import threading
 from pathlib import Path
-from typing import Callable, Protocol, cast
+from typing import Callable, Mapping
 
 import numpy as np
 import numpy.typing as npt
 
 from vocalis.audio.pace import paced_audio
 from vocalis.audio.playback import AudioPlayer
+from vocalis.engines.base import Synthesizer
+from vocalis.engines.chain import EngineChain
+from vocalis.engines.registry import EnginePlan, EngineSelector
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import ModelEngine, ModelManager, TTS_ENGINE_ID
 from vocalis.notify import Notifier
@@ -46,7 +49,6 @@ from vocalis.text.normalizer import normalize_markdown
 
 logger = logging.getLogger("vocalis")
 
-_ENGINE_ID = TTS_ENGINE_ID
 _TITLE = "Vocalis — Document Reader"
 
 _EXTRACTION_ERRORS = (
@@ -55,12 +57,6 @@ _EXTRACTION_ERRORS = (
     NoReadableTextError,
     DocumentTooLargeError,
 )
-
-
-class Synthesizer(Protocol):
-    """The subset of a TTS engine this module depends on."""
-
-    def synthesize(self, text: str) -> "tuple[npt.NDArray[np.float32], int]": ...
 
 
 class DocumentReaderFeature:
@@ -81,6 +77,8 @@ class DocumentReaderFeature:
         language: str = "English",
         on_started: Callable[[], None] | None = None,
         speed_provider: Callable[[], float] | None = None,
+        engine_selector: EngineSelector | None = None,
+        engine_factories: Mapping[str, Callable[[], ModelEngine]] | None = None,
     ) -> None:
         """Create a DocumentReaderFeature.
 
@@ -130,11 +128,13 @@ class DocumentReaderFeature:
         self._language = language
         self._on_started = on_started
         self._speed_provider = speed_provider
+        self._engine_selector = engine_selector
+        self._engine_factories = engine_factories
 
         self._lock = threading.Lock()
         self._active = False
         self._paused = False
-        self._use_fallback_for_rest = False
+        self._chain: EngineChain | None = None
         self._generation = 0
         self._resume_event = threading.Event()
         self._resume_event.set()
@@ -282,7 +282,7 @@ class DocumentReaderFeature:
         with self._lock:
             self._active = True
             self._paused = False
-            self._use_fallback_for_rest = False
+            self._chain = None
             self._generation += 1
             generation = self._generation
         self._resume_event.set()
@@ -475,22 +475,26 @@ class DocumentReaderFeature:
             return None  # stopped while waiting for resume()
         return False  # replay the current chunk once resumed
 
+    def _new_chain(self) -> EngineChain:
+        """Build the engine chain for one reading: the selector's plan, or the old Qwen3-TTS-then-Piper."""
+        if self._engine_selector is not None:
+            plan = self._engine_selector.plan()
+            factories = self._engine_factories or {}
+        else:
+            plan = EnginePlan((TTS_ENGINE_ID,), "Fixed to the built-in voice.")
+            factories = {TTS_ENGINE_ID: self._primary_engine_factory}
+        return EngineChain(plan, factories, self._model_manager, self._fallback_engine, self._notify_downshift)
+
+    def _notify_downshift(self, failed_engine_id: str, next_engine_id: "str | None") -> None:
+        """Tell the user the first-choice voice failed (silent if the backup voice itself failed)."""
+        if failed_engine_id == "piper":
+            return
+        self._notifier.notify(_TITLE, "Primary voice unavailable — using backup voice")
+        self._on_status("Using backup voice")
+
     def _synthesize_with_fallback(self, text: str) -> "tuple[npt.NDArray[np.float32], int]":
-        """Try the primary engine; fall back to the secondary on any
-        failure. Once fallback triggers for this reading, stays on Piper
-        for the rest of the document rather than retrying Qwen3-TTS every
-        chunk, and notifies the user once, not once per chunk."""
-        if self._use_fallback_for_rest:
-            return self._fallback_engine.synthesize(text)
-        try:
-            engine = self._model_manager.acquire(_ENGINE_ID, self._primary_engine_factory)
-            try:
-                return cast(Synthesizer, engine).synthesize(text)
-            finally:
-                self._model_manager.release(_ENGINE_ID)
-        except Exception:
-            logger.exception("Primary TTS engine failed; falling back to Piper for this document")
-            self._use_fallback_for_rest = True
-            self._notifier.notify(_TITLE, "Primary voice unavailable — using backup voice")
-            self._on_status("Using backup voice")
-            return self._fallback_engine.synthesize(text)
+        """Speak one piece; the same chain is reused for the whole document so a dead engine is not retried."""
+        chain = self._chain
+        if chain is None:
+            chain = self._chain = self._new_chain()
+        return chain.synthesize(text)
