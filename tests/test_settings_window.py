@@ -248,3 +248,45 @@ def test_present_restores_a_minimized_window(qtbot, tmp_path) -> None:  # type: 
     window.showMinimized()
     window.present()
     assert not window.isMinimized()
+
+
+def test_engine_pickers_default_to_automatic(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Both voice-engine drop-downs start on Automatic."""
+    _settings, window, _applied, _path = make(qtbot, tmp_path)
+    assert window._quick_engine_combo.currentData() == "auto"  # noqa: SLF001
+    assert window._doc_engine_combo.currentData() == "auto"  # noqa: SLF001
+    assert window._kokoro_voice_combo.currentText() == "af_heart"  # noqa: SLF001
+
+
+def test_engine_pickers_show_the_saved_choices(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Saved engine choices and Kokoro voice are shown when the window opens."""
+    from vocalis.config import EnginesConfig
+
+    config = VocalisConfig(
+        engines=EnginesConfig(quick_reader_engine="kokoro", document_reader_engine="piper", kokoro_voice="bf_emma")
+    )
+    _settings, window, _applied, _path = make(qtbot, tmp_path, config=config)
+    assert window._quick_engine_combo.currentData() == "kokoro"  # noqa: SLF001
+    assert window._doc_engine_combo.currentData() == "piper"  # noqa: SLF001
+    assert window._kokoro_voice_combo.currentText() == "bf_emma"  # noqa: SLF001
+
+
+def test_saving_writes_the_chosen_engines(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Choosing engines and saving updates the live settings."""
+    settings, window, _applied, _path = make(qtbot, tmp_path)
+    window._quick_engine_combo.setCurrentIndex(window._quick_engine_combo.findData("qwen3_tts"))  # noqa: SLF001
+    window._doc_engine_combo.setCurrentIndex(window._doc_engine_combo.findData("kokoro"))  # noqa: SLF001
+    window._kokoro_voice_combo.setCurrentText("am_adam")  # noqa: SLF001
+    window._on_save_clicked()  # noqa: SLF001
+    assert settings.quick_reader_engine() == "qwen3_tts"
+    assert settings.document_reader_engine() == "kokoro"
+    assert settings.kokoro_voice() == "am_adam"
+
+
+def test_an_unlisted_stored_kokoro_voice_stays_selectable(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A voice typed into the config file by hand is kept, not silently replaced."""
+    from vocalis.config import EnginesConfig
+
+    config = VocalisConfig(engines=EnginesConfig(kokoro_voice="af_river"))
+    _settings, window, _applied, _path = make(qtbot, tmp_path, config=config)
+    assert window._kokoro_voice_combo.currentText() == "af_river"  # noqa: SLF001

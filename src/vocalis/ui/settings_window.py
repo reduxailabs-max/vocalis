@@ -27,11 +27,17 @@ from vocalis.hotkeys.shortcut_parser import (
     ctrl_alt_choice,
     format_ctrl_alt_shortcut,
 )
-from vocalis.settings import VOICES, LiveSettings
+from vocalis.settings import KOKORO_VOICES, VOICES, LiveSettings
 
 _RESTART_NOTE = " Restart Vocalis to use the new shortcuts."
 _AUTOMATIC_LABEL = "Automatic (recommended)"
 _AUTOMATIC_VALUE = "auto"
+_ENGINE_CHOICES: tuple[tuple[str, str], ...] = (
+    ("Automatic (recommended)", "auto"),
+    ("Qwen3-TTS (best quality, needs a strong PC)", "qwen3_tts"),
+    ("Kokoro (light and natural)", "kokoro"),
+    ("Piper (lightest)", "piper"),
+)
 _SPEED_SLIDER_MINIMUM = 70
 _SPEED_SLIDER_MAXIMUM = 160
 _SPEED_SCALE = 100.0
@@ -82,6 +88,12 @@ class SettingsWindow(QWidget):
         self._doc_combo = _combo(CTRL_ALT_CHOICES)
         self._ocr_combo = _combo(CTRL_ALT_CHOICES)
         self._voice_combo = _combo(VOICES)
+        self._quick_engine_combo = QComboBox()
+        self._doc_engine_combo = QComboBox()
+        for engine_combo in (self._quick_engine_combo, self._doc_engine_combo):
+            for label, value in _ENGINE_CHOICES:
+                engine_combo.addItem(label, value)
+        self._kokoro_voice_combo = _combo(tuple(KOKORO_VOICES))
         self._output_combo = QComboBox()
         self._test_sound_button = QPushButton("Test sound")
         self._speed_slider = QSlider(Qt.Orientation.Horizontal)
@@ -109,6 +121,9 @@ class SettingsWindow(QWidget):
         form.addRow("Document Reader  Ctrl+Alt+", self._doc_combo)
         form.addRow("OCR Reader  Ctrl+Alt+", self._ocr_combo)
         form.addRow("Voice", self._voice_combo)
+        form.addRow("Quick Reader voice engine", self._quick_engine_combo)
+        form.addRow("Document Reader voice engine", self._doc_engine_combo)
+        form.addRow("Kokoro voice", self._kokoro_voice_combo)
         output_row = QHBoxLayout()
         output_row.addWidget(self._output_combo)
         output_row.addWidget(self._test_sound_button)
@@ -157,6 +172,16 @@ class SettingsWindow(QWidget):
         if self._voice_combo.findText(voice) < 0:
             self._voice_combo.addItem(voice)
         self._voice_combo.setCurrentText(voice)
+        for engine_combo, stored in (
+            (self._quick_engine_combo, config.engines.quick_reader_engine),
+            (self._doc_engine_combo, config.engines.document_reader_engine),
+        ):
+            index = engine_combo.findData(stored)
+            engine_combo.setCurrentIndex(index if index >= 0 else 0)
+        kokoro_voice = config.engines.kokoro_voice
+        if self._kokoro_voice_combo.findText(kokoro_voice) < 0:
+            self._kokoro_voice_combo.addItem(kokoro_voice)
+        self._kokoro_voice_combo.setCurrentText(kokoro_voice)
         self._fill_output_combo(config.audio_output_device)
         self._speed_slider.setValue(round(config.speaking_speed * _SPEED_SCALE))
         self._update_speed_label(self._speed_slider.value())
@@ -225,7 +250,14 @@ class SettingsWindow(QWidget):
                 "ocr_reader": format_ctrl_alt_shortcut(self._ocr_combo.currentText()),
             }
         )
-        engines = config.engines.model_copy(update={"qwen3_tts_speaker": self._voice_combo.currentText()})
+        engines = config.engines.model_copy(
+            update={
+                "qwen3_tts_speaker": self._voice_combo.currentText(),
+                "quick_reader_engine": self._quick_engine_combo.currentData(),
+                "document_reader_engine": self._doc_engine_combo.currentData(),
+                "kokoro_voice": self._kokoro_voice_combo.currentText(),
+            }
+        )
         return config.model_copy(
             update={
                 "notifications_enabled": self._notifications_box.isChecked(),
