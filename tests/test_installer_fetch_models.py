@@ -165,3 +165,50 @@ def test_ensure_kokoro_rejects_a_truncated_download_and_leaves_no_partial_file(f
         )
     assert not model.exists()
     assert list(tmp_path.glob("*.part")) == []
+
+
+def test_ensure_kokoro_stalled_download_fails_loudly_and_leaves_nothing(fetch_models, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A timeout partway through propagates and leaves neither a .part nor a final file."""
+
+    class _Stalling(_FakeResponse):
+        def __init__(self) -> None:
+            super().__init__(b"")
+            self._first = True
+
+        def read(self, size: int = -1) -> bytes:
+            if self._first:
+                self._first = False
+                return b"xx"
+            raise TimeoutError("stalled")
+
+    model, voices = tmp_path / "kokoro-v1.0.onnx", tmp_path / "voices-v1.0.bin"
+    with pytest.raises(TimeoutError):
+        fetch_models.ensure_kokoro(
+            model, voices, opener=lambda url: _Stalling(),
+            expected_sizes={"kokoro-v1.0.onnx": 10, "voices-v1.0.bin": 4},
+        )
+    assert not model.exists()
+    assert list(tmp_path.glob("*.part")) == []
+
+
+def test_ensure_kokoro_downloads_only_the_missing_file(fetch_models, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """With one file already present, only the other is fetched and the present one is untouched."""
+    model, voices = tmp_path / "kokoro-v1.0.onnx", tmp_path / "voices-v1.0.bin"
+    model.write_bytes(b"keep")
+    urls: list[str] = []
+
+    def opener(url: str) -> _FakeResponse:
+        urls.append(url)
+        return _FakeResponse(b"y" * 4)
+
+    fetch_models.ensure_kokoro(model, voices, opener=opener, expected_sizes={"kokoro-v1.0.onnx": 10, "voices-v1.0.bin": 4})
+    assert urls == [fetch_models.KOKORO_BASE_URL + "voices-v1.0.bin"]
+    assert model.read_bytes() == b"keep"
+    assert voices.read_bytes() == b"yyyy"
+
+
+def test_default_opener_uses_a_timeout(fetch_models) -> None:  # type: ignore[no-untyped-def]
+    """The default opener passes the timeout to urlopen, so a stall cannot hang the installer."""
+    with patch.object(fetch_models.urllib.request, "urlopen") as fake_urlopen:
+        fetch_models._open_url("https://example.invalid/x")
+    fake_urlopen.assert_called_once_with("https://example.invalid/x", timeout=fetch_models._DOWNLOAD_TIMEOUT_SECONDS)

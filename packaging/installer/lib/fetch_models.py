@@ -39,6 +39,7 @@ PIPER_VOICE_FILES = (
 KOKORO_BASE_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
 KOKORO_FILE_SIZES = {"kokoro-v1.0.onnx": 325532387, "voices-v1.0.bin": 28214398}
 _CHUNK_BYTES = 1024 * 1024
+_DOWNLOAD_TIMEOUT_SECONDS = 60
 
 
 def ensure_parakeet(model_dir: Path) -> None:
@@ -85,6 +86,11 @@ def ensure_piper_voice(voice_path: Path) -> None:
             downloaded.rename(target)
 
 
+def _open_url(url: str) -> Any:
+    """Open a URL with a timeout so a stalled connection cannot hang the installer."""
+    return urllib.request.urlopen(url, timeout=_DOWNLOAD_TIMEOUT_SECONDS)
+
+
 def _download(url: str, target: Path, expected_size: int, opener: Callable[[str], Any]) -> None:
     """Download url to target via a .part file, checking the size before renaming into place."""
     part = target.with_name(target.name + ".part")
@@ -106,7 +112,7 @@ def _download(url: str, target: Path, expected_size: int, opener: Callable[[str]
 def ensure_kokoro(
     model_path: Path,
     voices_path: Path,
-    opener: Callable[[str], Any] = urllib.request.urlopen,
+    opener: Callable[[str], Any] = _open_url,
     expected_sizes: dict[str, int] = KOKORO_FILE_SIZES,
 ) -> None:
     """Download the Kokoro model and voices files, unless both are already present."""
