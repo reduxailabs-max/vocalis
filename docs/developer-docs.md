@@ -256,8 +256,9 @@ To add one:
 2. Add a `lambda: check_<thing>(...)` to the `checks` list in
    `run_startup_checks()`, in the position where its message should
    appear (messages are collected in a fixed order — Parakeet model
-   first, then Qwen3-TTS model, then `ydotoold`, then the capture tools,
-   then a stale `~/.asoundrc` last).
+   first, then Qwen3-TTS model, then the Kokoro voice, then `ydotoold`,
+   then the capture tools, then the onnxruntime check, then a stale
+   `~/.asoundrc` last).
 3. If the check depends on something that can be monkeypatched at module
    level (like `shutil.which`), pass it explicitly at the call site
    inside `run_startup_checks()` rather than relying on the check
@@ -472,3 +473,33 @@ its argument) rather than calling into any Qt object directly from
 `QT_QPA_PLATFORM=offscreen` creates every widget without a display; use it
 for ad-hoc scripts (with `PYTHONPATH=$PWD/src`) and keep any such script and
 its temporary config outside the repository.
+
+## Adding a voice engine (Stage 6a)
+
+1. Implement `TTSEngine` (`engines/base.py`): the `ModelEngine` load/unload
+   methods plus `synthesize(text) -> (float32 audio, sample_rate)`. Import
+   heavy libraries lazily and take builders as parameters so tests can
+   pass fakes (see `engines/kokoro_tts.py`).
+2. Add its id constant to `engines/auto_select.py` and decide where it sits
+   in `decide()`'s chains; add a forced chain to `FORCED_CHAINS` and a label
+   to `_LABELS` in `engines/registry.py`.
+3. Add the id to `EngineChoice` in `config.py`, plus any paths/voice
+   fields on `EnginesConfig`, and keep `config/default_config.toml` in step.
+4. Write a factory in `cli.py` (see `_make_kokoro_factory`) and add it to
+   the `engine_factories` dict in both reader builders.
+5. Add the choice to `_ENGINE_CHOICES` in `ui/settings_window.py`.
+6. Installer: download the files in `packaging/installer/lib/fetch_models.py`
+   (use the shared timeout helper); if it needs a Python package, check
+   whether it pulls in a conflicting dependency before deciding how
+   `pyenv.sh` installs it (Kokoro uses `--no-deps`); make `uninstall.sh
+   --purge` remove the files.
+7. Add a startup check (see "Adding a new startup check") so a missing
+   model produces a clear notification.
+8. Tests with fakes only: policy rules (`tests/test_auto_select.py`),
+   selector (`tests/test_engine_registry.py`), chain
+   (`tests/test_engine_chain.py`), and the engine itself
+   (`tests/test_kokoro_tts.py` is the model to follow).
+
+The old `quick_tts` / `doc_tts` config keys were never read; they were
+replaced by `quick_reader_engine` / `document_reader_engine`. Old files
+still load because unknown keys are ignored.

@@ -14,6 +14,11 @@ src/vocalis/
 ├── config.py           # VocalisConfig pydantic model + TOML load/save
 ├── daemon.py            # Unix socket server lifecycle (start/stop)
 ├── engines/
+│   ├── auto_select.py     # pure Auto policy: which engine order for this PC right now (Stage 6a)
+│   ├── base.py            # Synthesizer / TTSEngine protocols (Stage 6a)
+│   ├── chain.py           # EngineChain: try engines in order, fall down on failure (Stage 6a)
+│   ├── kokoro_tts.py      # KokoroTTS: light, natural voice via kokoro-onnx (Stage 6a)
+│   ├── registry.py        # EngineSelector/EnginePlan: user choice + PC state -> engine order (Stage 6a)
 │   ├── parakeet.py        # ParakeetSTT: onnx-asr wrapper implementing ModelEngine
 │   ├── piper_tts.py        # PiperTTS: CPU-only fallback voice, never GPU-managed
 │   ├── qwen3_tts.py        # Qwen3TTS: primary voice, GPU, via ModelManager
@@ -36,7 +41,7 @@ src/vocalis/
 ├── model_manager.py     # GPU single-residency + idle-unload policy
 ├── remote.py             # vocalis --settings client: talks to the daemon's socket (Stage 5)
 ├── settings.py          # LiveSettings: shared live config holder + voice list
-├── startup_checks.py    # five non-fatal checks run once at startup (Stage 2, Stage 5)
+├── startup_checks.py    # seven non-fatal checks run once at startup (Stage 2, 5, 6a)
 ├── notify.py               # Notifier: desktop notifications (notify-send)
 ├── output/
 │   ├── clipboard.py        # ClipboardReader/ClipboardWriter: clipboard text via xclip
@@ -56,6 +61,10 @@ src/vocalis/
 
 tests/                    # pytest suite mirroring src/vocalis/ (≥85% coverage);
                           #   conftest.py sets QT_QPA_PLATFORM=offscreen for Qt tests
+├── test_auto_select.py    # Auto policy rules (Stage 6a)
+├── test_kokoro_tts.py     # Kokoro engine with fake builders (Stage 6a)
+├── test_engine_registry.py  # EngineSelector (Stage 6a)
+├── test_engine_chain.py   # EngineChain fall-down behaviour (Stage 6a)
 ├── test_cross_feature_integration.py  # whole-system tests: real build_*() + one
                           #   shared ModelManager, not a single feature in isolation
 ├── test_hardware.py       # probe_hardware/describe/log_hardware_summary, every source faked
@@ -84,14 +93,14 @@ packaging/
 │   └── vocalis.desktop    # application-menu launcher template (Stage 5); __VOCALIS_EXEC__ filled in by the installer
 └── installer/
     ├── install.sh          # end-to-end, idempotent installer (preflight -> apt -> python env -> models -> service -> menu launcher)
-    ├── uninstall.sh        # reverses install.sh; --purge also removes config/models/Piper
+    ├── uninstall.sh        # reverses install.sh; --purge also removes config/models/Piper/Kokoro
     ├── build-run.sh        # wraps install.sh/uninstall.sh into install.run/uninstall.run via makeself
     ├── README.md           # how to run/rebuild everything in this folder
     └── lib/
         ├── preflight.sh    # distro/arch/GPU-driver hard-gate checks
         ├── apt.sh          # missing-package detection/install, best-effort ydotoold enable
         ├── pyenv.sh        # uv install, wheel find-or-build, venv creation, wheel install
-        ├── fetch_models.py # Parakeet/Qwen3-TTS/Piper-voice reuse-or-download via huggingface_hub
+        ├── fetch_models.py # Parakeet/Qwen3-TTS/Piper-voice reuse-or-download via huggingface_hub; Kokoro files from a GitHub release
         ├── models.sh       # Piper binary reuse-or-download (the one non-Hugging-Face asset)
         ├── service.sh      # systemd unit placeholder substitution + enable/start
         └── desktop.sh      # application-menu launcher placeholder substitution (Stage 5)
@@ -153,3 +162,12 @@ so `vocalis --settings` no longer pays `cli.py`'s heavy import cost, moved
 the `vocalis` console-script target from `vocalis.cli:entrypoint` to
 `vocalis.entry:entrypoint`, and extended `remote.py`, `cli.py` and
 `ui/settings_window.py` in place (no other new files).
+
+Stage 6a (voice-engine plumbing) added `engines/auto_select.py`,
+`engines/base.py`, `engines/chain.py`, `engines/registry.py` and
+`engines/kokoro_tts.py` (with `tests/test_auto_select.py`,
+`tests/test_kokoro_tts.py`, `tests/test_engine_registry.py` and
+`tests/test_engine_chain.py`), and extended `config.py`, `settings.py`,
+`startup_checks.py`, `cli.py`, `features/quick_reader.py`,
+`features/doc_reader.py`, `ui/settings_window.py`, `fetch_models.py`,
+`pyenv.sh`, `install.sh`, `uninstall.sh` and `pyproject.toml` in place.

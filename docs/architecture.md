@@ -669,3 +669,57 @@ template lookup as the unit file; a failure there is logged but never fails
 the install, since the tray icon and `vocalis --settings` still work
 without a menu entry. `uninstall.sh` removes it; `build-run.sh` stages the
 template into both `.run` files alongside the systemd unit template.
+
+## Stage 6a addition: the voice-engine chain
+
+Before Stage 6a, each reader had its own copy of "try Qwen3-TTS, else
+Piper". Stage 6a replaces that with one shared path: **selector -> plan ->
+chain**.
+
+- `engines/base.py` defines the shared shapes: `Synthesizer` (anything
+  with `synthesize(text) -> (audio, rate)`) and `TTSEngine`
+  (a `Synthesizer` that is also a `ModelEngine`, so `ModelManager` can
+  load/unload it).
+- `engines/auto_select.py` is the pure policy: `decide(hardware, policy,
+  held_vram_mb)` returns an `AutoDecision` (an ordered tuple of engine
+  ids plus a plain-English reason). The thresholds live in the frozen
+  `AutoPolicy`: more than 4096 MB total graphics memory and at least 4096
+  MB free for Qwen3-TTS; stress means load per core above 0.85 or free RAM
+  below `max(2048 MB, 15% of total)`; below 1024 MB free RAM, or no GPU, the
+  order starts with Piper. `held_vram_mb` (memory Vocalis itself holds) is
+  added back to "free" so its own loaded Qwen3-TTS never counts as stress.
+- `engines/registry.py` has `EngineSelector.plan()`. A forced choice maps
+  to a fixed chain (`FORCED_CHAINS`: Qwen3-TTS -> Kokoro -> Piper, Kokoro
+  -> Piper, Piper -> Kokoro); "auto" probes the hardware and calls
+  `decide()`. If the probe raises, the plan is Kokoro -> Piper.
+  `kokoro_use_gpu()` tells Kokoro whether to run on the graphics card
+  (at least 1024 MB free).
+- `engines/chain.py` has `EngineChain`, built per reading from an
+  `EnginePlan`. `synthesize()` walks the plan: managed engines go
+  through `ModelManager.acquire/release`; Piper is called directly. On a
+  failure it remembers the position (so later pieces of the same reading
+  never retry a dead engine) and calls `on_downshift`, which the readers
+  turn into the "Primary voice unavailable — using backup voice"
+  notification.
+- `engines/kokoro_tts.py` is the Kokoro engine (`kokoro-onnx`). The
+  library is imported lazily, so importing the module is cheap.
+- `QuickReaderFeature` and `DocumentReaderFeature` take an
+  `engine_selector`; `cli.py` builds one `EngineSelector` and the factory
+  dict `{qwen3_tts: ..., kokoro: ...}` for each reader.
+
+**Piper stays unmanaged.** It is a CPU subprocess, so it never goes through
+`ModelManager` (as before); the chain calls the always-ready Piper engine
+directly and also uses it as the last resort.
+
+**Why `kokoro-onnx` is installed with `--no-deps`.** It hard-requires
+plain `onnxruntime`. Installed normally next to `onnxruntime-gpu`, it
+would silently take the graphics card away from Parakeet. So
+`pyenv_install_kokoro` installs `kokoro-onnx==0.4.7` with `--no-deps`, and
+its other small dependencies are listed in Vocalis's own `pyproject.toml`
+(`colorlog`, `espeakng-loader`, `phonemizer-fork`). The existing
+`check_onnx_gpu` startup check still guards against a regression.
+
+**Not in this stage.** Kokoro is called at speed 1.0 and still gets the
+same time-stretch as the other voices (native speed is Stage 6c);
+gapless long-text reading is 6b; resource limits and "stay downshifted for
+60 seconds" hysteresis are 6d.

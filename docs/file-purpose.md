@@ -164,3 +164,34 @@
 | `packaging/installer/install.sh` | Sources `lib/desktop.sh` and, right after `service_enable_and_start()`, installs the application-menu launcher via `desktop_install_launcher()` (a failure there is logged but never fails the install); the closing message now explains the three ways to open Vocalis instead of just pointing at `systemctl status`. |
 | `packaging/installer/uninstall.sh` | Also removes `~/.local/share/applications/vocalis.desktop` if present. |
 | `packaging/installer/build-run.sh` | Also stages `packaging/desktop/vocalis.desktop` into both `.run` files' payload. |
+
+## Stage 6a: voice-engine chain and Kokoro
+
+**New files**
+
+| File | Purpose |
+|---|---|
+| `src/vocalis/engines/auto_select.py` | Pure Auto policy: `AutoPolicy` thresholds, `is_stressed()`, `decide()` (returns the engine order plus a plain-English reason), `kokoro_should_use_gpu()`. |
+| `src/vocalis/engines/base.py` | The shared `Synthesizer` and `TTSEngine` protocols. |
+| `src/vocalis/engines/registry.py` | `EngineSelector` (turns the user's choice plus the PC's state into an `EnginePlan`) and `FORCED_CHAINS`. |
+| `src/vocalis/engines/chain.py` | `EngineChain` — walks one reading's plan, falling to the next engine on failure; Piper is called directly, others through `ModelManager`. |
+| `src/vocalis/engines/kokoro_tts.py` | `KokoroTTS` — the Kokoro engine (`kokoro-onnx`), CPU or graphics card, implements `ModelEngine`. |
+| `tests/test_auto_select.py` | Every Auto rule, with fake hardware snapshots. |
+| `tests/test_kokoro_tts.py` | Kokoro engine with fake session/synthesizer builders. |
+| `tests/test_engine_registry.py` | Selector: forced choices, Auto, probe failure, graphics-card choice for Kokoro. |
+| `tests/test_engine_chain.py` | Chain: fall-down order, no retry of dead engines, Piper unmanaged. |
+
+**Changed files**
+
+| File | Change |
+|---|---|
+| `src/vocalis/config.py` | `quick_tts`/`doc_tts` replaced by `quick_reader_engine`/`document_reader_engine` (`EngineChoice`, default `"auto"`); new `kokoro_model_path`, `kokoro_voices_path`, `kokoro_voice`. |
+| `src/vocalis/settings.py` | `LiveSettings` gained `quick_reader_engine()`, `document_reader_engine()`, `kokoro_voice()`; new `KOKORO_VOICES` list (eleven voices). |
+| `src/vocalis/features/quick_reader.py`, `doc_reader.py` | Take an `engine_selector`; build an `EngineChain` per reading and send the "Primary voice unavailable — using backup voice" notification. |
+| `src/vocalis/ui/settings_window.py` | Three new drop-downs: Quick Reader voice engine, Document Reader voice engine, Kokoro voice. |
+| `src/vocalis/cli.py` | Builds the `EngineSelector` and the Kokoro factory (`_make_kokoro_factory`) and passes them to both readers. |
+| `src/vocalis/startup_checks.py` | New `check_kokoro_model()`; `run_startup_checks()` now runs seven checks in order: Parakeet, Qwen3-TTS, Kokoro, `ydotoold`, OCR tools, onnxruntime graphics card, stale `~/.asoundrc`. |
+| `packaging/installer/lib/fetch_models.py` | `ensure_kokoro()` downloads the two Kokoro files (checked by exact size) with a 60-second timeout per connection. |
+| `packaging/installer/lib/pyenv.sh` | `pyenv_install_kokoro()` installs `kokoro-onnx==0.4.7` with `--no-deps`. |
+| `packaging/installer/install.sh`, `uninstall.sh` | Install calls `pyenv_install_kokoro` and reports the Kokoro check; `uninstall.sh --purge` also removes the Kokoro folder. |
+| `pyproject.toml` | Lists Kokoro's three small dependencies (`colorlog`, `espeakng-loader`, `phonemizer-fork`) because `kokoro-onnx` itself is installed with `--no-deps`. |

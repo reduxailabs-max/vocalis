@@ -464,3 +464,32 @@ over to the GUI thread that owns `settings_window`.
 `present()` is safe to call from any of the three paths more than once in
 a row — a second call while the window is already open just raises it to
 the front instead of opening a duplicate.
+
+## Choosing a voice engine (Stage 6a)
+
+For every Quick Reader or Document Reader reading:
+
+```
+reading starts
+  -> EngineSelector.plan()
+       setting is qwen3_tts / kokoro / piper -> fixed chain
+           (Qwen3-TTS -> Kokoro -> Piper | Kokoro -> Piper | Piper -> Kokoro)
+       setting is auto -> probe hardware -> auto_select.decide()
+           (Vocalis's own loaded graphics memory is credited back)
+  -> EngineChain(plan, factories, ModelManager, Piper)
+  -> for each piece of text: chain.synthesize(text)
+       try the first engine (Piper directly, others via ModelManager)
+       on failure: remember it, notify
+           "Primary voice unavailable — using backup voice",
+           and try the next engine in the plan
+  -> audio is paced and played as before
+```
+
+A failed engine is not retried for the rest of that reading. The next
+reading builds a fresh plan, so a recovered engine is used again.
+
+At startup there are now seven checks, in this order: Parakeet model,
+Qwen3-TTS model, Kokoro voice files, `ydotoold`, OCR tools, the
+onnxruntime graphics-card check, stale `~/.asoundrc`. At install time,
+`fetch_models.py` also downloads the two Kokoro files with a 60-second
+timeout per connection, so a stalled download cannot hang the installer.

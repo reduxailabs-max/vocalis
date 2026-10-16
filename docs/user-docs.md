@@ -276,6 +276,55 @@ preview your voice before you commit to it.
   offered — a control that doesn't actually do anything would just be
   confusing.
 
+## Voice engines
+
+Vocalis can read aloud with three different voices, called "engines".
+They sound a little different and need different amounts of computer
+power:
+
+- **Qwen3-TTS** — the best-sounding voice. It needs a strong graphics
+  card and some free memory.
+- **Kokoro** — a lighter voice that still sounds natural. It works well on
+  an ordinary PC and on smaller graphics cards.
+- **Piper** — the lightest voice. It runs on almost any PC and is always
+  ready, so it is the safety net.
+
+**Automatic (recommended)** means Vocalis picks for you, each time you
+start a reading, based on how your PC is doing at that moment:
+
+- If you have a graphics card with more than 4 GB of memory, your PC is
+  not busy, and enough of the card's memory is free, Vocalis uses
+  **Qwen3-TTS**.
+- If your PC is busy (the processor is working hard, or free memory is
+  low), or your graphics card is small or already in use by other
+  programs, Vocalis uses **Kokoro**.
+- If your PC is very short of free memory, or has no graphics card at all,
+  Vocalis uses **Piper**.
+
+Vocalis does not count its own voice against you: if Qwen3-TTS is already
+loaded, the memory it holds is not treated as "busy", so Automatic does
+not keep flipping between voices.
+
+You can choose a voice yourself instead. In Settings there is a **Quick
+Reader voice engine** drop-down and a **Document Reader voice engine**
+drop-down, each with **Automatic**, **Qwen3-TTS**, **Kokoro** and
+**Piper**. A third drop-down, **Kokoro voice**, picks which Kokoro voice
+speaks. The new choices apply from the next reading.
+
+If the voice you chose (or Automatic chose) cannot work, Vocalis moves to
+the next lighter one and shows **"Primary voice unavailable — using backup
+voice"**. This is not an error and your text is still read aloud. The
+order is: Qwen3-TTS, then Kokoro, then Piper; if you chose Kokoro, then
+Piper; if you chose Piper, then Kokoro.
+
+The installer downloads the Kokoro voice (about 350 MB) along with the
+other models. If it is missing, Vocalis tells you when it starts and uses
+another voice until you run the installer again.
+
+Older config files that still contain the old `quick_tts` / `doc_tts`
+lines keep working; those lines are ignored and both readers use
+Automatic.
+
 ## Settings
 
 Open the Settings window from the tray menu (**Settings…**). It has:
@@ -285,6 +334,8 @@ Open the Settings window from the tray menu (**Settings…**). It has:
 - **Voice** — pick one of nine voices: Serena, Vivian, Uncle_Fu, Ryan,
   Aiden, Ono_Anna, Sohee, Eric, Dylan. It applies from the **next**
   reading; a reading that is already in progress finishes in its old voice.
+- **Quick Reader voice engine**, **Document Reader voice engine** and
+  **Kokoro voice** — see "Voice engines" above.
 - **Sound output**, **Test sound**, **Speaking speed** and **Preview
   voice** — see "Sound and speaking pace" above.
 - **Shortcuts** — drop-down lists, so typing mistakes are impossible:
@@ -330,11 +381,11 @@ Vocalis will:
 - Stop trying to restart if it crashes 5 times within one minute, rather
   than looping forever.
 
-### What the five start-up notifications mean
+### What the start-up notifications mean
 
-Every time Vocalis starts, it quickly checks five things and tells you
+Every time Vocalis starts, it quickly checks several things and tells you
 about any problem it finds with a desktop notification. **None of these
-five notifications is an error, and none of them stops Vocalis from
+notifications is an error, and none of them stops Vocalis from
 starting.** Each one is a heads-up about one specific feature — that one
 feature won't work right until you fix the thing it mentions, but
 everything else keeps working normally:
@@ -345,6 +396,9 @@ everything else keeps working normally:
 - **"The primary voice model is missing..."** — Reading aloud will use
   the simpler backup voice (Piper) instead of the main AI voice until
   this model is installed. You will still hear your text read out loud.
+- **"The light Kokoro voice is missing..."** — Reading aloud will use
+  another voice until the Kokoro voice is installed in the folder the
+  message names (re-run the installer).
 - **"ydotoold is not running..."** — Dictation still works, but instead
   of typing the words at your cursor, it copies them to your clipboard
   so you can paste them yourself.
@@ -386,6 +440,10 @@ Relevant settings:
   (defaults to the existing Voxtype installation's model directory).
 - `[engines] qwen3_tts_speaker` — which of Qwen3-TTS's built-in voices to
   use (default: "Ryan").
+- `[engines] quick_reader_engine` and `document_reader_engine` — `"auto"`
+  (default), `"qwen3_tts"`, `"kokoro"` or `"piper"` (see "Voice engines").
+- `[engines] kokoro_voice` — which Kokoro voice to use (default:
+  `"af_heart"`).
 - `audio_output_device` — `"auto"` (default) or the exact name of one of
   your sound outputs. Blank is rejected.
 - `speaking_speed` — a number from `0.7` to `1.6` (default `1.15`).
