@@ -66,6 +66,16 @@ def _no_real_audio_device_listing() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _strong_idle_pc() -> Iterator[None]:
+    """Every builder sees a big, idle PC, so Auto picks Qwen3-TTS and no real hardware is read."""
+    from vocalis.hardware import GpuInfo, HardwareInfo
+
+    info = HardwareInfo(GpuInfo("Test GPU", 8188, 7000), 16000, 10000, 8, 1.0)
+    with patch("vocalis.cli.probe_hardware", return_value=info):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _no_real_hardware_probe() -> Iterator[None]:
     with patch("vocalis.cli.log_hardware_summary"):
         yield
@@ -1388,3 +1398,41 @@ def test_settings_bridge_delivers_a_background_threads_command_to_the_main_threa
         worker.join()
 
     assert seen_threads == [threading.main_thread()]
+
+
+def test_both_readers_use_the_selector_and_default_to_auto(tmp_path: Path, qtbot) -> None:  # type: ignore[no-untyped-def]
+    """Built readers carry an engine selector whose preference starts as Automatic."""
+    settings = _live_settings(tmp_path)
+    manager = ModelManager()
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        quick, _ = build_quick_reader(
+            config=settings.config, model_manager=manager, reading_coordinator=ReadingCoordinator(), settings=settings
+        )
+    assert quick._engine_selector is not None  # noqa: SLF001
+    assert quick._engine_selector.plan().chain[0] == "qwen3_tts"  # noqa: SLF001
+    assert set(quick._engine_factories or {}) == {"qwen3_tts", "kokoro"}  # noqa: SLF001
+
+
+def test_choosing_kokoro_in_settings_changes_the_next_plan(tmp_path: Path) -> None:
+    """The selector reads the live Settings choice, so a change applies to the next reading."""
+    settings = _live_settings(tmp_path)
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        quick, _ = build_quick_reader(
+            config=settings.config, model_manager=ModelManager(),
+            reading_coordinator=ReadingCoordinator(), settings=settings,
+        )
+    settings.update(settings.config.model_copy(update={
+        "engines": settings.config.engines.model_copy(update={"quick_reader_engine": "kokoro"})}))
+    assert quick._engine_selector.plan().chain == ("kokoro", "piper")  # type: ignore[union-attr]  # noqa: SLF001
+
+
+def test_the_kokoro_factory_builds_a_kokoro_engine_with_live_voice(tmp_path: Path) -> None:
+    """The Kokoro factory reads the voice live and decides graphics-card use at load time."""
+    from vocalis.cli import _make_kokoro_factory
+    from vocalis.engines.kokoro_tts import KokoroTTS
+
+    settings = _live_settings(tmp_path)
+    selector = type("S", (), {"kokoro_use_gpu": staticmethod(lambda: True)})()
+    engine = _make_kokoro_factory(settings.config, settings, selector)()
+    assert isinstance(engine, KokoroTTS)
+    assert engine._current_voice() == "af_heart"  # noqa: SLF001

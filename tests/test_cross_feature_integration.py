@@ -163,6 +163,16 @@ def _finish_background_threads(started_before: "set[threading.Thread]") -> "list
 
 
 @pytest.fixture(autouse=True)
+def _strong_idle_pc() -> Iterator[None]:
+    """Every builder sees a big, idle PC, so Auto picks Qwen3-TTS and no real hardware is read."""
+    from vocalis.hardware import GpuInfo, HardwareInfo
+
+    info = HardwareInfo(GpuInfo("Test GPU", 8188, 7000), 16000, 10000, 8, 1.0)
+    with patch("vocalis.cli.probe_hardware", return_value=info):
+        yield
+
+
+@pytest.fixture(autouse=True)
 def _never_touch_real_hardware() -> "Iterator[None]":
     """Safety net for this whole file: no test here may ever shell out
     to a real ydotool/xclip/notify-send, even if a future test forgets
@@ -279,6 +289,46 @@ def test_switching_between_quick_reader_and_document_reader_reuses_the_loaded_en
 
     assert manager.current_engine_id == TTS_ENGINE_ID
     assert qwen_engine.load_count == 1  # NOT reloaded -- same engine id, same cached instance
+    assert qwen_engine.unload_count == 0
+
+
+def test_auto_picks_the_same_engine_for_both_readers_so_nothing_reloads(qapp) -> None:  # type: ignore[no-untyped-def]
+    """With both readers on Auto they resolve to the same engine id, so
+    switching from Quick Reader to Document Reader never reloads it."""
+    config = VocalisConfig()
+    assert config.engines.quick_reader_engine == config.engines.document_reader_engine == "auto"
+    manager = ModelManager(idle_timeout_seconds=9999.0)
+    coordinator = ReadingCoordinator()
+    qwen_engine = _FakeEngine("qwen")
+
+    threads_before = set(threading.enumerate())
+    with (
+        patch("vocalis.cli.Qwen3TTS", return_value=qwen_engine),
+        patch("vocalis.cli.PiperTTS", _FakePiper),
+        patch("vocalis.cli.AudioPlayer") as mock_player_cls,
+        patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
+        patch("vocalis.cli.Notifier.notify", _quiet_notify),
+    ):
+        first_player = _FakePlayer()
+        mock_player_cls.return_value = first_player
+        quick_reader, _quick_listener = build_quick_reader(
+            config=config, model_manager=manager, reading_coordinator=coordinator
+        )
+        quick_reader.on_trigger()
+        assert first_player.done_event.wait(timeout=2.0)
+        assert manager.current_engine_id == "qwen3_tts"
+
+        second_player = _FakePlayer()
+        mock_player_cls.return_value = second_player
+        doc_reader, _popup, _doc_listener = build_doc_reader(
+            config=config, model_manager=manager, reading_coordinator=coordinator
+        )
+        doc_reader.read_text("some document text")
+        assert second_player.done_event.wait(timeout=2.0)
+        assert not _finish_background_threads(threads_before)
+
+    assert manager.current_engine_id == "qwen3_tts"
+    assert qwen_engine.load_count == 1
     assert qwen_engine.unload_count == 0
 
 

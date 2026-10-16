@@ -25,12 +25,15 @@ from PySide6.QtWidgets import QApplication
 
 from vocalis.config import VocalisConfig, default_config_path, load_config
 from vocalis.daemon import DaemonAlreadyRunningError, VocalisDaemon
+from vocalis.engines.auto_select import QWEN3_TTS
+from vocalis.engines.kokoro_tts import KokoroTTS
 from vocalis.engines.parakeet import ParakeetSTT
+from vocalis.engines.registry import EngineSelector
 from vocalis.features.dictation import DictationFeature
-from vocalis.hardware import log_hardware_summary
+from vocalis.hardware import HardwareInfo, log_hardware_summary, probe_hardware
 from vocalis.hotkeys.numlock import NumlockListener, list_numlock_capable_devices
 from vocalis.logging_setup import configure_logging
-from vocalis.model_manager import ModelManager
+from vocalis.model_manager import ModelEngine, ModelManager
 from vocalis.notify import Notifier
 from vocalis.output.typer import TextOutput
 from vocalis.remote import SHOW_SETTINGS, default_socket_path, open_settings
@@ -175,6 +178,37 @@ def _make_qwen_factory(
         return Qwen3TTS(model_dir=qwen_model_dir, speaker=speaker)
 
     return primary_engine_factory
+
+
+_QWEN3_HELD_VRAM_MB = 4096
+
+
+def _make_engine_selector(
+    preference: Callable[[], str],
+    model_manager: ModelManager,
+    hardware_probe: Callable[[], HardwareInfo],
+) -> EngineSelector:
+    """A selector that credits Qwen3-TTS's own graphics memory back while it is loaded."""
+
+    def held_vram_mb() -> int:
+        return _QWEN3_HELD_VRAM_MB if model_manager.current_engine_id == QWEN3_TTS else 0
+
+    return EngineSelector(preference=preference, hardware_probe=hardware_probe, held_vram_mb=held_vram_mb)
+
+
+def _make_kokoro_factory(
+    config: VocalisConfig, settings: LiveSettings | None, selector: EngineSelector
+) -> Callable[[], KokoroTTS]:
+    """A factory building KokoroTTS; the voice is read live, graphics-card use is decided at load."""
+    model_path = Path(config.engines.kokoro_model_path)
+    voices_path = Path(config.engines.kokoro_voices_path)
+    voice: "str | Callable[[], str]" = settings.kokoro_voice if settings is not None else config.engines.kokoro_voice
+
+    def kokoro_factory() -> KokoroTTS:
+        """Build the light voice engine."""
+        return KokoroTTS(model_path=model_path, voices_path=voices_path, voice=voice, use_gpu=selector.kokoro_use_gpu)
+
+    return kokoro_factory
 
 
 _NEVER_NOTIFIED = object()
@@ -387,6 +421,7 @@ def build_quick_reader(
     hub: StatusHub | None = None,
     key_code: int = 19,
     output_chooser: OutputDeviceChooser | None = None,
+    hardware_probe: Callable[[], HardwareInfo] | None = None,
 ) -> tuple[QuickReaderFeature, CtrlAltKeyListener]:
     """Construct the Quick Reader feature and its Ctrl+Alt+R listener.
 
@@ -406,12 +441,22 @@ def build_quick_reader(
             marks a failed device on it (notifying once); when None, the
             player keeps today's plain AudioPlayer() with the system
             default device.
+        hardware_probe: Optional PC check used by the voice-engine selector
+            (Automatic mode); None uses the real probe_hardware, looked up
+            when this function is called.
 
     Returns:
         A (feature, listener) pair. The caller is responsible for calling
         listener.start()/listener.stop() around the daemon's own lifecycle.
     """
     primary_engine_factory = _make_qwen_factory(config, settings)
+    preference: Callable[[], str] = (
+        settings.quick_reader_engine if settings is not None else (lambda: config.engines.quick_reader_engine)
+    )
+    selector = _make_engine_selector(
+        preference, model_manager, hardware_probe if hardware_probe is not None else probe_hardware
+    )
+    engine_factories: dict[str, Callable[[], ModelEngine]] = {QWEN3_TTS: primary_engine_factory, "kokoro": _make_kokoro_factory(config, settings, selector)}
 
     fallback_engine = PiperTTS(
         binary_path=Path(config.engines.piper_binary_path),
@@ -446,6 +491,8 @@ def build_quick_reader(
         reading_coordinator=reading_coordinator,
         on_reading_changed=on_reading_changed if hub is not None else None,
         speed_provider=settings.speaking_speed if settings is not None else None,
+        engine_selector=selector,
+        engine_factories=engine_factories,
     )
     listener: CtrlAltKeyListener
     if key_code == _KEY_R:
@@ -470,6 +517,7 @@ def build_doc_reader(
     hub: StatusHub | None = None,
     key_code: int = _KEY_D,
     output_chooser: OutputDeviceChooser | None = None,
+    hardware_probe: Callable[[], HardwareInfo] | None = None,
 ) -> tuple[DocumentReaderFeature, DocumentReaderPopup, CtrlAltKeyListener]:
     """Construct the Document Reader feature, its popup, and its
     Ctrl+Alt+D listener.
@@ -503,6 +551,9 @@ def build_doc_reader(
             marks a failed device on it (notifying once); when None, the
             player keeps today's plain AudioPlayer() with the system
             default device.
+        hardware_probe: Optional PC check used by the voice-engine selector
+            (Automatic mode); None uses the real probe_hardware, looked up
+            when this function is called.
 
     Returns:
         A (feature, popup, listener) triple. The caller is responsible
@@ -511,6 +562,13 @@ def build_doc_reader(
         stays hidden until the user first presses Ctrl+Alt+D.
     """
     primary_engine_factory = _make_qwen_factory(config, settings)
+    preference: Callable[[], str] = (
+        settings.document_reader_engine if settings is not None else (lambda: config.engines.document_reader_engine)
+    )
+    selector = _make_engine_selector(
+        preference, model_manager, hardware_probe if hardware_probe is not None else probe_hardware
+    )
+    engine_factories: dict[str, Callable[[], ModelEngine]] = {QWEN3_TTS: primary_engine_factory, "kokoro": _make_kokoro_factory(config, settings, selector)}
 
     fallback_engine = PiperTTS(
         binary_path=Path(config.engines.piper_binary_path),
@@ -572,6 +630,8 @@ def build_doc_reader(
         on_finished=on_finished,
         on_started=on_started if hub is not None else None,
         speed_provider=settings.speaking_speed if settings is not None else None,
+        engine_selector=selector,
+        engine_factories=engine_factories,
     )
     popup = DocumentReaderPopup(feature)
     listener = CtrlAltKeyListener(
