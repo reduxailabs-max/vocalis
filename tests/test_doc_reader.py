@@ -19,6 +19,7 @@ from vocalis.audio.playback import AudioPlayer
 from vocalis.features.doc_reader import DocumentReaderFeature
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import TTS_ENGINE_ID, ModelManager
+from vocalis.text.chunker import chunk_text
 from vocalis.text.extractors import (
     DocumentOpenError,
     DocumentTooLargeError,
@@ -1253,6 +1254,11 @@ def _make_selector_feature(
     return feature, statuses, finishes
 
 
+def _several_chunk_text() -> str:
+    """Three long sentences that chunk_text() splits into at least three chunks."""
+    return " ".join(letter * 200 + "." for letter in "ABC")
+
+
 def test_a_selector_planned_engine_speaks_the_document() -> None:
     kokoro = FakeSynthesizer()
     fallback = FakeSynthesizer()
@@ -1261,10 +1267,13 @@ def test_a_selector_planned_engine_speaks_the_document() -> None:
         "kokoro", {"kokoro": lambda: kokoro}, fallback, notifier
     )
 
-    feature.read_text("One. Two. Three. Four. Five. Six. Seven. Eight.")
+    text = _several_chunk_text()
+    chunk_count = len(chunk_text(text))
+    assert chunk_count >= 3
+    feature.read_text(text)
     wait_until(lambda: bool(finishes))
 
-    assert kokoro.calls
+    assert len(kokoro.calls) == chunk_count
     assert fallback.calls == []
     assert "Primary voice unavailable — using backup voice" not in notifier.messages
 
@@ -1282,10 +1291,13 @@ def test_a_failed_planned_engine_is_not_retried_and_is_announced_once() -> None:
         "kokoro", {"kokoro": broken_kokoro}, fallback, notifier
     )
 
-    feature.read_text("One. Two. Three. Four. Five. Six. Seven. Eight.")
+    text = _several_chunk_text()
+    chunk_count = len(chunk_text(text))
+    assert chunk_count >= 3
+    feature.read_text(text)
     wait_until(lambda: bool(finishes))
 
-    assert fallback.calls
+    assert len(fallback.calls) == chunk_count  # Piper spoke every chunk
     assert len(factory_calls) == 1  # never retried for later chunks
     assert notifier.messages.count("Primary voice unavailable — using backup voice") == 1
     assert statuses.count("Using backup voice") == 1
