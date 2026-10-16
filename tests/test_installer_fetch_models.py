@@ -92,17 +92,76 @@ def test_ensure_piper_voice_downloads_and_flattens_both_files_when_missing(fetch
     assert Path(str(voice_path) + ".json").exists()
 
 
-def test_main_runs_all_three_ensures_in_order(fetch_models, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+def test_main_runs_all_four_ensures_in_order(fetch_models, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
     calls = []
     fake_config = MagicMock()
     fake_config.engines.parakeet_model_dir = str(tmp_path / "parakeet")
     fake_config.engines.qwen3_tts_model_dir = str(tmp_path / "qwen")
     fake_config.engines.piper_voice_model_path = str(tmp_path / "piper-voices" / "en_US-lessac-medium.onnx")
+    fake_config.engines.kokoro_model_path = str(tmp_path / "kokoro" / "kokoro-v1.0.onnx")
+    fake_config.engines.kokoro_voices_path = str(tmp_path / "kokoro" / "voices-v1.0.bin")
     with (
         patch.object(fetch_models, "VocalisConfig", return_value=fake_config),
         patch.object(fetch_models, "ensure_parakeet", side_effect=lambda p: calls.append(("parakeet", p))),
         patch.object(fetch_models, "ensure_qwen3_tts", side_effect=lambda p: calls.append(("qwen3_tts", p))),
         patch.object(fetch_models, "ensure_piper_voice", side_effect=lambda p: calls.append(("piper_voice", p))),
+        patch.object(fetch_models, "ensure_kokoro", side_effect=lambda m, v: calls.append(("kokoro", m))),
     ):
         assert fetch_models.main() == 0
-    assert [name for name, _ in calls] == ["parakeet", "qwen3_tts", "piper_voice"]
+    assert [name for name, _ in calls] == ["parakeet", "qwen3_tts", "piper_voice", "kokoro"]
+
+
+class _FakeResponse:
+    """A fake urlopen() result that yields fixed bytes."""
+
+    def __init__(self, data: bytes) -> None:
+        import io
+        self._buffer = io.BytesIO(data)
+
+    def read(self, size: int = -1) -> bytes:
+        return self._buffer.read(size)
+
+    def __enter__(self) -> "_FakeResponse":
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+
+def test_ensure_kokoro_downloads_both_files_and_checks_their_size(fetch_models, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Both files are downloaded to the configured paths and size-checked."""
+    sizes = {"kokoro-v1.0.onnx": 10, "voices-v1.0.bin": 4}
+    urls: list[str] = []
+
+    def opener(url: str) -> _FakeResponse:
+        urls.append(url)
+        return _FakeResponse(b"x" * sizes[url.rsplit("/", 1)[1]])
+
+    model, voices = tmp_path / "k" / "kokoro-v1.0.onnx", tmp_path / "k" / "voices-v1.0.bin"
+    fetch_models.ensure_kokoro(model, voices, opener=opener, expected_sizes=sizes)
+    assert model.read_bytes() == b"x" * 10 and voices.read_bytes() == b"x" * 4
+    assert all("thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/" in url for url in urls)
+
+
+def test_ensure_kokoro_skips_files_that_are_already_there(fetch_models, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """Nothing is downloaded when both files already exist."""
+    model, voices = tmp_path / "kokoro-v1.0.onnx", tmp_path / "voices-v1.0.bin"
+    model.write_bytes(b"x")
+    voices.write_bytes(b"x")
+
+    def opener(url: str) -> _FakeResponse:
+        raise AssertionError("must not download")
+
+    fetch_models.ensure_kokoro(model, voices, opener=opener)
+
+
+def test_ensure_kokoro_rejects_a_truncated_download_and_leaves_no_partial_file(fetch_models, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """A short download raises and never leaves a half file that would look complete."""
+    model, voices = tmp_path / "kokoro-v1.0.onnx", tmp_path / "voices-v1.0.bin"
+    with pytest.raises(RuntimeError, match="kokoro-v1.0.onnx"):
+        fetch_models.ensure_kokoro(
+            model, voices, opener=lambda url: _FakeResponse(b"xx"),
+            expected_sizes={"kokoro-v1.0.onnx": 10, "voices-v1.0.bin": 4},
+        )
+    assert not model.exists()
+    assert list(tmp_path.glob("*.part")) == []

@@ -110,6 +110,7 @@ case "\$*" in
   *qwen3_tts_model_dir*) echo "$WORKDIR/models/qwen3" ;;
   *piper_binary_path*) echo "$WORKDIR/.local/bin/piper/piper" ;;
   *piper_voice_model_path*) echo "$WORKDIR/.local/share/piper-voices/en_US-lessac-medium.onnx" ;;
+  *kokoro_model_path*) echo "$WORKDIR/kokoro-dir/kokoro-v1.0.onnx" ;;
 esac
 STUB
   chmod +x "$WORKDIR/.local/share/vocalis/venv/bin/python"
@@ -139,4 +140,13 @@ STUB
   HOME="$WORKDIR" run main --purge
   [ "$status" -eq 0 ]
   [ -d "$WORKDIR/.local/bin/piper" ]
+}
+
+@test "main --purge also removes the Kokoro model directory" {
+  mkdir -p "$WORKDIR/kokoro-dir"
+  touch "$WORKDIR/kokoro-dir/kokoro-v1.0.onnx"
+  write_purge_python_stub
+  HOME="$WORKDIR" run main --purge
+  [ "$status" -eq 0 ]
+  [ ! -d "$WORKDIR/kokoro-dir" ]
 }

@@ -14,7 +14,7 @@ uninstall_run_systemctl_daemon_reload() {
 uninstall_print_usage() {
   echo "Usage: uninstall.sh [--purge]"
   echo "  (no flag)  Remove Vocalis but keep your config and downloaded models."
-  echo "  --purge    Also remove your config, downloaded models, Piper and its voices."
+  echo "  --purge    Also remove your config, downloaded models, Piper and its voices, and the Kokoro voice."
   echo "  -h, --help Show this help and exit without removing anything."
 }
 
@@ -42,7 +42,7 @@ main() {
   local launcher="${HOME}/.local/share/applications/vocalis.desktop"
 
   local config_dir="" parakeet_dir="" qwen3_tts_dir="" piper_binary="" piper_voice=""
-  local piper_binary_dir="" piper_voice_dir=""
+  local piper_binary_dir="" piper_voice_dir="" kokoro_model="" kokoro_dir=""
   if [[ -x "$venv_python" ]]; then
     found_anything=1
     if [[ "$purge" -eq 1 ]]; then
@@ -51,10 +51,12 @@ main() {
       qwen3_tts_dir="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.qwen3_tts_model_dir)' 2>/dev/null || true)"
       piper_binary="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.piper_binary_path)' 2>/dev/null || true)"
       piper_voice="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.piper_voice_model_path)' 2>/dev/null || true)"
+      kokoro_model="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.kokoro_model_path)' 2>/dev/null || true)"
       # Only derive a parent dir from a real answer: dirname "" is ".",
       # which must never be passed to rm -rf.
       [[ -n "$piper_binary" ]] && piper_binary_dir="$(dirname "$piper_binary")"
       [[ -n "$piper_voice" ]] && piper_voice_dir="$(dirname "$piper_voice")"
+      [[ -n "$kokoro_model" ]] && kokoro_dir="$(dirname "$kokoro_model")"
     fi
   fi
 
@@ -92,7 +94,8 @@ main() {
     [[ -n "$qwen3_tts_dir" && -d "$qwen3_tts_dir" ]] && rm -rf "$qwen3_tts_dir"
     [[ -n "$piper_binary_dir" && -d "$piper_binary_dir" ]] && rm -rf "$piper_binary_dir"
     [[ -n "$piper_voice_dir" && -d "$piper_voice_dir" ]] && rm -rf "$piper_voice_dir"
-    echo "Vocalis has been removed, including your config, downloaded models, Piper and its voices."
+    [[ -n "$kokoro_dir" && -d "$kokoro_dir" ]] && rm -rf "$kokoro_dir"
+    echo "Vocalis has been removed, including your config, downloaded models, Piper and its voices, and the Kokoro voice."
   else
     echo "Vocalis has been removed. Your config (~/.config/vocalis) and downloaded models were kept."
     echo "Run with --purge to remove those too."

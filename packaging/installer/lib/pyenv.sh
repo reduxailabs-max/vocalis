@@ -89,3 +89,12 @@ pyenv_install_vocalis() {
   local wheel_path="$2"
   pyenv_run_uv pip install --python "${venv_dir}/bin/python" "$wheel_path"
 }
+
+# Install kokoro-onnx WITHOUT its dependencies. It hard-requires plain
+# onnxruntime, which would silently remove the graphics card from
+# Parakeet if installed next to onnxruntime-gpu; its other dependencies
+# are listed in Vocalis's own pyproject.toml.
+pyenv_install_kokoro() {
+  local venv_dir="$1"
+  pyenv_run_uv pip install --python "${venv_dir}/bin/python" --no-deps "kokoro-onnx==0.4.7"
+}

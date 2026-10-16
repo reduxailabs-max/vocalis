@@ -13,6 +13,7 @@ setup() {
   pyenv_find_or_build_wheel() { echo "pyenv_find_or_build_wheel: $*" >> "$CALL_LOG"; echo "$WORKDIR/vocalis-0.1.0-py3-none-any.whl"; }
   pyenv_create_venv() { echo "pyenv_create_venv: $*" >> "$CALL_LOG"; mkdir -p "$1/bin"; echo '#!/bin/sh' > "$1/bin/python"; chmod +x "$1/bin/python"; }
   pyenv_install_vocalis() { echo "pyenv_install_vocalis: $*" >> "$CALL_LOG"; }
+  pyenv_install_kokoro() { echo "pyenv_install_kokoro: $*" >> "$CALL_LOG"; }
   models_ensure_piper_binary() { echo "models_ensure_piper_binary: $*" >> "$CALL_LOG"; }
   service_substitute_unit() { echo "service_substitute_unit: $*" >> "$CALL_LOG"; }
   service_enable_and_start() { echo "service_enable_and_start" >> "$CALL_LOG"; }
@@ -123,4 +124,13 @@ teardown() {
   SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main
   [ "$status" -eq 0 ]
   [[ "$output" == *"menu entry could not be added"* ]]
+}
+
+@test "main installs kokoro-onnx right after the Vocalis wheel" {
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  wheel_line="$(grep -n "pyenv_install_vocalis" "$CALL_LOG" | cut -d: -f1)"
+  kokoro_line="$(grep -n "pyenv_install_kokoro" "$CALL_LOG" | cut -d: -f1)"
+  [ -n "$kokoro_line" ]
+  [ "$wheel_line" -lt "$kokoro_line" ]
 }

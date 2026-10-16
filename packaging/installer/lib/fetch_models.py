@@ -1,6 +1,6 @@
-"""Reuse-or-download the three Hugging-Face-hosted Vocalis assets:
-the Parakeet dictation model, the Qwen3-TTS voice model, and the
-Piper fallback voice. Run with the just-installed vocalis venv's
+"""Reuse-or-download four Vocalis assets: the Parakeet dictation model,
+the Qwen3-TTS voice model and the Piper fallback voice (all Hugging
+Face hosted), and the two Kokoro voice files (a GitHub release). Run with the just-installed vocalis venv's
 python so it can import vocalis's own config defaults and file lists
 as the single source of truth -- the installer must never hard-code
 a second copy of these paths/filenames and risk drifting out of sync.
@@ -9,7 +9,9 @@ The Piper BINARY (not hosted on Hugging Face) is handled separately,
 in models.sh, via a plain curl+tar download.
 """
 import sys
+import urllib.request
 from pathlib import Path
+from typing import Any, Callable
 
 from huggingface_hub import hf_hub_download, snapshot_download
 
@@ -33,6 +35,10 @@ PIPER_VOICE_FILES = (
     "en/en_US/lessac/medium/en_US-lessac-medium.onnx",
     "en/en_US/lessac/medium/en_US-lessac-medium.onnx.json",
 )
+
+KOKORO_BASE_URL = "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/"
+KOKORO_FILE_SIZES = {"kokoro-v1.0.onnx": 325532387, "voices-v1.0.bin": 28214398}
+_CHUNK_BYTES = 1024 * 1024
 
 
 def ensure_parakeet(model_dir: Path) -> None:
@@ -79,12 +85,47 @@ def ensure_piper_voice(voice_path: Path) -> None:
             downloaded.rename(target)
 
 
+def _download(url: str, target: Path, expected_size: int, opener: Callable[[str], Any]) -> None:
+    """Download url to target via a .part file, checking the size before renaming into place."""
+    part = target.with_name(target.name + ".part")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with opener(url) as response, part.open("wb") as handle:
+            while True:
+                block = response.read(_CHUNK_BYTES)
+                if not block:
+                    break
+                handle.write(block)
+        if part.stat().st_size != expected_size:
+            raise RuntimeError(f"{target.name} downloaded incompletely (expected {expected_size} bytes)")
+        part.replace(target)
+    finally:
+        part.unlink(missing_ok=True)
+
+
+def ensure_kokoro(
+    model_path: Path,
+    voices_path: Path,
+    opener: Callable[[str], Any] = urllib.request.urlopen,
+    expected_sizes: dict[str, int] = KOKORO_FILE_SIZES,
+) -> None:
+    """Download the Kokoro model and voices files, unless both are already present."""
+    if model_path.exists() and voices_path.exists():
+        print(f"Kokoro voice already present at {model_path.parent}")
+        return
+    print(f"Downloading the Kokoro voice to {model_path.parent} (about 350MB) ...")
+    for path in (model_path, voices_path):
+        if not path.exists():
+            _download(KOKORO_BASE_URL + path.name, path, expected_sizes[path.name], opener)
+
+
 def main() -> int:
-    """Ensure all three Hugging-Face-hosted assets are present, at vocalis's own default paths."""
+    """Ensure all four downloadable assets are present, at vocalis's own default paths."""
     config = VocalisConfig()
     ensure_parakeet(Path(config.engines.parakeet_model_dir))
     ensure_qwen3_tts(Path(config.engines.qwen3_tts_model_dir))
     ensure_piper_voice(Path(config.engines.piper_voice_model_path))
+    ensure_kokoro(Path(config.engines.kokoro_model_path), Path(config.engines.kokoro_voices_path))
     return 0
 
 

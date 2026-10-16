@@ -119,3 +119,9 @@ teardown() {
   pyenv_create_venv "$WORKDIR/venv" "3.13"
   grep -q "venv --clear --python 3.13 $WORKDIR/venv" "$CALL_LOG"
 }
+
+@test "pyenv_install_kokoro installs kokoro-onnx without its dependencies" {
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  pyenv_install_kokoro "$WORKDIR/venv"
+  grep -q "pip install --python $WORKDIR/venv/bin/python --no-deps kokoro-onnx==0.4.7" "$CALL_LOG"
+}

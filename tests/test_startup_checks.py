@@ -2,15 +2,26 @@
 import logging
 from pathlib import Path
 
+import pytest
+
 from vocalis.config import VocalisConfig
 from vocalis.startup_checks import (
     check_capture_tools,
+    check_kokoro_model,
+    check_onnx_gpu,
     check_parakeet_model,
     check_qwen3_tts_model,
     check_stale_asoundrc,
     check_ydotoold,
     run_startup_checks,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fake_gpu_probes(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_startup_checks must never ask the real machine about its GPU or onnxruntime."""
+    monkeypatch.setattr("vocalis.startup_checks._gpu_present", lambda: True)
+    monkeypatch.setattr("vocalis.startup_checks._onnx_providers", lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"])
 
 
 def _touch(path: Path) -> None:
@@ -103,6 +114,10 @@ def test_run_startup_checks_is_silent_when_everything_is_fine(tmp_path: Path, mo
     _touch(qwen_dir / "config.json")
     _touch(qwen_dir / "model.safetensors")
     config.engines.qwen3_tts_model_dir = str(qwen_dir)
+    _touch(tmp_path / "kokoro-v1.0.onnx")
+    _touch(tmp_path / "voices-v1.0.bin")
+    config.engines.kokoro_model_path = str(tmp_path / "kokoro-v1.0.onnx")
+    config.engines.kokoro_voices_path = str(tmp_path / "voices-v1.0.bin")
     socket_path = tmp_path / ".ydotool_socket"
     _touch(socket_path)
     monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path))
@@ -158,3 +173,25 @@ def test_run_startup_checks_reports_a_stale_asoundrc_last(tmp_path: Path, monkey
     (tmp_path / ".asoundrc").write_text("pcm.voxtype { }\n")
     messages = run_startup_checks(VocalisConfig())
     assert "Voxtype" in messages[-1]
+
+
+def test_kokoro_model_present_is_silent(tmp_path: Path) -> None:
+    """Both Kokoro files present -> no message."""
+    model, voices = tmp_path / "kokoro-v1.0.onnx", tmp_path / "voices-v1.0.bin"
+    _touch(model)
+    _touch(voices)
+    assert check_kokoro_model(model, voices) is None
+
+
+def test_kokoro_model_missing_explains_the_consequence(tmp_path: Path) -> None:
+    """A missing file names the folder and says another voice is used."""
+    message = check_kokoro_model(tmp_path / "a.onnx", tmp_path / "b.bin")
+    assert message is not None and "Kokoro" in message and "another voice" in message
+
+
+def test_onnx_gpu_warning_only_when_a_gpu_exists_but_cuda_is_missing() -> None:
+    """Dictation silently losing the graphics card is reported; other combinations are silent."""
+    assert check_onnx_gpu(lambda: True, lambda: ["CPUExecutionProvider"]) is not None
+    assert check_onnx_gpu(lambda: True, lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"]) is None
+    assert check_onnx_gpu(lambda: False, lambda: ["CPUExecutionProvider"]) is None
+    assert "dictation" in (check_onnx_gpu(lambda: True, lambda: []) or "").lower()

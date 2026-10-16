@@ -57,21 +57,25 @@ main() {
   local venv_dir="${HOME}/.local/share/vocalis/venv"
   pyenv_create_venv "$venv_dir"
   pyenv_install_vocalis "$venv_dir" "$wheel_path"
+  pyenv_install_kokoro "$venv_dir"
 
   mkdir -p "${HOME}/.local/bin"
   rm -f "${HOME}/.local/bin/vocalis"
   ln -s "${venv_dir}/bin/vocalis" "${HOME}/.local/bin/vocalis"
 
   local venv_python="${venv_dir}/bin/python"
-  local parakeet_dir qwen3_tts_dir piper_binary piper_voice
+  local parakeet_dir qwen3_tts_dir piper_binary piper_voice kokoro_model
   parakeet_dir="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.parakeet_model_dir)')"
   qwen3_tts_dir="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.qwen3_tts_model_dir)')"
   piper_binary="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.piper_binary_path)')"
   piper_voice="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.piper_voice_model_path)')"
 
+  kokoro_model="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.kokoro_model_path)')"
+
   echo "Checking Parakeet model at ${parakeet_dir} ..."
   echo "Checking Qwen3-TTS model at ${qwen3_tts_dir} ..."
   echo "Checking Piper voice at ${piper_voice} ..."
+  echo "Checking Kokoro voice at ${kokoro_model} ..."
   "$venv_python" "${script_dir}/lib/fetch_models.py"
 
   echo "Checking Piper binary at ${piper_binary} ..."
