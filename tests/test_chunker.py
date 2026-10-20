@@ -1,4 +1,6 @@
 """Tests for vocalis.text.chunker.chunk_text."""
+import time
+
 from vocalis.text.chunker import Chunk, chunk_spans, chunk_text
 
 
@@ -114,3 +116,24 @@ def test_a_chunk_that_joins_two_sentences_spans_both() -> None:
 def test_chunk_text_matches_chunk_spans_text() -> None:
     text = "A first sentence. A second one! And a third?"
     assert chunk_text(text, max_chars=20) == [c.text for c in chunk_spans(text, max_chars=20)]
+
+
+def test_many_short_lines_are_chunked_in_linear_time() -> None:
+    text = "word word word.\n" * 20000  # about 320 KB
+    started = time.perf_counter()
+    chunk_spans(text, max_chars=300)
+    assert time.perf_counter() - started < 2.0
+
+
+def test_many_abbreviation_like_full_stops_are_chunked_in_linear_time() -> None:
+    text = "a. " * 20000  # about 60 KB
+    started = time.perf_counter()
+    chunk_spans(text, max_chars=300)
+    assert time.perf_counter() - started < 2.0
+
+
+def test_windows_line_endings_make_a_blank_line_break() -> None:
+    long_line = " ".join(["word"] * 16)  # 79 characters
+    chunks = chunk_text(f"{long_line}\r\n\r\nNext.", max_chars=82)
+    assert len(chunks) == 2
+    assert chunks[1] == "Next."

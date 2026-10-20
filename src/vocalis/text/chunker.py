@@ -25,6 +25,12 @@ _HARD_WRAP_MIN_LINE_CHARS = 70
 _BOUNDARY_RE = re.compile(r"[.!?][\"'”’)\]]*(?=\s)|\n")
 _WORD_BEFORE_RE = re.compile(r"([A-Za-z][A-Za-z.]*)$")
 _INITIALS_RE = re.compile(r"(?:[A-Za-z]\.)*[A-Za-z]")
+_NEXT_CHAR_RE = re.compile(r"\s*(\S)")
+_PARAGRAPH_AFTER_RE = re.compile(r"[ \t\r]*(?:\n|\Z)")
+# Bounded look-behind sizes keep the chunker linear on very large input.
+# No abbreviation or initial is longer than a few characters.
+_PRECEDING_WORD_WINDOW_CHARS = 40
+_LINE_LOOKBACK_CHARS = 200
 _ABBREVIATIONS = frozenset(
     {
         "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "e.g", "i.e",
@@ -46,21 +52,23 @@ def _period_breaks(text: str, mark_index: int, match_end: int) -> bool:
     """Whether the sentence-ending mark at `mark_index` really ends a sentence."""
     if text[mark_index] != ".":
         return True
-    word = _WORD_BEFORE_RE.search(text[:mark_index])
+    window_start = max(0, mark_index - _PRECEDING_WORD_WINDOW_CHARS)
+    word = _WORD_BEFORE_RE.search(text[window_start:mark_index])
     if word is not None:
         token = word.group(1)
         if token.lower() in _ABBREVIATIONS or _INITIALS_RE.fullmatch(token):
             return False
-    following = text[match_end:].lstrip()
-    return not following[:1].islower()
+    next_char = _NEXT_CHAR_RE.match(text, match_end)
+    following = next_char.group(1) if next_char else ""
+    return not following.islower()
 
 
 def _newline_breaks(text: str, index: int) -> bool:
     """Whether the line break at `index` ends a sentence (see module docstring)."""
-    after = text[index + 1 :]
-    if not after.strip() or after.lstrip(" \t").startswith("\n"):
+    if _PARAGRAPH_AFTER_RE.match(text, index + 1):
         return True
-    line_start = text.rfind("\n", 0, index) + 1
+    lookback_start = max(0, index - _LINE_LOOKBACK_CHARS)
+    line_start = max(text.rfind("\n", lookback_start, index) + 1, lookback_start)
     line = text[line_start:index].strip()
     if not line or line[-1] in ".!?":
         return True
