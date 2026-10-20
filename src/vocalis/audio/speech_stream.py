@@ -102,6 +102,7 @@ class SpeechStream:
         self._paused = False
         self._stopped = False
         self._shut = False
+        self._opening = False
         self._last_callback = 0.0
         self._underruns = 0
         self._played_any = False
@@ -131,20 +132,36 @@ class SpeechStream:
             self._sample_rate = sample_rate
             self._open = True
             self._last_callback = self._clock()
+            self._opening = True
         try:
             self._player.open_stream(sample_rate, self._callback, _ignore_finished)
         except Exception:
             with self._cond:
+                self._opening = False
                 self._open = False
+                stopped = self._stopped
+            if stopped:
+                # The user pressed Stop during the open: nothing to report.
+                self._finish_stopped_open()
+                return
             raise
         with self._cond:
+            self._opening = False
             stopped = self._stopped
+            if not stopped:
+                # Opening may have been slow; the stall clock starts now.
+                self._last_callback = self._clock()
         if stopped:
             # stop() ran while the device was opening; nobody else will close it.
-            self._player.close_stream()
+            self._finish_stopped_open()
             return
         if self._on_clip_started is not None:
             threading.Thread(target=self._dispatch_started, daemon=True).start()
+
+    def _finish_stopped_open(self) -> None:
+        """Close the device and post the end marker after a stop() during open."""
+        self._player.close_stream()
+        self._started_tags.put(None)
 
     def push(self, audio: "npt.NDArray[np.float32]", sample_rate: int, tag: int) -> bool:
         """Queue one clip, waiting while the queue is full.
@@ -190,6 +207,8 @@ class SpeechStream:
 
     def wait_until_done(self) -> bool:
         """Wait until every queued clip has been played, then close the stream.
+
+        Call finish() first, otherwise this waits until stop().
 
         Returns:
             True if everything played; False if the stream was stopped first.
@@ -256,7 +275,7 @@ class SpeechStream:
 
     def _stalled_locked(self) -> bool:
         """Whether clips are waiting but the device has gone quiet. Caller holds the lock."""
-        return bool(self._clips) and self._clock() - self._last_callback > self._stall_seconds
+        return not self._paused and bool(self._clips) and self._clock() - self._last_callback > self._stall_seconds
 
     def _raise_stalled(self) -> NoReturn:
         """Stop everything, blame the device, and raise PlaybackTimeoutError."""
@@ -282,7 +301,11 @@ class SpeechStream:
                 return
             self._shut = True
             self._open = False
+            opening = self._opening
             self._cond.notify_all()
+        if opening:
+            # start() is still opening the device; it closes it when done.
+            return
         self._player.close_stream()
         self._started_tags.put(None)
 
@@ -293,7 +316,7 @@ class SpeechStream:
             if tag is None:
                 return
             hook = self._on_clip_started
-            if hook is None:
+            if hook is None or self._stopped:
                 continue
             try:
                 hook(tag)

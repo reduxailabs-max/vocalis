@@ -4,6 +4,7 @@ Most tests use ManualStream (the test pulls audio itself), so ordering,
 fades, pause, underrun and stall behaviour are fully deterministic.
 """
 import threading
+import time
 from typing import Any, cast
 
 import numpy as np
@@ -290,3 +291,92 @@ def test_a_device_that_fails_to_open_raises_and_leaves_the_stream_unusable() -> 
         stream.start(RATE)
 
     assert stream.push(_clip(10), RATE, 0) is False
+
+
+class _SlowOpenPlayer(AudioPlayer):
+    """A player whose open_stream takes (fake) clock time."""
+
+    def __init__(self, recorder: OutputRecorder, clock: "list[float]", failures: "list[int | None]") -> None:
+        super().__init__(stream_factory=manual_stream_factory(recorder), on_device_failed=failures.append)
+        self._fake_clock = clock
+
+    def open_stream(self, sample_rate: int, callback: Any, finished_callback: Any) -> None:
+        self._fake_clock[0] += 30.0  # far longer than stall_seconds
+        super().open_stream(sample_rate, callback, finished_callback)
+
+
+def test_a_slow_device_open_is_not_mistaken_for_a_stall() -> None:
+    recorder = OutputRecorder()
+    now = [0.0]
+    failures: "list[int | None]" = []
+    stream = SpeechStream(
+        _SlowOpenPlayer(recorder, now, failures), fade_seconds=0.0, stall_seconds=10.0, clock=lambda: now[0]
+    )
+    stream.start(RATE)
+    stream.push(_clip(30), RATE, 0)
+    stream.finish()
+    _manual(recorder).pull(30)
+
+    assert stream.wait_until_done() is True
+    assert failures == []
+
+
+def test_stop_during_a_slow_real_style_open_is_quiet_and_closes_once() -> None:
+    recorder = OutputRecorder()
+    entered = threading.Event()
+
+    class PortAudioLike(ManualStream):
+        def start(self) -> None:
+            entered.set()
+            time.sleep(0.05)
+            if self.closed:
+                raise RuntimeError("PortAudioError: stream is closed")
+            super().start()
+
+    failures: "list[int | None]" = []
+    player = AudioPlayer(stream_factory=lambda **kw: PortAudioLike(recorder, **kw), on_device_failed=failures.append)
+    stream = SpeechStream(player, fade_seconds=0.0)
+    errors: "list[BaseException]" = []
+
+    def run() -> None:
+        try:
+            stream.start(RATE)
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert entered.wait(2.0)
+    stream.stop()
+    worker.join(5.0)
+
+    assert errors == []
+    assert failures == []
+    assert recorder.closed == 1
+
+
+def test_a_deliberately_paused_stream_is_never_a_stall() -> None:
+    now = [0.0]
+    stream, _recorder, failures = _make(max_queued_clips=1, stall_seconds=10.0, clock=lambda: now[0])
+    stream.start(RATE)
+    stream.push(_clip(30), RATE, 0)
+    stream.pause()
+    results: "list[bool]" = []
+    errors: "list[BaseException]" = []
+
+    def run() -> None:
+        try:
+            results.append(stream.push(_clip(30), RATE, 1))
+        except BaseException as exc:
+            errors.append(exc)
+
+    worker = threading.Thread(target=run, daemon=True)
+    worker.start()
+    worker.join(timeout=0.2)
+    now[0] += 60.0
+    worker.join(timeout=0.4)
+
+    assert errors == [] and results == []
+    assert failures == []
+    stream.stop()
+    wait_until(lambda: results == [False])
