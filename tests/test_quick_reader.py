@@ -7,13 +7,15 @@ import logging
 import subprocess
 import threading
 import time
-from typing import Callable, cast
+from typing import Any, Callable
 
 import numpy as np
 import numpy.typing as npt
 import pytest
 
+from tests.fake_output import FakeAudioPlayer, OutputRecorder, pump_stream_factory
 from vocalis.audio.playback import AudioPlayer
+from vocalis.engines.chain import make_downshift_handler
 from vocalis.features.quick_reader import QuickReaderFeature
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import ModelManager
@@ -62,27 +64,24 @@ class FakeClipboardReader:
         return self.text
 
 
-class FakePlayer:
-    def __init__(self, delay_seconds: float = 0.0, raise_on_play: Exception | None = None) -> None:
-        self.delay_seconds = delay_seconds
-        self.raise_on_play = raise_on_play
-        self.play_calls: list[tuple[object, int]] = []
-        self.stop_calls = 0
-        self._stopped = threading.Event()
+class ResettablePlayer(FakeAudioPlayer):
+    """A real AudioPlayer on a fake sound output.
 
-    def play(self, audio, sample_rate: int) -> None:  # type: ignore[no-untyped-def]
-        self.play_calls.append((audio, sample_rate))
-        if self.raise_on_play is not None:
-            raise self.raise_on_play
+    `delay_seconds > 0` means slow, real-time output (a clip really keeps
+    playing for its whole length, so a stop can land mid-playback); 0 means
+    fast output that plays a whole clip almost at once. reset() starts a
+    fresh recording of what was played.
+    """
 
-    def wait_until_done(self) -> bool:
-        if self._stopped.wait(timeout=self.delay_seconds or 0.05):
-            return False
-        return True
+    def __init__(self, delay_seconds: float = 0.0) -> None:
+        """Pick slow (real-time) or fast output."""
+        self._speedup = 1.0 if delay_seconds > 0 else 50.0
+        super().__init__(speedup=self._speedup)
 
-    def stop(self) -> None:
-        self.stop_calls += 1
-        self._stopped.set()
+    def reset(self) -> None:
+        """Forget everything played so far and record from scratch."""
+        self.output = OutputRecorder()
+        self._stream_factory = pump_stream_factory(self.output, self._speedup)
 
 
 class FakeNotifier:
@@ -97,20 +96,20 @@ def make_feature(
     primary: FakeSynthesizer,
     fallback: FakeSynthesizer,
     clipboard_text: str,
-    player: FakePlayer | None = None,
+    player: AudioPlayer | None = None,
     reading_coordinator: "ReadingCoordinator | None" = None,
     on_reading_changed: "Callable[[bool], None] | None" = None,
     speed_provider: "Callable[[], float] | None" = None,
-) -> "tuple[QuickReaderFeature, FakeSynthesizer, FakeSynthesizer, FakePlayer, FakeNotifier, ModelManager]":
+) -> "tuple[QuickReaderFeature, FakeSynthesizer, FakeSynthesizer, Any, FakeNotifier, ModelManager]":
     manager = ModelManager()
     notifier = FakeNotifier()
-    player = player or FakePlayer()
+    player = player or FakeAudioPlayer()
     feature = QuickReaderFeature(
         model_manager=manager,
         primary_engine_factory=lambda: primary,
         fallback_engine=fallback,
         clipboard_reader=FakeClipboardReader(clipboard_text),  # type: ignore[arg-type]
-        player=player,  # type: ignore[arg-type]
+        player=player,
         notifier=notifier,  # type: ignore[arg-type]
         reading_coordinator=reading_coordinator,
         on_reading_changed=on_reading_changed,
@@ -142,12 +141,12 @@ def test_trigger_with_empty_clipboard_notifies_and_does_nothing() -> None:
     feature.on_trigger()
     wait_until(lambda: any("Nothing copied" in msg for _, msg in notifier.messages))
 
-    assert player.play_calls == []
+    assert player.output.opened == 0
     assert primary.calls == []
 
 
 def test_trigger_reads_speaks_and_notifies_done() -> None:
-    audio = np.array([0.1, 0.2, 0.3], dtype=np.float32)
+    audio = np.full(2400, 0.1, dtype=np.float32)
     primary = FakeSynthesizer(audio=audio, sample_rate=24000)
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
     feature, _, _, player, notifier, _ = make_feature(primary, fallback, clipboard_text="hello there")
@@ -156,14 +155,18 @@ def test_trigger_reads_speaks_and_notifies_done() -> None:
     wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
 
     assert primary.calls == ["hello there"]
-    assert player.play_calls == [(audio, 24000)]
+    assert player.output.opened == 1
+    assert player.output.kwargs[0]["samplerate"] == 24000
+    played = player.output.played()
+    assert abs(len(played) - len(audio)) < 0.1 * len(audio)  # only the ~8 ms fades are lost
+    assert float(played.max()) == pytest.approx(0.1)
     assert any(msg == "Reading..." for _, msg in notifier.messages)
     assert any(msg == "hello there" for _, msg in notifier.messages)
 
 
 def test_primary_failure_falls_back_to_secondary_engine() -> None:
     primary = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32), raise_exc=RuntimeError("cuda oom"))
-    fallback_audio = np.array([0.4, 0.5], dtype=np.float32)
+    fallback_audio = np.full(2205, 0.4, dtype=np.float32)
     fallback = FakeSynthesizer(audio=fallback_audio, sample_rate=22050)
     feature, _, _, player, notifier, _ = make_feature(primary, fallback, clipboard_text="fallback please")
 
@@ -171,7 +174,8 @@ def test_primary_failure_falls_back_to_secondary_engine() -> None:
     wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
 
     assert fallback.calls == ["fallback please"]
-    assert player.play_calls == [(fallback_audio, 22050)]
+    assert player.output.kwargs[0]["samplerate"] == 22050
+    assert float(player.output.played().max()) == pytest.approx(0.4)
     assert any("backup voice" in msg.lower() for _, msg in notifier.messages)
 
 
@@ -183,22 +187,22 @@ def test_both_engines_failing_notifies_failure_and_does_not_crash() -> None:
     feature.on_trigger()  # must not raise
     wait_until(lambda: any("Could not generate speech" in msg for _, msg in notifier.messages))
 
-    assert player.play_calls == []
+    assert player.output.opened == 0
 
 
 def test_second_trigger_while_playing_stops_and_notifies_stopped() -> None:
-    audio = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-    primary = FakeSynthesizer(audio=audio)
+    primary = FakeSynthesizer(audio=np.full(72000, 0.1, dtype=np.float32), sample_rate=24000)
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-    player = FakePlayer(delay_seconds=2.0)  # wait_until_done() would block a long time unless stopped
+    player = ResettablePlayer(delay_seconds=2.0)  # real-time output: 3 s of sound is still playing at the 2nd press
     feature, _, _, _, notifier, _ = make_feature(primary, fallback, clipboard_text="a long passage", player=player)
 
     feature.on_trigger()
-    wait_until(lambda: len(player.play_calls) == 1)
+    wait_until(lambda: player.output.opened == 1)
     feature.on_trigger()  # the interrupting press
 
     wait_until(lambda: any(msg == "Stopped" for _, msg in notifier.messages))
-    assert player.stop_calls == 1
+    wait_until(lambda: player.output.closed >= 1)
+    assert not any(msg == "Done" for _, msg in notifier.messages)
     assert not any(msg == "Done" for _, msg in notifier.messages)
 
 
@@ -213,32 +217,13 @@ def test_second_trigger_while_synthesizing_cancels_before_playback_starts() -> N
 
     wait_until(lambda: any(msg == "Stopped" for _, msg in notifier.messages))
     time.sleep(0.5)  # let the background synthesis finish
-    assert player.play_calls == []  # playback must never start after being cancelled
-
-
-class FakeStream:
-    """Minimal sounddevice.OutputStream-alike for the real AudioPlayer."""
-
-    def __init__(self, **kwargs) -> None:  # type: ignore[no-untyped-def]
-        self.started = False
-        self.stopped = False
-        self.closed = False
-
-    def start(self) -> None:
-        self.started = True
-
-    def stop(self) -> None:
-        self.stopped = True
-
-    def close(self) -> None:
-        self.closed = True
+    assert player.output.opened == 0  # playback must never start after being cancelled
 
 
 class TriggeringNotifier:
     """A notifier whose notify() re-enters feature.on_trigger() the
     moment it sees the live-text notification -- simulating a real
-    Ctrl+Alt+R press landing in the narrow window between the
-    post-synthesis liveness check and the actual play() call."""
+    Ctrl+Alt+R press landing while the copied text is being announced."""
 
     def __init__(self, trigger_on_message: str) -> None:
         self._trigger_on_message = trigger_on_message
@@ -252,28 +237,15 @@ class TriggeringNotifier:
 
 
 def test_stop_landing_during_live_text_notification_stops_actual_playback() -> None:
-    """Regression test: a press landing during the notifier.notify(text)
-    call (after the last liveness check but before play() starts) must
-    not be silently dropped. Uses a real AudioPlayer (with a fake stream)
-    so the actual play()/stop() interaction is exercised, not a fake that
-    could paper over the race.
-    """
-    audio = np.array([0.1, 0.2, 0.3], dtype=np.float32)
-    primary = FakeSynthesizer(audio=audio, sample_rate=22050)
+    """A press landing while the copied text is being announced (which now
+    happens on a side thread while the sound is already starting) must stop
+    the sound well before the clip could finish, and no 'Done' may follow."""
+    primary = FakeSynthesizer(audio=np.full(72000, 0.1, dtype=np.float32), sample_rate=24000)  # a 3 s clip
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-
-    streams: list[FakeStream] = []
-
-    def factory(**kwargs):  # type: ignore[no-untyped-def]
-        stream = FakeStream(**kwargs)
-        streams.append(stream)
-        return stream
-
-    player = AudioPlayer(stream_factory=factory)
+    player = FakeAudioPlayer(speedup=1.0)  # real-time output
     notifier = TriggeringNotifier(trigger_on_message="hello there")
-    manager = ModelManager()
     feature = QuickReaderFeature(
-        model_manager=manager,
+        model_manager=ModelManager(),
         primary_engine_factory=lambda: primary,
         fallback_engine=fallback,
         clipboard_reader=FakeClipboardReader("hello there"),  # type: ignore[arg-type]
@@ -284,26 +256,27 @@ def test_stop_landing_during_live_text_notification_stops_actual_playback() -> N
 
     feature.on_trigger()
     wait_until(lambda: any(msg == "Stopped" for _, msg in notifier.messages))
-    wait_until(lambda: len(streams) == 1)
+    time.sleep(0.5)  # the stop may land before the stream opens (then none ever opens) or just after
 
-    assert streams[0].stopped is True
-    assert streams[0].closed is True
+    assert player.output.closed == player.output.opened  # no stream left open
+    assert player.output.frames_pulled < 24000  # far less than the 3 s clip
     assert player.is_playing is False
     assert not any(msg == "Done" for _, msg in notifier.messages)
 
 
 def test_third_trigger_after_stop_starts_a_fresh_reading() -> None:
-    audio = np.array([0.1], dtype=np.float32)
-    primary = FakeSynthesizer(audio=audio)
+    primary = FakeSynthesizer(audio=np.full(72000, 0.1, dtype=np.float32), sample_rate=24000)
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-    feature, _, _, player, notifier, _ = make_feature(primary, fallback, clipboard_text="again")
+    player = ResettablePlayer(delay_seconds=3.0)
+    feature, _, _, _, _notifier, _ = make_feature(primary, fallback, clipboard_text="again", player=player)
 
     feature.on_trigger()
-    wait_until(lambda: len(player.play_calls) == 1)
+    wait_until(lambda: player.output.opened == 1)
     feature.on_trigger()  # stop
-    wait_until(lambda: player.stop_calls == 1)
+    wait_until(lambda: player.output.closed >= 1)
     feature.on_trigger()  # fresh start
-    wait_until(lambda: len(player.play_calls) == 2)
+    wait_until(lambda: player.output.opened == 2)
+    feature.stop()
 
 
 def test_starting_a_reading_claims_coordinator_ownership() -> None:
@@ -320,9 +293,9 @@ def test_starting_a_reading_claims_coordinator_ownership() -> None:
 
 def test_a_different_owner_starting_stops_the_quick_reader() -> None:
     coordinator = ReadingCoordinator()
-    primary = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    primary = FakeSynthesizer(audio=np.full(72000, 0.1, dtype=np.float32), sample_rate=24000)
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-    player = FakePlayer(delay_seconds=2.0)  # wait_until_done() would block a long time unless stopped
+    player = ResettablePlayer(delay_seconds=2.0)  # real-time output, still playing when preempted
     feature, _, _, _, notifier, _ = make_feature(
         primary,
         fallback,
@@ -332,11 +305,11 @@ def test_a_different_owner_starting_stops_the_quick_reader() -> None:
     )
 
     feature.on_trigger()
-    wait_until(lambda: len(player.play_calls) == 1)
+    wait_until(lambda: player.output.opened == 1)
     coordinator.start_reading(object(), lambda: None)  # a different owner preempts it
 
     wait_until(lambda: any(msg == "Stopped" for _, msg in notifier.messages))
-    assert player.stop_calls == 1
+    wait_until(lambda: player.output.closed >= 1)
 
 
 class GatedClipboardRunner:
@@ -357,7 +330,7 @@ class GatedClipboardRunner:
 
 
 def test_preempting_an_idle_quick_reader_is_a_noop_and_next_press_reads() -> None:
-    audio = np.array([0.1], dtype=np.float32)
+    audio = np.full(2400, 0.1, dtype=np.float32)
     primary = FakeSynthesizer(audio=audio)
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
     coordinator = ReadingCoordinator()
@@ -383,23 +356,16 @@ def test_preempting_an_idle_quick_reader_is_a_noop_and_next_press_reads() -> Non
     # The stale worker finishes and bails out; the next press must read.
     gated.gate.set()
     feature.on_trigger()
-    wait_until(lambda: len(player.play_calls) == 1)
-    assert player.play_calls == [(audio, 22050)]
-
-
-class ResettablePlayer(FakePlayer):
-    """A player whose stop() only affects the playback in progress (play()
-    re-arms it), so a second reading really keeps playing after a stop."""
-
-    def play(self, audio, sample_rate: int) -> None:  # type: ignore[no-untyped-def]
-        self._stopped.clear()
-        super().play(audio, sample_rate)
+    wait_until(lambda: player.output.opened == 1)
+    wait_until(lambda: len(player.output.played()) > 0)
+    assert player.output.kwargs[0]["samplerate"] == 22050
 
 
 def _quiet_feature(
-    changes: "list[bool]", player: FakePlayer | None = None
-) -> "tuple[QuickReaderFeature, FakePlayer, FakeNotifier]":
-    primary = FakeSynthesizer(audio=np.zeros(3, dtype=np.float32))
+    changes: "list[bool]", player: ResettablePlayer | None = None
+) -> "tuple[QuickReaderFeature, ResettablePlayer, FakeNotifier]":
+    """A feature whose slow (3 s) sound is still playing until stopped; reports go to `changes`."""
+    primary = FakeSynthesizer(audio=np.full(72000, 0.1, dtype=np.float32), sample_rate=24000)
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
     feature, _, _, player, notifier, _ = make_feature(
         primary, fallback, "some text", player=player or ResettablePlayer(delay_seconds=3.0),
@@ -414,10 +380,10 @@ def test_reading_changes_are_reported_start_and_stop_synchronously() -> None:
 
     feature.on_trigger()
     assert changes == [True]
-    wait_until(lambda: len(player.play_calls) == 1)
+    wait_until(lambda: player.output.opened == 1)
     feature.on_trigger()  # second press: False is reported before returning
     assert changes == [True, False]
-    wait_until(lambda: player.stop_calls == 1)
+    wait_until(lambda: player.output.closed >= 1)
     assert changes == [True, False]
 
 
@@ -426,13 +392,15 @@ def test_press_stop_press_quickly_ends_with_active_true() -> None:
     feature, player, notifier = _quiet_feature(changes)
 
     feature.on_trigger()
-    wait_until(lambda: len(player.play_calls) == 1)
+    wait_until(lambda: player.output.opened == 1)
     feature.on_trigger()
     wait_until(lambda: any(msg == "Stopped" for _, msg in notifier.messages))
     feature.on_trigger()
-    wait_until(lambda: len(player.play_calls) == 2)
+    wait_until(lambda: player.output.opened == 2)
+    time.sleep(0.3)  # the first reading's worker has long finished by now
 
     assert changes == [True, False, True]
+    assert player.output.closed == 1  # only the first stream; the stale worker did not touch the second
     feature.stop()  # cleanup so the worker thread ends
 
 
@@ -442,18 +410,18 @@ def test_public_stop_ends_an_active_reading_and_is_a_noop_when_idle() -> None:
 
     feature.stop()
     assert changes == []
-    assert player.stop_calls == 0
+    assert player.output.closed == 0
 
     feature.on_trigger()
-    wait_until(lambda: len(player.play_calls) == 1)
+    wait_until(lambda: player.output.opened == 1)
     feature.stop()
     assert changes == [True, False]
-    wait_until(lambda: player.stop_calls == 1)
+    wait_until(lambda: player.output.closed >= 1)
 
 
 def test_natural_end_reports_false_once() -> None:
     changes: list[bool] = []
-    feature, _player, notifier = _quiet_feature(changes, player=FakePlayer())
+    feature, _player, notifier = _quiet_feature(changes, player=ResettablePlayer())
 
     feature.on_trigger()
     wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
@@ -468,13 +436,13 @@ def test_raising_reading_hook_does_not_break_reading() -> None:
     primary = FakeSynthesizer(audio=np.zeros(3, dtype=np.float32))
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
     feature, _, _, player, notifier, _ = make_feature(
-        primary, fallback, "some text", player=FakePlayer(), on_reading_changed=broken
+        primary, fallback, "some text", player=ResettablePlayer(), on_reading_changed=broken
     )
 
     feature.on_trigger()
     wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
 
-    assert len(player.play_calls) == 1
+    assert player.output.opened == 1
 
 
 def test_late_end_report_after_a_new_press_leaves_reported_state_true() -> None:
@@ -571,8 +539,13 @@ def test_the_reading_claim_is_released_while_holding_the_feature_lock() -> None:
     assert coordinator.lock_held_at_finish == [True]
 
 
+def _played_length(player: Any) -> int:
+    """How many audible samples reached the (fake) sound card."""
+    return len(player.output.played())
+
+
 def test_no_speed_provider_leaves_audio_unchanged() -> None:
-    """Without a speed_provider, the exact same audio object reaches the player."""
+    """Without a speed_provider, the clip's length is unchanged (only the ~8 ms fades are lost)."""
     audio = sine()
     primary = FakeSynthesizer(audio=audio, sample_rate=24000)
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
@@ -581,14 +554,13 @@ def test_no_speed_provider_leaves_audio_unchanged() -> None:
     feature.on_trigger()
     wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
 
-    assert len(player.play_calls) == 1
-    played_audio, played_rate = player.play_calls[0]
-    assert played_audio is audio
-    assert played_rate == 24000
+    assert player.output.opened == 1
+    assert player.output.kwargs[0]["samplerate"] == 24000
+    assert abs(_played_length(player) - len(audio)) < 0.03 * len(audio)
 
 
 def test_speed_provider_returning_one_leaves_audio_unchanged() -> None:
-    """A neutral speed (1.0) also hands back the same object."""
+    """A neutral speed (1.0) also leaves the length unchanged."""
     audio = sine()
     primary = FakeSynthesizer(audio=audio, sample_rate=24000)
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
@@ -599,9 +571,8 @@ def test_speed_provider_returning_one_leaves_audio_unchanged() -> None:
     feature.on_trigger()
     wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
 
-    assert len(player.play_calls) == 1
-    played_audio, _ = player.play_calls[0]
-    assert played_audio is audio
+    assert player.output.opened == 1
+    assert abs(_played_length(player) - len(audio)) < 0.03 * len(audio)
 
 
 def test_speed_provider_shortens_the_audio_handed_to_the_player() -> None:
@@ -616,10 +587,9 @@ def test_speed_provider_shortens_the_audio_handed_to_the_player() -> None:
     feature.on_trigger()
     wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
 
-    assert len(player.play_calls) == 1
-    played_audio, played_rate = player.play_calls[0]
-    assert played_rate == 24000
-    assert abs(len(cast(npt.NDArray[np.float32], played_audio)) - len(audio) / 1.5) < 0.03 * len(audio)
+    assert player.output.opened == 1
+    assert player.output.kwargs[0]["samplerate"] == 24000
+    assert abs(_played_length(player) - len(audio) / 1.5) < 0.03 * len(audio)
 
 
 def test_a_raising_speed_provider_still_plays_the_original_audio(
@@ -642,9 +612,8 @@ def test_a_raising_speed_provider_still_plays_the_original_audio(
         feature.on_trigger()
         wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
 
-    assert len(player.play_calls) == 1
-    played_audio, _ = player.play_calls[0]
-    assert played_audio is audio
+    assert player.output.opened == 1
+    assert abs(_played_length(player) - len(audio)) < 0.03 * len(audio)
     assert any(record.levelno == logging.WARNING for record in caplog.records)
 
 
@@ -667,7 +636,7 @@ def _build_with_selector(
         primary_engine_factory=lambda: pytest.fail("the old primary factory must not be used"),
         fallback_engine=fallback,
         clipboard_reader=FakeClipboardReader("Hello."),  # type: ignore[arg-type]
-        player=FakePlayer(),  # type: ignore[arg-type]
+        player=FakeAudioPlayer(),
         notifier=notifier,  # type: ignore[arg-type]
         engine_selector=selector,
         engine_factories=factories,  # type: ignore[arg-type]
@@ -681,7 +650,9 @@ def test_a_selector_chooses_the_engine_for_each_reading() -> None:
     fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
     feature, notifier = _build_with_selector("kokoro", {"kokoro": lambda: kokoro}, fallback)
 
-    audio, rate = feature._synthesize_with_fallback("Hello.")  # noqa: SLF001
+    source = feature._new_source()  # noqa: SLF001
+    audio, rate = source.synthesize("Hello.")
+    source.close()
 
     assert kokoro.calls == ["Hello."]
     assert fallback.calls == []
@@ -699,7 +670,9 @@ def test_a_failing_planned_engine_notifies_the_user_and_uses_the_next() -> None:
 
     feature, notifier = _build_with_selector("kokoro", {"kokoro": broken_kokoro}, fallback)
 
-    _audio, rate = feature._synthesize_with_fallback("Hello.")  # noqa: SLF001
+    source = feature._new_source()  # noqa: SLF001
+    _audio, rate = source.synthesize("Hello.")
+    source.close()
 
     assert fallback.calls == ["Hello."]
     assert rate == 22050
@@ -708,10 +681,142 @@ def test_a_failing_planned_engine_notifies_the_user_and_uses_the_next() -> None:
 
 def test_a_failing_backup_voice_sends_no_downshift_notification() -> None:
     """When Piper itself fails there is no backup left, so nothing is announced."""
-    feature, notifier = _build_with_selector(
-        "kokoro", {}, FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-    )
+    notifier = FakeNotifier()
+    handler = make_downshift_handler(lambda message: notifier.notify("t", message))
 
-    feature._notify_downshift("piper", None)  # noqa: SLF001
+    handler("piper", None)
 
     assert notifier.messages == []
+
+
+def test_a_long_clipboard_is_read_in_several_chunks_on_one_stream() -> None:
+    """Long text is made in several pieces yet heard on one continuous stream, nothing lost or repeated."""
+    sentences = " ".join(f"This is sentence number {n} of a rather long clipboard text." for n in range(30))
+    primary = FakeSynthesizer(audio=np.full(2400, 0.1, dtype=np.float32), sample_rate=24000)
+    feature, _, _, player, notifier, _ = make_feature(
+        primary, FakeSynthesizer(audio=np.zeros(1, dtype=np.float32)), clipboard_text=sentences
+    )
+
+    feature.on_trigger()
+    wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages), timeout=10.0)
+
+    assert len(primary.calls) > 1  # chunked, not one giant call
+    assert player.output.opened == 1  # but one continuous stream
+    assert " ".join(primary.calls).split() == sentences.split()  # nothing lost, nothing repeated
+
+
+def test_stop_pressed_while_the_first_piece_is_still_being_made_never_makes_sound() -> None:
+    """A stop during the very first synthesis means no sound is ever opened."""
+    primary = FakeSynthesizer(audio=np.full(2400, 0.1, dtype=np.float32), delay_seconds=0.4)
+    feature, _, _, player, notifier, _ = make_feature(
+        primary, FakeSynthesizer(audio=np.zeros(1, dtype=np.float32)), clipboard_text="One sentence here."
+    )
+
+    feature.on_trigger()
+    wait_until(lambda: len(primary.calls) == 1)  # synthesis has begun
+    feature.on_trigger()  # stop while the very first piece is still being made
+
+    wait_until(lambda: any(msg == "Stopped" for _, msg in notifier.messages))
+    threading.Event().wait(0.7)
+    assert player.output.opened == 0
+    assert not any(msg == "Done" for _, msg in notifier.messages)
+
+
+def test_a_broken_sound_device_reports_playback_failed() -> None:
+    """A sound device that refuses to start is reported, never 'Done'."""
+
+    class RefusingStream:
+        """A stream whose start() always fails."""
+
+        def __init__(self, **kwargs: Any) -> None:
+            """Accept and ignore the stream arguments."""
+
+        def start(self) -> None:
+            """Refuse to start."""
+            raise RuntimeError("device busy")
+
+        def stop(self) -> None:
+            """Nothing to stop."""
+
+        def close(self) -> None:
+            """Nothing to close."""
+
+    primary = FakeSynthesizer(audio=np.full(2400, 0.1, dtype=np.float32), sample_rate=24000)
+    changes: "list[bool]" = []
+    feature, _, _, _, notifier, _ = make_feature(
+        primary,
+        FakeSynthesizer(audio=np.zeros(1, dtype=np.float32)),
+        clipboard_text="Hello there.",
+        player=AudioPlayer(stream_factory=lambda **kw: RefusingStream(**kw)),
+        on_reading_changed=changes.append,
+    )
+
+    feature.on_trigger()
+
+    wait_until(lambda: any(msg == "Playback failed" for _, msg in notifier.messages))
+    wait_until(lambda: changes == [True, False])
+    assert not any(msg == "Done" for _, msg in notifier.messages)
+
+
+class _BlockingNotifier(FakeNotifier):
+    """A notifier whose notify() of one chosen message waits for the test."""
+
+    def __init__(self, block_on: str) -> None:
+        """Remember which message blocks."""
+        super().__init__()
+        self._block_on = block_on
+        self.entered = threading.Event()
+        self.gate = threading.Event()
+
+    def notify(self, title: str, message: str = "") -> None:
+        """Record the message; hold the caller if it is the chosen one."""
+        super().notify(title, message)
+        if message == self._block_on:
+            self.entered.set()
+            self.gate.wait(timeout=5.0)
+
+
+def test_stop_during_the_reading_notification_never_publishes_a_speaker_or_makes_sound() -> None:
+    """A stop landing before the speaker exists is honoured: the worker bails out, no voice is even asked."""
+    primary = FakeSynthesizer(audio=np.full(2400, 0.1, dtype=np.float32))
+    notifier = _BlockingNotifier("Reading...")
+    player = FakeAudioPlayer()
+    feature = QuickReaderFeature(
+        model_manager=ModelManager(),
+        primary_engine_factory=lambda: primary,
+        fallback_engine=FakeSynthesizer(audio=np.zeros(1, dtype=np.float32)),
+        clipboard_reader=FakeClipboardReader("Some text."),  # type: ignore[arg-type]
+        player=player,
+        notifier=notifier,  # type: ignore[arg-type]
+    )
+
+    feature.on_trigger()
+    assert notifier.entered.wait(timeout=2.0)
+    feature.on_trigger()  # stop while "Reading..." is being announced
+    notifier.gate.set()
+    wait_until(lambda: any(msg == "Stopped" for _, msg in notifier.messages))
+    time.sleep(0.3)
+
+    assert feature._speaker is None  # noqa: SLF001
+    assert primary.calls == []
+    assert player.output.opened == 0
+    assert not any(msg == "Done" for _, msg in notifier.messages)
+
+
+def test_each_reading_ends_exactly_once_even_when_stopped() -> None:
+    """After a stop, the reading worker finishes quietly: one False report, one 'Stopped', no 'Done'."""
+    changes: "list[bool]" = []
+    threads_before = set(threading.enumerate())
+    feature, player, notifier = _quiet_feature(changes)
+
+    feature.on_trigger()
+    wait_until(lambda: player.output.opened == 1)
+    feature.on_trigger()
+    for thread in set(threading.enumerate()) - threads_before:
+        thread.join(timeout=5.0)  # bounded: a worker that never ends fails the checks below
+
+    assert changes == [True, False]
+    assert [msg for _, msg in notifier.messages].count("Stopped") == 1
+    assert not any(msg == "Done" for _, msg in notifier.messages)
+    assert feature._speaker is None  # noqa: SLF001
+    assert player.output.closed == 1

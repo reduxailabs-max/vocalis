@@ -2,7 +2,6 @@
 so switching between them reuses the already-loaded Qwen3-TTS model instead
 of unloading and reloading ~1.8 GB."""
 import threading
-from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -35,20 +34,6 @@ class _CountingEngine:
 
     def synthesize(self, text: str) -> "tuple[npt.NDArray[np.float32], int]":
         return np.zeros(10, dtype=np.float32), 22050
-
-
-class _InstantStream:
-    def __init__(self, **kwargs: Any) -> None:
-        self._cb = kwargs["finished_callback"]
-
-    def start(self) -> None:
-        self._cb()
-
-    def stop(self) -> None:
-        pass
-
-    def close(self) -> None:
-        pass
 
 
 class _Clipboard:
@@ -84,7 +69,7 @@ def test_both_features_build_the_primary_engine_only_once() -> None:
         primary_engine_factory=factory,
         fallback_engine=_CountingEngine(),
         clipboard_reader=_Clipboard(),  # type: ignore[arg-type]
-        player=AudioPlayer(stream_factory=lambda **kw: _InstantStream(**kw)),
+        player=AudioPlayer(stream_factory=pump_stream_factory(OutputRecorder())),
         notifier=quick_notifier,  # type: ignore[arg-type]
         reading_coordinator=coordinator,
     )

@@ -53,10 +53,10 @@ def _build() -> "tuple[QuickReaderFeature, DocumentReaderFeature, FakeHub, list[
     quick_player = ResettablePlayer(delay_seconds=3.0)
     quick = QuickReaderFeature(
         model_manager=ModelManager(),
-        primary_engine_factory=lambda: QuickSynth(audio=np.zeros(3, dtype=np.float32)),
+        primary_engine_factory=lambda: QuickSynth(audio=np.full(72000, 0.1, dtype=np.float32), sample_rate=24000),
         fallback_engine=QuickSynth(audio=np.zeros(1, dtype=np.float32)),
         clipboard_reader=FakeClipboardReader("quick text"),  # type: ignore[arg-type]
-        player=quick_player,  # type: ignore[arg-type]
+        player=quick_player,
         notifier=FakeNotifier(),  # type: ignore[arg-type]
         reading_coordinator=coordinator,
         on_reading_changed=quick_changed,
@@ -80,7 +80,7 @@ def _build() -> "tuple[QuickReaderFeature, DocumentReaderFeature, FakeHub, list[
 def test_document_read_preempting_quick_read_leaves_hub_active_as_document() -> None:
     quick, doc, hub, log, quick_player, _rec = _build()
     quick.on_trigger()
-    doc_wait(lambda: len(quick_player.play_calls) == 1)
+    doc_wait(lambda: quick_player.output.opened == 1)
     assert hub.source == "Quick read"
 
     doc.read_text("Hello there.")
