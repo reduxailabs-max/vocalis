@@ -7,16 +7,17 @@ src/vocalis/
 ├── __init__.py         # package version
 ├── audio/
 │   ├── capture.py        # MicRecorder: sounddevice-based mic capture
+│   ├── speech_stream.py   # SpeechStream: one persistent gapless output stream per reading (Stage 6b)
 │   ├── output_device.py   # OutputDeviceChooser: probes and caches a working sound output
 │   ├── pace.py            # apply_speed/paced_audio: pitch-preserving speaking-pace change
-│   └── playback.py        # AudioPlayer: sounddevice-based interruptible playback
+│   └── playback.py        # AudioPlayer: interruptible playback + open_stream/close_stream (Stage 6b)
 ├── cli.py               # main(): the heavy app startup (imported lazily by entry.py)
 ├── config.py           # VocalisConfig pydantic model + TOML load/save
 ├── daemon.py            # Unix socket server lifecycle (start/stop)
 ├── engines/
 │   ├── auto_select.py     # pure Auto policy: which engine order for this PC right now (Stage 6a)
 │   ├── base.py            # Synthesizer / TTSEngine protocols (Stage 6a)
-│   ├── chain.py           # EngineChain: try engines in order, fall down on failure (Stage 6a)
+│   ├── chain.py           # EngineChain: try engines in order, fall down on failure; hold/close a voice for a reading (Stage 6a, 6b)
 │   ├── kokoro_tts.py      # KokoroTTS: light, natural voice via kokoro-onnx (Stage 6a)
 │   ├── registry.py        # EngineSelector/EnginePlan: user choice + PC state -> engine order (Stage 6a)
 │   ├── parakeet.py        # ParakeetSTT: onnx-asr wrapper implementing ModelEngine
@@ -26,6 +27,7 @@ src/vocalis/
 ├── entry.py              # `vocalis` console-script entrypoint — stays light so --settings is fast (Stage 5 fix)
 ├── features/
 │   ├── dictation.py       # DictationFeature: press/release orchestration
+│   ├── chunked_speaker.py  # ChunkedSpeaker: producer loop shared by both readers (Stage 6b)
 │   ├── doc_reader.py       # DocumentReaderFeature: extract/chunk/speak/pause/stop
 │   ├── ocr_reader.py       # OcrReaderFeature: capture -> OCR -> clipboard -> read aloud
 │   ├── quick_reader.py     # QuickReaderFeature: trigger/stop orchestration
@@ -48,7 +50,7 @@ src/vocalis/
 │   ├── screen_capture.py   # ScreenRegionCapture: drag a box, get PNG bytes
 │   └── typer.py            # TextOutput: ydotool typing + clipboard fallback
 ├── text/
-│   ├── chunker.py          # chunk_text: sentence-bounded chunks
+│   ├── chunker.py          # chunk_spans/chunk_text: sentence-aware chunks with exact spans (Stage 6b)
 │   ├── extractors.py       # extract_text: txt/md/pdf/docx/html readers + typed errors
 │   └── normalizer.py       # normalize_markdown: markdown -> speakable text
 ├── ui/
@@ -64,7 +66,10 @@ tests/                    # pytest suite mirroring src/vocalis/ (≥85% coverage
 ├── test_auto_select.py    # Auto policy rules (Stage 6a)
 ├── test_kokoro_tts.py     # Kokoro engine with fake builders (Stage 6a)
 ├── test_engine_registry.py  # EngineSelector (Stage 6a)
-├── test_engine_chain.py   # EngineChain fall-down behaviour (Stage 6a)
+├── test_engine_chain.py   # EngineChain fall-down behaviour (Stage 6a) and holding a voice (Stage 6b)
+├── fake_output.py         # fake sound output: ManualStream / PumpStream / FakeAudioPlayer (Stage 6b)
+├── test_speech_stream.py  # SpeechStream (Stage 6b)
+├── test_chunked_speaker.py  # ChunkedSpeaker (Stage 6b)
 ├── test_cross_feature_integration.py  # whole-system tests: real build_*() + one
                           #   shared ModelManager, not a single feature in isolation
 ├── test_hardware.py       # probe_hardware/describe/log_hardware_summary, every source faked
@@ -171,3 +176,10 @@ Stage 6a (voice-engine plumbing) added `engines/auto_select.py`,
 `startup_checks.py`, `cli.py`, `features/quick_reader.py`,
 `features/doc_reader.py`, `ui/settings_window.py`, `fetch_models.py`,
 `pyenv.sh`, `install.sh`, `uninstall.sh` and `pyproject.toml` in place.
+
+Stage 6b (gapless long reading) added `audio/speech_stream.py` and
+`features/chunked_speaker.py` (with `tests/test_speech_stream.py`,
+`tests/test_chunked_speaker.py` and the shared test helper
+`tests/fake_output.py`), and extended `text/chunker.py`, `audio/playback.py`,
+`engines/chain.py`, `model_manager.py`, `features/quick_reader.py` and
+`features/doc_reader.py` in place.

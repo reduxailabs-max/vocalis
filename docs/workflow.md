@@ -113,20 +113,23 @@ Ctrl+Alt+R pressed (evdev event, CtrlAltRListener)
        -> if already reading: flip flag, spawn thread to stop()+notify("Stopped"), return immediately
        -> else: mark active, spawn background thread, return immediately
 
-Background thread:
+Background thread (Stage 6b — long text is read in chunks on one stream):
   -> text = clipboard_reader.read()
   -> if cancelled or empty: notify accordingly, stop
+  -> chunks = chunk_text(text)                 # sentence-sized pieces
   -> notify("Reading...")
-  -> try: engine = model_manager.acquire("qwen3_tts", qwen3_tts_factory)
-          audio, sr = engine.synthesize(text)
-          model_manager.release("qwen3_tts")
-     except: notify("Primary voice unavailable — using backup voice"), try the next engine in the plan
-             (originally Piper; since Stage 6a see "Choosing a voice engine" below)
-  -> if cancelled while synthesizing: stop, never start playback
-  -> notify(text)                              # live transcript notification
-  -> player.play(audio, sr); finished = player.wait_until_done()
-  -> if finished naturally: notify("Done")
+  -> side thread: notify(text)                 # copied text; never delays the sound
+  -> ChunkedSpeaker.run(chunks):
+       for each chunk: EngineChain.synthesize (voice held loaded, falls down the
+       plan on failure) -> paced_audio -> push into the SpeechStream
+       (one open sound stream, at most 3 clips queued; the producer waits when full)
+  -> playback ended: report the reading END first, then wait <= 6 s for the
+     copied-text notification, then notify("Done")  (a stop skips the wait)
 ```
+
+User view: copy text, press Ctrl+Alt+R; you see "Reading...", the copied
+text, then hear it with no gaps between sentences, then "Done". Pressing
+the shortcut again stops it ("Stopped").
 
 Every failure path (empty clipboard, both engines failing, playback
 failure) notifies a specific reason and returns without crashing the
@@ -134,10 +137,10 @@ listener thread or the daemon. A second press is only ever noticed
 promptly because on_trigger() itself never blocks — all the real work
 happens in the spawned background thread.
 
-`wait_until_done()` is itself bounded: if the audio callback never fires
-(e.g. a misconfigured default sound device), it raises
-`PlaybackTimeoutError` after the audio's expected duration plus a safety
-margin, rather than blocking forever — that exception is caught by the
+The wait for the end of playback is itself bounded: if the sound device
+never calls back (e.g. a misconfigured default sound device) for 10
+seconds while audio is waiting, `SpeechStream` raises
+`PlaybackTimeoutError` rather than blocking forever — that exception is caught by the
 same playback `except` path as any other playback failure, so it reaches
 the user as a normal "Playback failed" notification instead of an
 unexplained freeze.
@@ -166,19 +169,20 @@ Worker thread (_prepare_and_read, then _read_worker):
   -> extract_text(path)       # file only; typed errors -> notify + status + on_finished
   -> normalize_markdown(text)
   -> chunk_text(...)          # no chunks -> "Nothing to read"
-  -> for each chunk (index i of N):
-       on_progress(i, N)
-       synthesize: Qwen3-TTS via model_manager.acquire("qwen3_tts", ...);
-                   on the first failure move down the engine chain for the REST
-                   of this document and notify once ("Primary voice unavailable...");
-                   since Stage 6a the chain is Qwen3-TTS -> Kokoro -> Piper, or
-                   the one the user chose in Settings
-       wait if paused, then player.play(); wait_until_done()
-       finished naturally -> next chunk
-       stopped early by pause() -> wait for resume(), replay the SAME chunk
-       stopped by stop()/preemption -> return
-  -> all chunks played -> "Done", on_finished()
+  -> ChunkedSpeaker.run(chunks)   (Stage 6b; replaces the old play-one-chunk loop)
+       producer: for each chunk, EngineChain.synthesize (voice held loaded for
+                 the whole reading; falls down Qwen3-TTS -> Kokoro -> Piper, or
+                 the user's choice, notifying once) -> paced_audio -> push
+       consumer: SpeechStream plays the clips back-to-back on ONE open stream
+       "piece N of M": on_progress(N, M) when piece N STARTS BEING HEARD
+       pause(): silence at once, the heard piece rewinds; resume() replays it
+       stop()/preemption: the reading ends, the device is closed once
+  -> outcome DONE -> "Done", on_finished()
+     (voice released now, so the idle-unload timer starts when playback ends)
 ```
+
+User view: "piece N of M" appears as each piece starts being heard, and a
+long document flows with no gaps between pieces.
 
 `pause()`, `resume()` and `stop()` return at once: their "Paused",
 "Resuming..." and "Stopped" desktop notifications are queued and sent, in
@@ -189,6 +193,9 @@ Quick Reader and Document Reader share one `ReadingCoordinator`. Whichever
 calls `start_reading()` becomes the owner and the previous owner's stop
 callback is invoked, so the two never speak at once. Quick Reader's
 callback is clear-only: preempting an idle Quick Reader does nothing.
+
+A repeat read (`read_text`/`read_file` while a reading is in progress) stops
+the previous reading first.
 
 Thread rule: the hotkey thread and the worker thread never touch widgets.
 `on_status`, `on_progress` and `on_finished` are wired (in
@@ -268,8 +275,9 @@ main()
                           on_preview_voice=<built by _make_on_preview_voice>)
 ```
 
-Reading-time pacing flow (Quick Reader, same idea for Document Reader
-per chunk):
+Reading-time pacing flow (Quick Reader and Document Reader; since Stage 6b
+`ChunkedSpeaker` applies it once per chunk before the chunk is pushed into the
+stream, instead of `player.play()`):
 
 ```
 synthesize text -> audio, sample_rate

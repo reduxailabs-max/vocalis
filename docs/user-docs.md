@@ -107,6 +107,13 @@ Vocalis now finds a working sound output automatically — see "Sound and
 speaking pace" below for how that works and what to do if you ever see a
 "Playback failed" message.
 
+Long readings now flow without gaps: both Quick Reader and Document
+Reader read long text sentence by sentence as one smooth stream, so you
+no longer hear a click or pause between pieces. If you ever see
+"Playback failed" after about 10 seconds of silence, it still means the
+sound device is the problem — see "Sound and speaking pace" below (the
+same `~/.asoundrc` advice as before).
+
 ## Document Reader (Phase 4)
 
 1. Press **Ctrl+Alt+D** (or your own shortcut). A "Vocalis — Document Reader" window appears.

@@ -503,3 +503,31 @@ its temporary config outside the repository.
 The old `quick_tts` / `doc_tts` config keys were never read; they were
 replaced by `quick_reader_engine` / `document_reader_engine`. Old files
 still load because unknown keys are ignored.
+
+## Testing code that feeds a persistent stream (Stage 6b)
+
+`SpeechStream` keeps one sound stream open and the sound card *pulls*
+audio through a callback. To test that without hardware, `tests/fake_output.py`
+provides fake streams that call the callback exactly like a real card:
+
+- **`ManualStream`** — the test drives the audio clock by calling
+  `pull(frames)`. Fully deterministic: use it for ordering, fades, pause,
+  back-pressure and stall tests (pair it with a fake clock).
+- **`PumpStream`** — a background thread pulls continuously, `speedup`
+  times faster than real time (default 50). Use it where a whole reading
+  must simply play out (feature-level tests).
+- **`OutputRecorder`** collects what was opened, pulled and closed
+  (`audio()`, `played()`, `frames_pulled`); **`FakeAudioPlayer`** is an
+  `AudioPlayer` wired to a `PumpStream`; **`wait_until(predicate)`**
+  replaces fixed sleeps.
+
+Rules that came out of this stage: the audio callback must never block or
+raise; no lock is held while calling slow or user code; engine factories used
+with `EngineChain(hold_engines=True)` must build a NEW engine object per
+call; because of the 8 ms fades, assert lengths / maximum / non-silent
+counts, not exact samples.
+
+**Process the user asked for:** write ALL the code (implementation and
+tests) for a task first, run the tests ONCE at the end, then fix and commit —
+do not run tests after every edit. Never run pytest in a worktree while
+another agent may also be testing there (it causes false "hangs").

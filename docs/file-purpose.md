@@ -195,3 +195,26 @@
 | `packaging/installer/lib/pyenv.sh` | `pyenv_install_kokoro()` installs `kokoro-onnx==0.4.7` with `--no-deps`; `pyenv_prefer_gpu_onnxruntime()` then re-installs the GPU onnxruntime last so it always wins (qwen-tts and kokoro-onnx both pull plain onnxruntime). |
 | `packaging/installer/install.sh`, `uninstall.sh` | Install calls `pyenv_install_kokoro` and reports the Kokoro check; `uninstall.sh --purge` also removes the Kokoro folder. |
 | `pyproject.toml` | Lists Kokoro's three small dependencies (`colorlog`, `espeakng-loader`, `phonemizer-fork`) because `kokoro-onnx` itself is installed with `--no-deps`. |
+
+## Stage 6b: gapless long reading
+
+**New files**
+
+| File | Purpose |
+|---|---|
+| `src/vocalis/audio/speech_stream.py` | `SpeechStream` — ONE persistent sound stream for a whole reading: bounded clip queue (3), 8 ms fades, silence on underrun, pause/rewind, resampling, stall detection (10 s), per-clip "started" tags. |
+| `src/vocalis/features/chunked_speaker.py` | `ChunkedSpeaker` / `SpeechSource` / `SpeakOutcome` — the producer loop shared by both readers: makes each chunk, paces it, pushes it into a `SpeechStream`; pause/resume/stop latch; releases the voice when playback ends. |
+| `tests/test_speech_stream.py`, `tests/test_chunked_speaker.py` | The stream and the speaker, driven by fake sound output. |
+| `tests/fake_output.py` | Fake sound output for tests: `ManualStream`, `PumpStream`, `OutputRecorder`, `FakeAudioPlayer`, `wait_until`. |
+
+**Changed files**
+
+| File | Change |
+|---|---|
+| `src/vocalis/text/chunker.py` | Sentence-aware (abbreviations, initials, line-break rules) and linear-time; `chunk_spans()` returns `Chunk(text, start, end)`; `chunk_text()` wraps it. |
+| `src/vocalis/audio/playback.py` | `AudioPlayer` gained `open_stream()`, `close_stream()`, `report_device_failed()`; `play()` and friends unchanged. |
+| `src/vocalis/engines/chain.py` | `EngineChain(hold_engines=True)` + `close()` hold the voice for a whole reading; new `new_reading_chain()` and `make_downshift_handler()` shared by both readers. |
+| `src/vocalis/model_manager.py` | New read-only `current_engine` property. |
+| `src/vocalis/features/quick_reader.py` | Reads long clipboard text in chunks through `ChunkedSpeaker`; copied-text notice sent from a side thread. |
+| `src/vocalis/features/doc_reader.py` | Speaks through `ChunkedSpeaker`; "piece N of M" when a piece starts being heard; repeat read stops the previous one. |
+| `tests/test_chunker.py`, `test_playback.py`, `test_engine_chain.py`, `test_model_manager.py`, `test_doc_reader.py`, `test_quick_reader.py`, `test_cross_feature_integration.py`, `test_shared_tts_engine.py`, `test_reading_hooks_integration.py` | Extended or ported to the fake sound output. |
