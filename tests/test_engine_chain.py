@@ -211,9 +211,9 @@ def test_a_holding_chain_that_falls_to_the_next_engine_holds_the_new_one() -> No
 
     assert audio[0] == 2.0
     assert manager.current_engine_id == "kokoro"
-    assert timers.scheduled == 0
+    assert timers.scheduled == 1  # only the failed qwen's release armed a timer; kokoro is held
     chain.close()
-    assert timers.scheduled == 1
+    assert timers.scheduled == 2
 
 
 def test_a_held_engine_taken_by_another_feature_is_reloaded_for_the_next_piece() -> None:
@@ -330,3 +330,15 @@ def test_an_old_readings_close_does_not_release_a_newer_readings_voice() -> None
 
     chain_b.close()
     assert timers.scheduled == 1
+
+
+def test_a_failing_held_engine_is_released_so_the_idle_timer_starts() -> None:
+    """A held engine that fails is given back at once: use count 0 and the idle timer armed."""
+    timers = _Timers()
+    chain, manager = _held_chain(_Tts(1.0, fail_synth=True), _Tts(2.0), ("qwen3_tts", "piper"), timers, hold=True)
+
+    chain.synthesize("one")  # qwen fails, piper speaks
+
+    assert manager._use_count == 0  # noqa: SLF001
+    assert timers.scheduled == 1
+    assert chain._held is None  # noqa: SLF001

@@ -109,6 +109,16 @@ def test_reading_finished_signal_disables_pause_and_stop_and_resets_pause_label(
     assert popup._pause_button.text() == "Pause"  # noqa: SLF001
 
 
+def test_reading_started_signal_enables_pause_and_stop() -> None:
+    popup = DocumentReaderPopup(FakeFeature())
+    assert popup._pause_button.isEnabled() is False  # noqa: SLF001
+
+    popup.reading_started.emit()
+
+    assert popup._pause_button.isEnabled() is True  # noqa: SLF001
+    assert popup._stop_button.isEnabled() is True  # noqa: SLF001
+
+
 def test_hotkey_trigger_while_idle_shows_the_window(qtbot) -> None:  # type: ignore[no-untyped-def]
     feature = FakeFeature()
     feature.is_reading = False

@@ -75,11 +75,22 @@ class EngineChain:
             except Exception as exc:
                 logger.exception("Voice engine %r failed", engine_id)
                 self._last_error = exc
+                self._release_failed_hold(engine_id)
                 self._position = index + 1
                 self._on_downshift(engine_id, chain[index + 1] if index + 1 < len(chain) else None)
         if PIPER not in chain:
             return self._fallback_engine.synthesize(text)
         raise self._last_error if self._last_error is not None else RuntimeError("No voice engine is available")
+
+    def _release_failed_hold(self, engine_id: str) -> None:
+        """Give back the hold on an engine that just failed, so it can idle-unload."""
+        if not (self._hold_engines and self._held == engine_id):
+            return
+        held_engine = self._held_engine
+        self._held = None
+        self._held_engine = None
+        if self._model_manager.current_engine is held_engine:
+            self._model_manager.release(engine_id)
 
     def _synthesize_with(self, engine_id: str, text: str) -> "tuple[npt.NDArray[np.float32], int]":
         """Speak with exactly one engine (Piper directly, others through ModelManager)."""

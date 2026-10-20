@@ -152,7 +152,7 @@ class SpeechStream:
         with self._cond:
             self._opening = False
             self._device_opened = True
-            stopped = self._stopped
+            stopped = self._stopped or self._shut
             if not stopped:
                 # Opening may have been slow; the stall clock starts now.
                 self._last_callback = self._clock()

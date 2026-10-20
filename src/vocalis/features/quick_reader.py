@@ -219,7 +219,7 @@ class QuickReaderFeature:
         with self._lock:
             return self._active and self._generation == generation
 
-    def _deactivate(self, generation: int) -> None:
+    def _deactivate(self, generation: int) -> bool:
         """Mark `generation` as finished, but only if it is still the
         current generation — a stale worker thread whose reading was
         already superseded by a newer one must not clobber that newer
@@ -227,9 +227,15 @@ class QuickReaderFeature:
         ownership, if one is configured and no newer reading is active;
         ReadingCoordinator.finish_reading()
         already no-ops safely if ownership moved on to a different
-        feature in the meantime."""
+        feature in the meantime.
+
+        Returns:
+            True only if this call itself ended the active reading (it was the
+            current generation and still active); False if a stop or a newer
+            reading got there first."""
         with self._lock:
             is_current = self._generation == generation
+            ended_here = is_current and self._active
             if is_current:
                 self._active = False
             # A stale generation may release the claim only if no newer
@@ -244,6 +250,7 @@ class QuickReaderFeature:
             # State-based: a no-op if a stop already reported False, or if
             # a newer reading is active by now.
             self._report_reading_state()
+        return ended_here
 
     def _read_aloud(self, generation: int) -> None:
         """Do the real work for one reading, entirely on a background
@@ -260,8 +267,8 @@ class QuickReaderFeature:
         if not self._is_current(generation):
             return  # cancelled while reading the clipboard
         if not text.strip():
-            self._notifier.notify(_TITLE, "Nothing copied")
-            self._deactivate(generation)
+            if self._deactivate(generation):
+                self._notifier.notify(_TITLE, "Nothing copied")
             return
 
         self._notifier.notify(_TITLE, "Reading...")
@@ -293,8 +300,7 @@ class QuickReaderFeature:
         the closing message follows it. A stopped reading was already ended
         and announced by the stop, so it waits for nothing.
         """
-        self._deactivate(generation)
-        if outcome is SpeakOutcome.STOPPED:
+        if not self._deactivate(generation) or outcome is SpeakOutcome.STOPPED:
             return
         text_notice.join(timeout=_TEXT_NOTIFY_JOIN_SECONDS)
         if outcome is SpeakOutcome.SPEECH_FAILED:

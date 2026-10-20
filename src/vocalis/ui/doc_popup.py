@@ -59,6 +59,7 @@ class DocumentReaderPopup(QWidget):
     status_changed = Signal(str)
     progress_changed = Signal(int, int)
     reading_finished = Signal()
+    reading_started = Signal()
     hotkey_pressed = Signal()
     external_reading_started = Signal(str)
 
@@ -91,6 +92,7 @@ class DocumentReaderPopup(QWidget):
         self.status_changed.connect(self._status_label.setText)
         self.progress_changed.connect(self._update_progress_label)
         self.reading_finished.connect(self._on_reading_finished)
+        self.reading_started.connect(lambda: self._set_reading_controls_enabled(True))
         self.hotkey_pressed.connect(self.on_hotkey_trigger)
         self.external_reading_started.connect(self.on_external_reading_started)
 

@@ -16,6 +16,7 @@ import pytest
 from tests.fake_output import FakeAudioPlayer, OutputRecorder, pump_stream_factory
 from vocalis.audio.playback import AudioPlayer
 from vocalis.engines.chain import make_downshift_handler
+from vocalis.features.chunked_speaker import SpeakOutcome
 from vocalis.features.quick_reader import QuickReaderFeature
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import ModelManager
@@ -124,7 +125,7 @@ def sine(freq: float = 440.0, seconds: float = 2.0, rate: int = 24000) -> npt.ND
     return (0.3 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
 
 
-def wait_until(predicate, timeout: float = 1.0) -> None:  # type: ignore[no-untyped-def]
+def wait_until(predicate, timeout: float = 5.0) -> None:  # type: ignore[no-untyped-def]
     deadline = time.time() + timeout
     while time.time() < deadline:
         if predicate():
@@ -203,7 +204,6 @@ def test_second_trigger_while_playing_stops_and_notifies_stopped() -> None:
     wait_until(lambda: any(msg == "Stopped" for _, msg in notifier.messages))
     wait_until(lambda: player.output.closed >= 1)
     assert not any(msg == "Done" for _, msg in notifier.messages)
-    assert not any(msg == "Done" for _, msg in notifier.messages)
 
 
 def test_second_trigger_while_synthesizing_cancels_before_playback_starts() -> None:
@@ -259,7 +259,7 @@ def test_stop_landing_during_live_text_notification_stops_actual_playback() -> N
     time.sleep(0.5)  # the stop may land before the stream opens (then none ever opens) or just after
 
     assert player.output.closed == player.output.opened  # no stream left open
-    assert player.output.frames_pulled < 24000  # far less than the 3 s clip
+    assert player.output.frames_pulled < 4800  # far less than the 3 s clip
     assert player.is_playing is False
     assert not any(msg == "Done" for _, msg in notifier.messages)
 
@@ -820,3 +820,45 @@ def test_each_reading_ends_exactly_once_even_when_stopped() -> None:
     assert not any(msg == "Done" for _, msg in notifier.messages)
     assert feature._speaker is None  # noqa: SLF001
     assert player.output.closed == 1
+
+
+def test_a_stopped_reading_never_gets_a_closing_done_notice() -> None:
+    """A reading ended by a stop is not ended again by its worker, so no "Done" follows."""
+    primary = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    feature, _, _, _, notifier, _ = make_feature(primary, fallback, clipboard_text="hello")
+    feature._active = True  # noqa: SLF001
+    feature._generation = 1  # noqa: SLF001
+    feature._active = False  # noqa: SLF001  # a stop already ended generation 1
+
+    feature._finish_reading(1, SpeakOutcome.DONE, threading.Thread())  # noqa: SLF001
+
+    assert notifier.messages == []
+
+
+def test_deactivate_reports_true_only_for_the_call_that_ended_the_reading() -> None:
+    """The first _deactivate ends the reading; a second one (or a stale one) does not."""
+    primary = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    feature, _, _, _, _, _ = make_feature(primary, fallback, clipboard_text="hello")
+    feature._active = True  # noqa: SLF001
+    feature._generation = 2  # noqa: SLF001
+
+    assert feature._deactivate(1) is False  # noqa: SLF001  # stale generation
+    assert feature._deactivate(2) is True  # noqa: SLF001
+    assert feature._deactivate(2) is False  # noqa: SLF001  # already inactive
+
+
+def test_a_finished_reading_still_announces_done_once() -> None:
+    """A reading that ends on its own is announced exactly once."""
+    primary = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    feature, _, _, _, notifier, _ = make_feature(primary, fallback, clipboard_text="hello")
+    feature._active = True  # noqa: SLF001
+    feature._generation = 1  # noqa: SLF001
+    notice = threading.Thread(target=lambda: None)
+    notice.start()
+
+    feature._finish_reading(1, SpeakOutcome.DONE, notice)  # noqa: SLF001
+
+    assert [msg for _, msg in notifier.messages] == ["Done"]

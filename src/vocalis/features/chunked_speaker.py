@@ -172,7 +172,7 @@ class ChunkedSpeaker:
                 logger.exception("Playback failed")
                 return SpeakOutcome.PLAYBACK_FAILED
         if not opened:
-            # Nothing to say (or stop() landed while the last piece was being made).
+            # Only reached with an empty chunk list (a stop during the last piece already returned above).
             return SpeakOutcome.STOPPED if self._stop.is_set() else SpeakOutcome.DONE
         self._stream.finish()
         try:
