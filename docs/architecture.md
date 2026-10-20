@@ -94,7 +94,9 @@ Pressing Ctrl+Alt+R now works end-to-end:
 2. On trigger, `QuickReaderFeature.on_trigger()` either starts a new
    reading or stops an in-progress one — both dispatched onto separate
    background threads so the listener itself is never blocked.
-3. The background thread reads the clipboard (`ClipboardReader`), then
+3. (Phase 3 design; since Stage 6b Quick Reader splits the text into chunks
+   and speaks them through `ChunkedSpeaker` on one stream — see "Stage 6b
+   addition".) The background thread reads the clipboard (`ClipboardReader`), then
    calls `model_manager.acquire("qwen3_tts", ...)` to get a loaded
    `Qwen3TTS` engine — obeying the same single-residency and idle-unload
    policy every GPU engine uses. If that fails for any reason, it falls
@@ -104,8 +106,9 @@ Pressing Ctrl+Alt+R now works end-to-end:
    Qwen3-TTS -> Kokoro -> Piper — see "Stage 6a addition" below.)
 4. The generated speech is played via `AudioPlayer` (sounddevice-based,
    the same library `MicRecorder` uses for capture), which can be
-   interrupted mid-playback. Its `wait_until_done()` is bounded by the
-   audio's expected duration plus a safety margin, so a misconfigured
+   interrupted mid-playback. (Phase 3 design: `wait_until_done()` was bounded by the
+   audio's expected duration plus a safety margin. Since Stage 6b a broken device
+   is caught by `SpeechStream`'s 10 s stall check instead.) A misconfigured
    default audio output device fails fast with `PlaybackTimeoutError`
    (surfaced as a normal "Playback failed" notification) instead of
    hanging the reading forever. Since Stage 1 (see below), `AudioPlayer`
@@ -135,8 +138,8 @@ documents aloud:
    plain callbacks that `build_doc_reader()` wires to the popup's signals.
 3. `DocumentReaderFeature` extracts text (`text/extractors.py`), strips
    markdown (`text/normalizer.py`), splits it into sentence-bounded chunks
-   (`text/chunker.py`), then synthesizes and plays one chunk at a time,
-   using the same `ModelManager` single-residency policy and the same
+   (`text/chunker.py`), then speaks the chunks through `ChunkedSpeaker` on one continuous
+   stream (Stage 6b; before that it played one chunk at a time), using the same `ModelManager` single-residency policy and the same
    voice-engine chain (Qwen3-TTS -> Kokoro -> Piper since Stage 6a) as
    Quick Reader. Both readers use the one shared engine id
    `TTS_ENGINE_ID` (`"qwen3_tts"`, defined in `model_manager.py`), so
@@ -395,12 +398,10 @@ the factor inside `0.7`–`1.6` (NaN treated as `1.0`).
 Reader and Document Reader both call: it reads the caller's current speed
 from `provider()` and applies it, or returns the audio unchanged if
 `provider` is `None`, or if either call raises (logged as a warning —
-a pacing failure must never break a reading). Quick Reader calls it once
-per reading; Document Reader calls it once per chunk, *before* that
-chunk's inner pause/resume retry loop — a resume after a pause replays
-the exact same already-paced audio rather than resynthesizing or
-re-pacing it (see the spec amendment below for the user-visible effect of
-that choice).
+a pacing failure must never break a reading). Since Stage 6b both readers call it through `ChunkedSpeaker`, once per chunk,
+before the chunk is pushed into the stream; a pause rewinds the heard clip inside
+`SpeechStream`, so a resume replays the same already-paced audio (see the spec
+amendment below for the user-visible effect of that choice).
 
 ### `main()` wiring and notification rule
 
@@ -752,7 +753,7 @@ ChunkedSpeaker.run(chunks)            SpeechStream                 sound card
   thread: for each chunk it asks a `SpeechSource` (in practice an
   `EngineChain`) for audio, applies the speaking pace (`paced_audio`) and
   pushes the result into the stream. It returns a `SpeakOutcome`
-  (`DONE`, `STOPPED`, `PLAYBACK_FAILED`). `pause()`, `resume()` and `stop()`
+  (`DONE`, `STOPPED`, `SPEECH_FAILED` when no voice could make a chunk, `PLAYBACK_FAILED`). `pause()`, `resume()` and `stop()`
   are thread-safe; `stop()` is a permanent latch, so a stop that lands
   while the model is still loading means the reading never makes a sound.
 - `audio/speech_stream.py` — `SpeechStream` opens ONE sound stream through

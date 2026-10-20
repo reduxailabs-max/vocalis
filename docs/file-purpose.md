@@ -81,7 +81,7 @@
 | `src/vocalis/settings.py` | `LiveSettings` gained `audio_output_device()` and `speaking_speed()` live accessors. |
 | `src/vocalis/ui/settings_window.py` | Gained the Sound output drop-down + **Test sound** button, the Speaking speed slider, and the **Preview voice** button; takes `output_names`/`on_test_sound`/`on_preview_voice` callables. |
 | `src/vocalis/cli.py` | Builds one shared `OutputDeviceChooser`, wires it into both readers' `AudioPlayer`s and into `build_ui()`'s Settings window; adds `_make_device_failure_hook()`, `_make_on_test_sound()`, `_make_on_preview_voice()` and the `_test_tone()` helper. |
-| `src/vocalis/features/quick_reader.py` | Gained `speed_provider`; pacing applied once per reading via `paced_audio()`. |
+| `src/vocalis/features/quick_reader.py` | Gained `speed_provider`; pacing applied via `paced_audio()` (since Stage 6b once per chunk, inside `ChunkedSpeaker`). |
 | `src/vocalis/features/doc_reader.py` | Gained `speed_provider`; pacing applied once per chunk via `paced_audio()`, before that chunk's pause/resume retry loop (a new `_play_chunk_until_done()` helper replays the already-paced audio on resume instead of resynthesizing). |
 
 ## Stage 2 (Service and autostart) — new files

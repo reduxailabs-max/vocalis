@@ -277,7 +277,7 @@ main()
 
 Reading-time pacing flow (Quick Reader and Document Reader; since Stage 6b
 `ChunkedSpeaker` applies it once per chunk before the chunk is pushed into the
-stream, instead of `player.play()`):
+stream; the last line below is the old `player.play()` call):
 
 ```
 synthesize text -> audio, sample_rate
@@ -292,6 +292,7 @@ Device-failure flow, shared by both readers through one chooser:
 
 ```
 player.play() -> stream fails to start, or wait_until_done() times out
+(readers using SpeechStream get the same result from the 10 s stall check)
   -> player asks device_provider() again
        -> if it now names a DIFFERENT device: retry opening that one, once
        -> else: give up, re-raise (reaches the reader's existing
