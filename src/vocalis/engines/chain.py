@@ -24,7 +24,9 @@ class EngineChain:
     stays off, and `close()` releases it when the reading has finished
     playing. The engine is still re-acquired before every piece, so if
     another feature took the graphics card in the meantime it is simply
-    reloaded.
+    reloaded. Engine factories must build a NEW engine object every time they
+    are called (the chain tells a reloaded engine from the still-loaded one by
+    object identity).
     """
 
     def __init__(
@@ -108,12 +110,12 @@ class EngineChain:
 
     def close(self) -> None:
         """Release the held engine, starting the idle-unload timer. Idempotent."""
-        held, self._held = self._held, None
-        self._held_engine = None
+        held, held_engine = self._held, self._held_engine
+        self._held, self._held_engine = None, None
         if held is None:
             return
-        if self._model_manager.current_engine_id != held:
-            return  # another feature already took the card; nothing of ours to release
+        if self._model_manager.current_engine is not held_engine:
+            return  # our copy is gone (evicted or replaced); nothing of ours to release
         self._model_manager.release(held)
 
 
