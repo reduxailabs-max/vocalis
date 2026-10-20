@@ -150,6 +150,58 @@ class AudioPlayer:
             "Playback started (%.2fs, sample_rate=%d)", self._expected_duration_seconds, sample_rate
         )
 
+    def open_stream(
+        self,
+        sample_rate: int,
+        callback: Callable[..., None],
+        finished_callback: Callable[[], None],
+    ) -> None:
+        """Open and start an output stream that the caller feeds itself.
+
+        Used by SpeechStream for gapless readings: instead of handing over
+        one finished clip (play()), the caller supplies the audio callback
+        and keeps the stream open across many clips. Output-device choice,
+        the one retry, and the device-failure hook behave exactly as for
+        play().
+
+        Args:
+            sample_rate: Sample rate of the audio the callback will supply.
+            callback: sounddevice-style callback(outdata, frames, time_info, status).
+            finished_callback: Called by the stream when it finishes.
+
+        Raises:
+            PlaybackAlreadyActiveError: If a stream is already open.
+        """
+        if self.is_playing:
+            raise PlaybackAlreadyActiveError("AudioPlayer.open_stream() called while already playing")
+        self._done_event.clear()
+        self._stopped_early = False
+        self._open_stream(sample_rate, callback, finished_callback)
+
+    def close_stream(self) -> None:
+        """Stop and close the stream opened by open_stream(); no-op if none.
+
+        Never raises (a failure to close is logged). Unlike stop(), this is
+        an ordinary end of a reading, so it does not mark the playback as
+        stopped early.
+        """
+        with self._lock:
+            stream, self._stream = self._stream, None
+        if stream is None:
+            return
+        try:
+            stream.stop()
+        except Exception:
+            logger.warning("Failed to stop the output stream", exc_info=True)
+        try:
+            stream.close()
+        except Exception:
+            logger.warning("Failed to close the output stream", exc_info=True)
+
+    def report_device_failed(self) -> None:
+        """Tell the on_device_failed hook which device was in use; never raises."""
+        self._report_device_failed()
+
     def _open_stream(
         self,
         sample_rate: int,
