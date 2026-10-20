@@ -47,6 +47,7 @@ DEFAULT_FADE_SECONDS = 0.008
 DEFAULT_STALL_SECONDS = 10.0
 DEFAULT_MAX_QUEUED_CLIPS = 3
 _WAIT_SLICE_SECONDS = 0.1
+_DISPATCH_JOIN_SECONDS = 2.0
 
 
 def _ignore_finished() -> None:
@@ -103,6 +104,8 @@ class SpeechStream:
         self._stopped = False
         self._shut = False
         self._opening = False
+        self._device_opened = False
+        self._dispatcher: "threading.Thread | None" = None
         self._last_callback = 0.0
         self._underruns = 0
         self._played_any = False
@@ -141,12 +144,14 @@ class SpeechStream:
                 self._open = False
                 stopped = self._stopped
             if stopped:
-                # The user pressed Stop during the open: nothing to report.
-                self._finish_stopped_open()
+                # The user pressed Stop during the open: nothing to report, and
+                # no device was opened, so there is nothing to close.
+                self._started_tags.put(None)
                 return
             raise
         with self._cond:
             self._opening = False
+            self._device_opened = True
             stopped = self._stopped
             if not stopped:
                 # Opening may have been slow; the stall clock starts now.
@@ -156,7 +161,9 @@ class SpeechStream:
             self._finish_stopped_open()
             return
         if self._on_clip_started is not None:
-            threading.Thread(target=self._dispatch_started, daemon=True).start()
+            dispatcher = threading.Thread(target=self._dispatch_started, daemon=True)
+            self._dispatcher = dispatcher
+            dispatcher.start()
 
     def _finish_stopped_open(self) -> None:
         """Close the device and post the end marker after a stop() during open."""
@@ -233,7 +240,15 @@ class SpeechStream:
         if stalled:
             self._raise_stalled()
         self._shutdown()
+        if finished:
+            self._join_dispatcher()
         return finished
+
+    def _join_dispatcher(self) -> None:
+        """After a clean finish, let the helper thread deliver the last clip-started tags."""
+        dispatcher = self._dispatcher
+        if dispatcher is not None and dispatcher is not threading.current_thread():
+            dispatcher.join(timeout=_DISPATCH_JOIN_SECONDS)
 
     def pause(self) -> None:
         """Go silent at once and rewind the clip being heard to its start."""
@@ -302,11 +317,15 @@ class SpeechStream:
             self._shut = True
             self._open = False
             opening = self._opening
+            opened = self._device_opened
             self._cond.notify_all()
         if opening:
             # start() is still opening the device; it closes it when done.
             return
-        self._player.close_stream()
+        if opened:
+            # Only close a device THIS stream opened: the player is shared, and a
+            # stream that never opened must not close another reading's device.
+            self._player.close_stream()
         self._started_tags.put(None)
 
     def _dispatch_started(self) -> None:

@@ -380,3 +380,19 @@ def test_a_deliberately_paused_stream_is_never_a_stall() -> None:
     assert failures == []
     stream.stop()
     wait_until(lambda: results == [False])
+
+
+def test_a_stream_that_never_opened_cannot_close_another_streams_device() -> None:
+    """Two SpeechStreams share one player: stopping the never-opened one leaves the other's device open."""
+    recorder = OutputRecorder()
+    player = AudioPlayer(stream_factory=manual_stream_factory(recorder))
+    opened = SpeechStream(player, fade_seconds=0.0)
+    never_opened = SpeechStream(player, fade_seconds=0.0)
+    opened.start(RATE)
+
+    never_opened.stop()
+
+    assert recorder.closed == 0
+    assert opened.push(_clip(10), RATE, 0)
+    opened.stop()
+    assert recorder.closed == 1

@@ -94,7 +94,7 @@ class DocumentReaderFeature:
                 each stage (e.g. "Reading...", "Paused", "Done"). The
                 popup wires this to a Qt signal to update its status line.
             on_progress: Called with (current_chunk, total_chunks), both
-                1-based, at the start of each chunk. The popup wires this
+                1-based, when each chunk starts to be heard. The popup wires this
                 to a Qt signal to update its progress label.
             on_finished: Called once when a reading ends for any reason
                 (finished, stopped, or failed). The popup wires this to
@@ -162,6 +162,7 @@ class DocumentReaderFeature:
         Args:
             path: Path to the file to read.
         """
+        self.stop()  # a repeat read ends the reading in progress properly (no-op if idle)
         generation = self._start_new_reading()
         self._reading_coordinator.start_reading(self, self.stop)
         # Announce only after the coordinator has stopped any other
@@ -179,6 +180,7 @@ class DocumentReaderFeature:
         Args:
             text: The raw text to read (markdown-normalized before speaking).
         """
+        self.stop()  # a repeat read ends the reading in progress properly (no-op if idle)
         generation = self._start_new_reading()
         self._reading_coordinator.start_reading(self, self.stop)
         # Announce only after the coordinator has stopped any other
@@ -362,10 +364,13 @@ class DocumentReaderFeature:
         with self._lock:
             if not (self._active and self._generation == generation):
                 return  # stopped while extracting/chunking
+            # The one call made while holding the lock: the speaker is not yet
+            # published, so no other thread can reach it, and pause() only takes
+            # the stream's own brief lock and never calls back. Doing it here
+            # means a resume() cannot slip in between publishing and pausing.
+            if self._paused:
+                speaker.pause()
             self._speaker = speaker
-            start_paused = self._paused
-        if start_paused:
-            speaker.pause()
         outcome = speaker.run(chunks)
         with self._lock:
             if self._speaker is speaker:
@@ -373,7 +378,11 @@ class DocumentReaderFeature:
         self._finish_reading(generation, outcome)
 
     def _report_progress(self, generation: int, current: int, total: int) -> None:
-        """Forward 'piece N of M' while this reading is still the current one."""
+        """Forward 'piece N of M' while this reading is still the current one.
+
+        A stop landing between the check and the call can let one report
+        arrive just after on_finished.
+        """
         if self._is_current(generation):
             self._on_progress(current, total)
 
@@ -387,8 +396,9 @@ class DocumentReaderFeature:
             message = "Done"
         else:
             # STOPPED: stop() already ended and reported this reading. If it
-            # is somehow still current, end it quietly so nothing stays "active".
+            # is somehow still current, end it so nothing stays "active".
             if self._deactivate(generation):
+                self._on_status("Stopped")
                 self._on_finished()
             return
         if self._deactivate(generation):
