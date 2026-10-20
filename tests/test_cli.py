@@ -564,6 +564,19 @@ def test_doc_reader_reports_status_progress_finish_and_pause_to_the_hub(qtbot) -
     assert popup._progress_label.text() != ""  # noqa: SLF001
 
 
+def test_doc_reader_start_enables_popup_buttons_even_without_a_hub(qtbot) -> None:  # type: ignore[no-untyped-def]
+    feature, popup, _ = build_doc_reader(
+        config=VocalisConfig(), model_manager=ModelManager(), reading_coordinator=ReadingCoordinator(),
+    )
+    qtbot.addWidget(popup)
+    assert popup._pause_button.isEnabled() is False  # noqa: SLF001
+
+    feature._on_started()  # type: ignore[misc]  # noqa: SLF001
+
+    assert popup._pause_button.isEnabled() is True  # noqa: SLF001
+    assert popup._stop_button.isEnabled() is True  # noqa: SLF001
+
+
 def test_ocr_shows_the_widget_not_the_popup_when_the_widget_is_enabled(tmp_path: Path, qtbot) -> None:  # type: ignore[no-untyped-def]
     hub = StatusHub()
     seen = _HubRecorder(hub)

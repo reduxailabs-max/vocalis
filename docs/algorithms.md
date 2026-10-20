@@ -58,7 +58,9 @@ counted against the new load and can take its count to zero, arming the
 idle-unload timer while the new reader still uses the engine. The timer is
 30 s, a reader re-acquires on every chunk, and a re-acquire invalidates the
 pending timer (the generation guard), so the practical worst case is one
-unnecessary unload and reload.
+unnecessary unload and reload. Since Stage 6b the reader's `EngineChain` also
+checks `ModelManager.current_engine` (object identity) before releasing, so a
+late `close()` from an old reading cannot lower a newer reading's count.
 
 ## Sentence-bounded chunking (`text/chunker.py`)
 
@@ -73,6 +75,10 @@ with `max_chars=14`): `"One. Two three. Four five six."` →
 `["One.", "Two three.", "Four five six."]`.
 
 **Complexity:** O(n) in the text length.
+
+Since Stage 6b the chunker is sentence-aware (never breaks after abbreviations or
+initials, has a line-break rule, linear time) and returns exact spans
+(`chunk_spans`) — see `docs/architecture.md`.
 
 ## Markdown stripping (`text/normalizer.py`)
 
@@ -120,10 +126,9 @@ audio shorter than 4096 samples (too short to stretch meaningfully).
 readers call: with `provider` is `None` it returns `audio` unchanged; otherwise
 it calls `provider()` for the current speed and applies it, catching any
 exception from either call, logging it as a warning, and returning the
-original `audio` — a pacing failure must never break a reading. Quick
-Reader calls it once per reading; Document Reader calls it once per
-chunk, *before* that chunk's pause/resume retry loop, so a resume after a
-pause replays the exact same already-paced audio instead of re-stretching it.
+original `audio` — a pacing failure must never break a reading. Since Stage 6b both readers call it through `ChunkedSpeaker`, once per chunk,
+before the chunk is pushed into the stream; a pause rewinds the heard clip inside
+`SpeechStream`, so a resume replays the same already-paced audio.
 
 **Complexity:** O(n) in sample count for the stretch itself (one-time
 librosa JIT-compilation cost on first use, pre-paid at startup by
@@ -182,10 +187,10 @@ and not generation, only the current reading may call it; Quick Reader's
 preemption callback is therefore clear-only (it never starts or flips an
 idle reader to active).
 
-**Pause/resume:** `pause()` clears a `threading.Event` and stops audio;
-the worker waits on that event, then re-checks `_is_current()` and replays
-the same chunk. `stop()` sets the event too so a paused worker wakes and
-exits.
+**Pause/resume:** (historical per-chunk design replaced in Stage 6b) `pause()`
+now tells the reading's `ChunkedSpeaker`, whose `SpeechStream` outputs silence
+at once and rewinds the heard clip; `resume()` replays it from its start;
+`stop()` is a permanent latch that wakes everything.
 
 **Control notifications:** the "Paused", "Resuming..." and "Stopped"
 desktop notifications are put on a per-feature `queue.Queue` and sent by a

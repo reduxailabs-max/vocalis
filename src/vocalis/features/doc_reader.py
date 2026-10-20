@@ -10,15 +10,14 @@ ui/doc_popup.py), keeping this module independently testable exactly
 like every other feature module. Reuses the never-block-the-caller and
 generation-counter patterns already hard-won in quick_reader.py.
 
-Pause/resume design: pause() stops audio immediately; resume() replays
-the current chunk from its start (simpler than tracking a mid-chunk
-playback offset, and each chunk is short by construction -- see
-text/chunker.py). A worker thread that is stopped early by pause()
-blocks on self._resume_event until resume() sets it, then re-checks
-whether this reading is still current before replaying -- this is what
-lets stop() (or a ReadingCoordinator preemption) while paused actually
-end the reading, rather than leaving the worker thread stuck waiting for
-a resume() that will never come.
+Reading design: the document is split into sentence-bounded chunks and
+handed to a ChunkedSpeaker (features/chunked_speaker.py), which makes each
+chunk with the voice chain while the previous ones are being heard, so the
+reading plays on one continuous stream with no gaps. pause() silences the
+stream at once and resume() replays the chunk being heard from its start;
+stop() (or a ReadingCoordinator preemption) ends the reading at any point,
+including before the first sound exists. The voice stays loaded for the
+whole reading and is released when playback has ended.
 """
 import logging
 import queue
@@ -26,16 +25,13 @@ import threading
 from pathlib import Path
 from typing import Callable, Mapping
 
-import numpy as np
-import numpy.typing as npt
-
-from vocalis.audio.pace import paced_audio
 from vocalis.audio.playback import AudioPlayer
 from vocalis.engines.base import Synthesizer
-from vocalis.engines.chain import EngineChain
-from vocalis.engines.registry import EnginePlan, EngineSelector
+from vocalis.engines.chain import EngineChain, make_downshift_handler, new_reading_chain
+from vocalis.engines.registry import EngineSelector
+from vocalis.features.chunked_speaker import ChunkedSpeaker, SpeakOutcome
 from vocalis.features.reading_coordinator import ReadingCoordinator
-from vocalis.model_manager import ModelEngine, ModelManager, TTS_ENGINE_ID
+from vocalis.model_manager import ModelEngine, ModelManager
 from vocalis.notify import Notifier
 from vocalis.text.chunker import chunk_text
 from vocalis.text.extractors import (
@@ -98,7 +94,7 @@ class DocumentReaderFeature:
                 each stage (e.g. "Reading...", "Paused", "Done"). The
                 popup wires this to a Qt signal to update its status line.
             on_progress: Called with (current_chunk, total_chunks), both
-                1-based, at the start of each chunk. The popup wires this
+                1-based, when each chunk starts to be heard. The popup wires this
                 to a Qt signal to update its progress label.
             on_finished: Called once when a reading ends for any reason
                 (finished, stopped, or failed). The popup wires this to
@@ -134,10 +130,8 @@ class DocumentReaderFeature:
         self._lock = threading.Lock()
         self._active = False
         self._paused = False
-        self._chain: EngineChain | None = None
+        self._speaker: ChunkedSpeaker | None = None
         self._generation = 0
-        self._resume_event = threading.Event()
-        self._resume_event.set()
 
         self._notify_queue: "queue.Queue[str]" = queue.Queue()
         self._notify_thread: "threading.Thread | None" = None
@@ -168,6 +162,7 @@ class DocumentReaderFeature:
         Args:
             path: Path to the file to read.
         """
+        self.stop()  # a repeat read ends the reading in progress properly (no-op if idle)
         generation = self._start_new_reading()
         self._reading_coordinator.start_reading(self, self.stop)
         # Announce only after the coordinator has stopped any other
@@ -185,6 +180,7 @@ class DocumentReaderFeature:
         Args:
             text: The raw text to read (markdown-normalized before speaking).
         """
+        self.stop()  # a repeat read ends the reading in progress properly (no-op if idle)
         generation = self._start_new_reading()
         self._reading_coordinator.start_reading(self, self.stop)
         # Announce only after the coordinator has stopped any other
@@ -213,19 +209,22 @@ class DocumentReaderFeature:
             if not self._active or self._paused:
                 return
             self._paused = True
-            self._resume_event.clear()
-        self._player.stop()
+            speaker = self._speaker
+        if speaker is not None:
+            speaker.pause()
         self._notify_async("Paused")
         self._on_status("Paused")
 
     def resume(self) -> None:
-        """Resume a paused reading, replaying the current chunk from its
+        """Resume a paused reading, replaying the chunk being heard from its
         start. No-op if not currently paused."""
         with self._lock:
             if not self._active or not self._paused:
                 return
             self._paused = False
-        self._resume_event.set()
+            speaker = self._speaker
+        if speaker is not None:
+            speaker.resume()
         self._notify_async("Resuming...")
         self._on_status("Resuming...")
 
@@ -233,19 +232,20 @@ class DocumentReaderFeature:
         """Stop the current reading immediately. No-op if not reading.
 
         Safe to call from any thread, including as a ReadingCoordinator
-        stopper callback when Quick Reader preempts this reading.
-        Unblocks a worker thread that is currently waiting on a pause,
-        so a stop while paused actually ends the reading instead of
-        leaving that thread stuck forever.
+        stopper callback when Quick Reader preempts this reading. Works at
+        any point of a reading -- even before the first sound exists: the
+        speaker's stop is a permanent latch, so a late-finishing first
+        piece never plays.
         """
         with self._lock:
             if not self._active:
                 return
             self._active = False
             self._paused = False
-        self._resume_event.set()
+            speaker, self._speaker = self._speaker, None
         self._reading_coordinator.finish_reading(self)
-        self._player.stop()
+        if speaker is not None:
+            speaker.stop()
         self._notify_async("Stopped")
         self._on_status("Stopped")
         self._on_finished()
@@ -273,20 +273,13 @@ class DocumentReaderFeature:
                 logger.exception("Desktop notification failed")
 
     def _start_new_reading(self) -> int:
-        """Mark a fresh reading as active and return its generation
-        number. Also unconditionally releases any stale pause-wait from
-        a previous reading (belt-and-braces: the popup disables its Read
-        button while is_reading is True, so this should not be reachable
-        mid-pause in normal use, but a blocked-forever worker thread
-        would be a real bug if it ever were)."""
+        """Mark a fresh reading as active and return its generation number."""
         with self._lock:
             self._active = True
             self._paused = False
-            self._chain = None
+            self._speaker = None
             self._generation += 1
-            generation = self._generation
-        self._resume_event.set()
-        return generation
+            return self._generation
 
     def _is_current(self, generation: int) -> bool:
         """Whether `generation` is still the active reading."""
@@ -355,153 +348,75 @@ class DocumentReaderFeature:
         self._read_worker(generation, chunks)
 
     def _read_worker(self, generation: int, chunks: "list[str]") -> None:
-        """Synthesize and play each chunk in order. Bails out cleanly at
-        each check if this generation has been superseded by a stop, a
-        coordinator preemption, or a fresh reading.
+        """Hand the chunks to a ChunkedSpeaker and turn its outcome into the
+        usual status / notification / finished reports.
 
-        Each chunk is synthesized and paced (see paced_audio()) exactly
-        once; a pause/resume replay reuses that same already-paced audio
-        rather than re-synthesizing and re-pacing it.
-
-        Waits on _resume_event at two points so a pause() is honored
-        whether it lands during synthesis or during playback: once right
-        before play() is called (covers a pause that happened while this
-        chunk was still synthesizing, when there was no stream yet for
-        pause() to stop()), and once after wait_until_done() returns early
-        (covers a pause that stopped an already-playing chunk). Both waits
-        re-check _is_current() immediately after waking, so a stop() (or a
-        ReadingCoordinator preemption, which stops via the same path) that
-        arrives while waiting ends the reading cleanly instead of playing
-        the chunk or replaying it.
+        A pause() that landed before the speaker existed is applied here,
+        under the same lock that publishes the speaker, so a pause or stop
+        can never fall between "no speaker yet" and "speaker running".
         """
-        total = len(chunks)
-        index = 0
-        while index < total:
-            if not self._is_current(generation):
-                return
-            chunk = chunks[index]
-            self._on_progress(index + 1, total)
-            try:
-                audio, sample_rate = self._synthesize_with_fallback(chunk, generation)
-            except Exception:
-                logger.exception("Both TTS engines failed")
-                if self._deactivate(generation):
-                    self._on_status("Could not generate speech")
-                    self._on_finished()
-                    # Notify last: it can block, and the end must reach the hub first.
-                    self._notifier.notify(_TITLE, "Could not generate speech")
-                return
-            if not self._is_current(generation):
-                return
-            audio = paced_audio(audio, sample_rate, self._speed_provider)
+        speaker = ChunkedSpeaker(
+            player=self._player,
+            source_factory=self._new_source,
+            speed_provider=self._speed_provider,
+            on_chunk_started=lambda current, total: self._report_progress(generation, current, total),
+        )
+        with self._lock:
+            if not (self._active and self._generation == generation):
+                return  # stopped while extracting/chunking
+            # The one call made while holding the lock: the speaker is not yet
+            # published, so no other thread can reach it, and pause() only takes
+            # the stream's own brief lock and never calls back. Doing it here
+            # means a resume() cannot slip in between publishing and pausing.
+            if self._paused:
+                speaker.pause()
+            self._speaker = speaker
+        outcome = speaker.run(chunks)
+        with self._lock:
+            if self._speaker is speaker:
+                self._speaker = None
+        self._finish_reading(generation, outcome)
 
-            # Inner retry loop: a pause/resume cycle replays this exact
-            # already-paced `audio` without ever calling
-            # _synthesize_with_fallback() or paced_audio() again for it.
-            while True:
-                finished_naturally = self._play_chunk_until_done(generation, audio, sample_rate)
-                if finished_naturally is None:
-                    return  # reading ended (stopped, preempted, or playback failed)
-                if finished_naturally:
-                    break
-            index += 1
+    def _report_progress(self, generation: int, current: int, total: int) -> None:
+        """Forward 'piece N of M' while this reading is still the current one.
 
+        A stop landing between the check and the call can let one report
+        arrive just after on_finished.
+        """
+        if self._is_current(generation):
+            self._on_progress(current, total)
+
+    def _finish_reading(self, generation: int, outcome: SpeakOutcome) -> None:
+        """Report how the reading ended (a stop() has already reported its own end)."""
+        if outcome is SpeakOutcome.SPEECH_FAILED:
+            message = "Could not generate speech"
+        elif outcome is SpeakOutcome.PLAYBACK_FAILED:
+            message = "Playback failed"
+        elif outcome is SpeakOutcome.DONE:
+            message = "Done"
+        else:
+            # STOPPED: stop() already ended and reported this reading. If it
+            # is somehow still current, end it so nothing stays "active".
+            if self._deactivate(generation):
+                self._on_status("Stopped")
+                self._on_finished()
+            return
         if self._deactivate(generation):
-            self._on_status("Done")
+            self._on_status(message)
             self._on_finished()
             # Notify last: it can block, and the end must reach the hub first.
-            self._notifier.notify(_TITLE, "Done")
+            self._notifier.notify(_TITLE, message)
 
-    def _play_chunk_until_done(
-        self, generation: int, audio: "npt.NDArray[np.float32]", sample_rate: int
-    ) -> "bool | None":
-        """Play one already-synthesized, already-paced chunk, honoring a
-        pause that lands either before playback starts or while it is
-        under way.
-
-        Returns:
-            True if the chunk finished playing naturally (the caller
-            should move on to the next chunk); False if it was paused
-            (the caller should replay the exact same `audio` once
-            resumed); None if the reading ended for any other reason
-            (stopped, preempted, or playback failed) -- the caller must
-            return immediately without doing anything further.
-        """
-        # A pause() landing while this chunk was still synthesizing
-        # cleared _resume_event but had no stream to stop() yet (play()
-        # hasn't been called). Without this wait, playback would start
-        # anyway and the pause would be silently ignored until the next
-        # chunk boundary. Block here until resume() (or a stop()/
-        # preemption, which also sets the event to avoid hanging) wakes
-        # this thread, then re-check before actually starting playback.
-        self._resume_event.wait()
-        if not self._is_current(generation):
-            return None  # stopped (or preempted) while paused before playback started
-
-        try:
-            self._player.play(audio, sample_rate)
-            # A stop() landing between the last _is_current() check and
-            # play() found no stream to stop; stop it now rather than
-            # let this chunk play out. The same goes for a pause()
-            # landing in that window: stop the chunk, then fall
-            # through to the paused-wait below so resume() replays it.
-            if not self._is_current(generation) or not self._resume_event.is_set():
-                self._player.stop()
-            finished_naturally = self._player.wait_until_done()
-        except Exception:
-            logger.exception("Playback failed")
-            if self._deactivate(generation):
-                self._on_status("Playback failed")
-                self._on_finished()
-                # Notify last: it can block, and the end must reach the hub first.
-                self._notifier.notify(_TITLE, "Playback failed")
-            return None
-
-        if finished_naturally:
-            return True
-
-        if not self._is_current(generation):
-            # A real stop() -- direct, or via a ReadingCoordinator
-            # preemption -- already deactivated this generation and
-            # called on_finished() itself before unblocking
-            # wait_until_done(), so there is nothing left to do here.
-            # Checking self._paused instead would race with a fast
-            # resume() that flips it back to False before this check
-            # runs, which would wrongly take this branch for a
-            # genuine pause and end the reading early.
-            return None
-        self._resume_event.wait()
-        if not self._is_current(generation):
-            return None  # stopped while waiting for resume()
-        return False  # replay the current chunk once resumed
-
-    def _new_chain(self) -> EngineChain:
-        """Build the engine chain for one reading: the selector's plan, or the old Qwen3-TTS-then-Piper."""
-        if self._engine_selector is not None:
-            plan = self._engine_selector.plan()
-            factories = self._engine_factories or {}
-        else:
-            plan = EnginePlan((TTS_ENGINE_ID,), "Fixed to the built-in voice.")
-            factories = {TTS_ENGINE_ID: self._primary_engine_factory}
-        return EngineChain(plan, factories, self._model_manager, self._fallback_engine, self._notify_downshift)
-
-    def _notify_downshift(self, failed_engine_id: str, next_engine_id: "str | None") -> None:
-        """Tell the user the first-choice voice failed (silent if the backup voice itself failed)."""
-        if failed_engine_id == "piper":
-            return
-        self._notifier.notify(_TITLE, "Primary voice unavailable — using backup voice")
-        self._on_status("Using backup voice")
-
-    def _synthesize_with_fallback(self, text: str, generation: "int | None" = None) -> "tuple[npt.NDArray[np.float32], int]":
-        """Speak one piece; the same chain is reused for the whole document so a dead engine is not retried.
-
-        A chain created for a reading that has since been stopped is used for
-        this call only and is not stored, so it cannot leak into the next reading.
-        """
-        chain = self._chain
-        if chain is None:
-            chain = self._new_chain()
-            with self._lock:
-                if generation is None or (self._active and self._generation == generation):
-                    self._chain = chain
-        return chain.synthesize(text)
+    def _new_source(self) -> EngineChain:
+        """Build the voice chain for one reading; it holds the voice loaded until closed."""
+        return new_reading_chain(
+            self._engine_selector,
+            self._engine_factories,
+            self._primary_engine_factory,
+            self._model_manager,
+            self._fallback_engine,
+            make_downshift_handler(
+                lambda message: self._notifier.notify(_TITLE, message), self._on_status
+            ),
+            hold_engines=True,
+        )

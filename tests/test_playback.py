@@ -10,6 +10,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from tests.fake_output import OutputRecorder, manual_stream_factory
 from vocalis.audio.playback import AudioPlayer, PlaybackAlreadyActiveError, PlaybackTimeoutError
 
 
@@ -605,3 +606,75 @@ def test_stop_winning_the_race_at_timeout_does_not_report_a_failure() -> None:
     player._done_event = ClaimingEvent(player)  # type: ignore[assignment]
     assert player.wait_until_done() is False
     assert failed == []
+
+
+def test_open_stream_builds_one_stream_with_the_callers_callback() -> None:
+    recorder = OutputRecorder()
+    player = AudioPlayer(stream_factory=manual_stream_factory(recorder))
+
+    player.open_stream(24000, lambda *args: None, lambda: None)
+
+    assert recorder.opened == 1
+    assert recorder.kwargs[0]["samplerate"] == 24000
+    assert recorder.kwargs[0]["channels"] == 1
+    assert player.is_playing is True
+
+
+def test_open_stream_while_a_stream_is_open_raises() -> None:
+    recorder = OutputRecorder()
+    player = AudioPlayer(stream_factory=manual_stream_factory(recorder))
+    player.open_stream(24000, lambda *args: None, lambda: None)
+
+    with pytest.raises(PlaybackAlreadyActiveError):
+        player.open_stream(24000, lambda *args: None, lambda: None)
+
+
+def test_close_stream_stops_and_closes_and_is_a_noop_when_nothing_is_open() -> None:
+    recorder = OutputRecorder()
+    player = AudioPlayer(stream_factory=manual_stream_factory(recorder))
+    player.close_stream()  # nothing open: must not raise
+    player.open_stream(24000, lambda *args: None, lambda: None)
+
+    player.close_stream()
+    player.close_stream()
+
+    assert recorder.closed == 1
+    assert player.is_playing is False
+
+
+def test_close_stream_swallows_errors_from_a_misbehaving_stream() -> None:
+    class BadStream:
+        def __init__(self, **kwargs: Any) -> None:
+            pass
+
+        def start(self) -> None:
+            pass
+
+        def stop(self) -> None:
+            raise RuntimeError("stop failed")
+
+        def close(self) -> None:
+            raise RuntimeError("close failed")
+
+    player = AudioPlayer(stream_factory=lambda **kwargs: BadStream(**kwargs))
+    player.open_stream(24000, lambda *args: None, lambda: None)
+
+    player.close_stream()  # must not raise
+
+    assert player.is_playing is False
+
+
+def test_report_device_failed_tells_the_hook_which_device_was_in_use() -> None:
+    recorder = OutputRecorder()
+    failures: "list[int | None]" = []
+    player = AudioPlayer(
+        stream_factory=manual_stream_factory(recorder),
+        device_provider=lambda: 3,
+        on_device_failed=failures.append,
+    )
+    player.open_stream(24000, lambda *args: None, lambda: None)
+
+    player.report_device_failed()
+
+    assert failures == [3]
+    assert recorder.kwargs[0]["device"] == 3

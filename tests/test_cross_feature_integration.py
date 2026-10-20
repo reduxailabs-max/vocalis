@@ -20,6 +20,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from tests.fake_output import FakeAudioPlayer
 from vocalis.cli import build_dictation, build_doc_reader, build_ocr_reader, build_quick_reader
 from vocalis.config import VocalisConfig
 from vocalis.features.reading_coordinator import ReadingCoordinator
@@ -70,30 +71,6 @@ class _FakeRecorder:
     def stop(self) -> "npt.NDArray[np.float32]":
         """Return a fixed 100-sample buffer, never real audio."""
         return np.ones(100, dtype=np.float32)
-
-
-class _FakePlayer:
-    """Fake AudioPlayer: records play() calls and signals completion via
-    a real threading.Event, so a test can wait() on it deterministically
-    instead of sleeping -- on_trigger()/read_text() each run on a
-    background thread, so this is the only reliable way to know the
-    fake "playback" has actually finished."""
-
-    def __init__(self) -> None:
-        self.done_event = threading.Event()
-        self.played: "list[tuple[npt.NDArray[np.float32], int]]" = []
-
-    def play(self, audio: "npt.NDArray[np.float32]", sample_rate: int) -> None:
-        """Record what was "played"."""
-        self.played.append((audio, sample_rate))
-
-    def wait_until_done(self) -> bool:
-        """Signal done_event, then report a normal (non-stopped) finish."""
-        self.done_event.set()
-        return True
-
-    def stop(self) -> None:
-        """No-op: nothing real is playing to stop."""
 
 
 class _FakeClipboardReader:
@@ -229,7 +206,7 @@ def test_one_gpu_model_at_a_time_holds_across_features(qapp) -> None:  # type: i
         patch("vocalis.cli.TextOutput", return_value=_FakeTextOutput()),
         patch("vocalis.cli.Notifier.notify", _quiet_notify),
     ):
-        fake_player = _FakePlayer()
+        fake_player = FakeAudioPlayer()
         mock_player_cls.return_value = fake_player
 
         dictation, _dictation_listener = build_dictation(config=config, model_manager=manager)
@@ -269,7 +246,7 @@ def test_switching_between_quick_reader_and_document_reader_reuses_the_loaded_en
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
         patch("vocalis.cli.Notifier.notify", _quiet_notify),
     ):
-        first_player = _FakePlayer()
+        first_player = FakeAudioPlayer()
         mock_player_cls.return_value = first_player
         quick_reader, _quick_listener = build_quick_reader(
             config=config, model_manager=manager, reading_coordinator=coordinator
@@ -278,7 +255,7 @@ def test_switching_between_quick_reader_and_document_reader_reuses_the_loaded_en
         assert first_player.done_event.wait(timeout=2.0)
         assert qwen_engine.load_count == 1
 
-        second_player = _FakePlayer()
+        second_player = FakeAudioPlayer()
         mock_player_cls.return_value = second_player
         doc_reader, _popup, _doc_listener = build_doc_reader(
             config=config, model_manager=manager, reading_coordinator=coordinator
@@ -309,7 +286,7 @@ def test_auto_picks_the_same_engine_for_both_readers_so_nothing_reloads(qapp) ->
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
         patch("vocalis.cli.Notifier.notify", _quiet_notify),
     ):
-        first_player = _FakePlayer()
+        first_player = FakeAudioPlayer()
         mock_player_cls.return_value = first_player
         quick_reader, _quick_listener = build_quick_reader(
             config=config, model_manager=manager, reading_coordinator=coordinator
@@ -318,7 +295,7 @@ def test_auto_picks_the_same_engine_for_both_readers_so_nothing_reloads(qapp) ->
         assert first_player.done_event.wait(timeout=2.0)
         assert manager.current_engine_id == "qwen3_tts"
 
-        second_player = _FakePlayer()
+        second_player = FakeAudioPlayer()
         mock_player_cls.return_value = second_player
         doc_reader, _popup, _doc_listener = build_doc_reader(
             config=config, model_manager=manager, reading_coordinator=coordinator
@@ -345,7 +322,7 @@ def test_hotkeys_never_cross_trigger_another_features_handler(qapp) -> None:  # 
         patch("vocalis.cli.MicRecorder", return_value=_FakeRecorder()),
         patch("vocalis.cli.Qwen3TTS", return_value=_FakeEngine("q")),
         patch("vocalis.cli.PiperTTS", _FakePiper),
-        patch("vocalis.cli.AudioPlayer", return_value=_FakePlayer()),
+        patch("vocalis.cli.AudioPlayer", return_value=FakeAudioPlayer()),
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
         patch("vocalis.cli.ClipboardWriter"),
         patch("vocalis.cli.ScreenRegionCapture"),
@@ -410,7 +387,7 @@ def test_a_settings_change_is_picked_up_by_an_already_built_readers_next_reading
     qwen_engine = _FakeEngine("qwen")
 
     def fixed_length_synthesize(text: str) -> "tuple[npt.NDArray[np.float32], int]":
-        return np.zeros(fixed_audio_length, dtype=np.float32), 24000
+        return np.full(fixed_audio_length, 0.5, dtype=np.float32), 24000
 
     qwen_engine.synthesize = fixed_length_synthesize  # type: ignore[method-assign]
 
@@ -421,7 +398,7 @@ def test_a_settings_change_is_picked_up_by_an_already_built_readers_next_reading
         patch("vocalis.cli.AudioPlayer") as mock_player_cls,
         patch("vocalis.cli.Notifier.notify", _quiet_notify),
     ):
-        fake_player = _FakePlayer()
+        fake_player = FakeAudioPlayer()
         mock_player_cls.return_value = fake_player
 
         settings.update(config.model_copy(update={"speaking_speed": 1.6}))
@@ -432,6 +409,7 @@ def test_a_settings_change_is_picked_up_by_an_already_built_readers_next_reading
         doc_reader.read_text("some document text")
         assert fake_player.done_event.wait(timeout=2.0)
         assert not _finish_background_threads(threads_before)  # first reading fully over
+        fast_length = len(fake_player.output.played())
         fake_player.done_event.clear()
 
         settings.update(config.model_copy(update={"speaking_speed": 0.7}))
@@ -440,10 +418,9 @@ def test_a_settings_change_is_picked_up_by_an_already_built_readers_next_reading
         assert not _finish_background_threads(threads_before)
 
     assert mock_player_cls.call_count == 1  # proves the reader really was built only once
-    assert len(fake_player.played) == 2
-    fast_audio, _sr = fake_player.played[0]
-    slow_audio, _sr2 = fake_player.played[1]
-    assert len(fast_audio) < fixed_audio_length < len(slow_audio)
+    assert fake_player.output.opened == 2  # one sound stream per reading
+    slow_length = len(fake_player.output.played()) - fast_length
+    assert fast_length < fixed_audio_length < slow_length
 
 
 def test_notifications_from_two_different_features_both_reach_the_shared_notifier(  # type: ignore[no-untyped-def]
@@ -473,7 +450,7 @@ def test_notifications_from_two_different_features_both_reach_the_shared_notifie
         patch("vocalis.cli.Notifier.notify", fake_notify),
         patch("vocalis.cli.TextOutput", return_value=_FakeTextOutput()),
     ):
-        fake_player = _FakePlayer()
+        fake_player = FakeAudioPlayer()
         mock_player_cls.return_value = fake_player
         dictation, _dictation_listener = build_dictation(config=config, model_manager=manager)
         quick_reader, _quick_listener = build_quick_reader(
@@ -523,7 +500,7 @@ def test_full_lifecycle_two_features_then_clean_shutdown(qapp) -> None:  # type:
         patch("vocalis.cli.TextOutput", return_value=_FakeTextOutput()),
         patch("vocalis.cli.Notifier.notify", _quiet_notify),
     ):
-        fake_player = _FakePlayer()
+        fake_player = FakeAudioPlayer()
         mock_player_cls.return_value = fake_player
         dictation, _dictation_listener = build_dictation(config=config, model_manager=manager)
         quick_reader, _quick_listener = build_quick_reader(

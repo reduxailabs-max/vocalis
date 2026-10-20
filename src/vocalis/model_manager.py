@@ -88,6 +88,12 @@ class ModelManager:
         with self._lock:
             return self._current_engine_id
 
+    @property
+    def current_engine(self) -> ModelEngine | None:
+        """The loaded engine object itself, or None if nothing is loaded."""
+        with self._lock:
+            return self._current_engine
+
     def acquire(self, engine_id: str, factory: Callable[[], ModelEngine]) -> ModelEngine:
         """Get a loaded engine for engine_id, loading or reusing as needed.
 

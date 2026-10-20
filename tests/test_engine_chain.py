@@ -1,11 +1,13 @@
 """Tests for vocalis.engines.chain.EngineChain — walking the engine list for one reading."""
+from typing import Callable
+
 import numpy as np
 import numpy.typing as npt
 import pytest
 
-from vocalis.engines.chain import EngineChain
+from vocalis.engines.chain import EngineChain, make_downshift_handler, new_reading_chain
 from vocalis.engines.registry import EnginePlan
-from vocalis.model_manager import ModelManager
+from vocalis.model_manager import TTS_ENGINE_ID, ModelManager
 
 
 class _Tts:
@@ -129,3 +131,214 @@ def test_when_everything_including_piper_fails_the_error_surfaces() -> None:
     chain = _chain(("qwen3_tts", "piper"), _Tts(1.0, fail_load=True), _Tts(2.0), _Piper(fail=True), [])
     with pytest.raises(RuntimeError, match="piper failed"):
         chain.synthesize("a")
+
+
+class _Timers:
+    """Counts how many idle-unload timers ModelManager schedules."""
+
+    def __init__(self) -> None:
+        """Start with no timers scheduled."""
+        self.scheduled = 0
+
+    def __call__(self, delay: float, callback: "Callable[[], None]") -> "_TimerHandle":
+        """Count one scheduled timer and hand back a do-nothing handle."""
+        self.scheduled += 1
+        return _TimerHandle()
+
+
+class _TimerHandle:
+    """A timer handle that does nothing."""
+
+    def cancel(self) -> None:
+        """Pretend to cancel."""
+
+
+def _held_chain(
+    qwen: _Tts, kokoro: _Tts, plan: "tuple[str, ...]", timers: _Timers, hold: bool
+) -> "tuple[EngineChain, ModelManager]":
+    """Build a chain over a counting ModelManager, holding engines or not."""
+    manager = ModelManager(idle_timeout_seconds=30.0, timer_factory=timers)
+    factories = {"qwen3_tts": lambda: qwen, "kokoro": lambda: kokoro}
+    chain = EngineChain(EnginePlan(plan, "test"), factories, manager, _Piper(), lambda failed, nxt: None, hold_engines=hold)
+    return chain, manager
+
+
+def test_a_holding_chain_starts_no_idle_timer_until_closed() -> None:
+    """A holding chain keeps the idle timer off until close()."""
+    timers = _Timers()
+    chain, manager = _held_chain(_Tts(1.0), _Tts(2.0), ("qwen3_tts", "piper"), timers, hold=True)
+
+    chain.synthesize("one")
+    chain.synthesize("two")
+    assert timers.scheduled == 0
+    assert manager.current_engine_id == "qwen3_tts"
+
+    chain.close()
+    assert timers.scheduled == 1
+
+
+def test_a_normal_chain_releases_after_every_piece() -> None:
+    """A normal chain releases (and so arms a timer) after every piece."""
+    timers = _Timers()
+    chain, _manager = _held_chain(_Tts(1.0), _Tts(2.0), ("qwen3_tts", "piper"), timers, hold=False)
+
+    chain.synthesize("one")
+    chain.synthesize("two")
+
+    assert timers.scheduled == 2
+
+
+def test_close_is_safe_to_call_twice_and_when_nothing_is_held() -> None:
+    """close() is harmless when nothing is held and when called repeatedly."""
+    timers = _Timers()
+    chain, _manager = _held_chain(_Tts(1.0), _Tts(2.0), ("qwen3_tts", "piper"), timers, hold=True)
+    chain.close()  # nothing held yet
+    chain.synthesize("one")
+
+    chain.close()
+    chain.close()
+
+    assert timers.scheduled == 1
+
+
+def test_a_holding_chain_that_falls_to_the_next_engine_holds_the_new_one() -> None:
+    """After falling down the plan the chain holds the engine that actually spoke."""
+    timers = _Timers()
+    qwen, kokoro = _Tts(1.0, fail_synth=True), _Tts(2.0)
+    chain, manager = _held_chain(qwen, kokoro, ("qwen3_tts", "kokoro", "piper"), timers, hold=True)
+
+    audio, _rate = chain.synthesize("one")
+
+    assert audio[0] == 2.0
+    assert manager.current_engine_id == "kokoro"
+    assert timers.scheduled == 1  # only the failed qwen's release armed a timer; kokoro is held
+    chain.close()
+    assert timers.scheduled == 2
+
+
+def test_a_held_engine_taken_by_another_feature_is_reloaded_for_the_next_piece() -> None:
+    """An evicted voice is reloaded for the next piece and released once at close()."""
+    timers = _Timers()
+    built: "list[_Tts]" = []
+
+    def factory() -> _Tts:
+        engine = _Tts(1.0)
+        built.append(engine)
+        return engine
+
+    manager = ModelManager(idle_timeout_seconds=30.0, timer_factory=timers)
+    chain = EngineChain(EnginePlan(("qwen3_tts", "piper"), "test"), {"qwen3_tts": factory}, manager, _Piper(), lambda f, n: None, hold_engines=True)
+    chain.synthesize("one")
+
+    manager.acquire("parakeet", lambda: _Tts(9.0))  # Dictation loads its own model, unloading the voice
+    audio, _rate = chain.synthesize("two")
+
+    assert audio[0] == 1.0
+    assert len(built) == 2  # the voice was reloaded, not crashed or skipped
+    chain.close()
+    assert timers.scheduled == 1  # the reloaded voice is released exactly once
+
+
+def test_closing_when_another_feature_took_the_card_does_not_touch_its_engine() -> None:
+    """close() leaves another feature's engine alone."""
+    timers = _Timers()
+    chain, manager = _held_chain(_Tts(1.0), _Tts(2.0), ("qwen3_tts", "piper"), timers, hold=True)
+    chain.synthesize("one")
+    manager.acquire("parakeet", lambda: _Tts(9.0))
+
+    chain.close()
+
+    assert timers.scheduled == 0
+    assert manager.current_engine_id == "parakeet"
+
+
+def test_new_reading_chain_without_a_selector_uses_the_fixed_builtin_voice() -> None:
+    """Without a selector the chain uses the fixed built-in voice."""
+    qwen = _Tts(1.0)
+    chain = new_reading_chain(None, None, lambda: qwen, ModelManager(idle_timeout_seconds=9999.0), _Piper(), lambda f, n: None)
+
+    audio, _rate = chain.synthesize("hello")
+
+    assert audio[0] == 1.0
+    assert TTS_ENGINE_ID == "qwen3_tts"
+
+
+def test_new_reading_chain_with_a_selector_follows_its_plan() -> None:
+    """With a selector the chain follows the selector's plan."""
+    class _Selector:
+        """A selector that always plans kokoro then piper."""
+
+        def plan(self) -> EnginePlan:
+            """Return the fixed plan."""
+            return EnginePlan(("kokoro", "piper"), "test")
+
+    kokoro = _Tts(2.0)
+    chain = new_reading_chain(
+        _Selector(),  # type: ignore[arg-type]
+        {"kokoro": lambda: kokoro},
+        lambda: _Tts(1.0),
+        ModelManager(idle_timeout_seconds=9999.0),
+        _Piper(),
+        lambda f, n: None,
+    )
+
+    audio, _rate = chain.synthesize("hello")
+
+    assert audio[0] == 2.0
+
+
+def test_the_downshift_handler_notifies_and_sets_status_but_is_silent_for_piper() -> None:
+    """The handler announces a failed voice but stays silent when Piper fails."""
+    messages: "list[str]" = []
+    statuses: "list[str]" = []
+    handler = make_downshift_handler(messages.append, statuses.append)
+
+    handler("qwen3_tts", "piper")
+    handler("piper", None)
+
+    assert messages == ["Primary voice unavailable — using backup voice"]
+    assert statuses == ["Using backup voice"]
+
+
+def test_the_downshift_handler_works_without_a_status_callback() -> None:
+    """The handler works when no status callback is given."""
+    messages: "list[str]" = []
+    handler = make_downshift_handler(messages.append)
+
+    handler("kokoro", "piper")
+
+    assert messages == ["Primary voice unavailable — using backup voice"]
+
+
+def test_an_old_readings_close_does_not_release_a_newer_readings_voice() -> None:
+    """A late close() from reading A must not touch reading B's copy of the same engine id."""
+    timers = _Timers()
+    manager = ModelManager(idle_timeout_seconds=30.0, timer_factory=timers)
+    plan = EnginePlan(("qwen3_tts", "piper"), "test")
+
+    def new_chain(copy: _Tts) -> EngineChain:
+        """Make a holding chain whose voice factory returns `copy`."""
+        return EngineChain(plan, {"qwen3_tts": lambda: copy}, manager, _Piper(), lambda f, n: None, hold_engines=True)
+
+    chain_a, chain_b = new_chain(_Tts(1.0)), new_chain(_Tts(2.0))
+    chain_a.synthesize("one")  # A holds copy 1
+    manager.acquire("parakeet", lambda: _Tts(9.0))  # dictation evicts it
+    chain_b.synthesize("one")  # B loads and holds copy 2
+
+    chain_a.close()
+    assert timers.scheduled == 0
+
+    chain_b.close()
+    assert timers.scheduled == 1
+
+
+def test_a_failing_held_engine_is_released_so_the_idle_timer_starts() -> None:
+    """A held engine that fails is given back at once: use count 0 and the idle timer armed."""
+    timers = _Timers()
+    chain, manager = _held_chain(_Tts(1.0, fail_synth=True), _Tts(2.0), ("qwen3_tts", "piper"), timers, hold=True)
+
+    chain.synthesize("one")  # qwen fails, piper speaks
+
+    assert manager._use_count == 0  # noqa: SLF001
+    assert timers.scheduled == 1
+    assert chain._held is None  # noqa: SLF001

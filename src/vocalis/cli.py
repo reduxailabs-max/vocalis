@@ -610,7 +610,8 @@ def build_doc_reader(
             hub.end_reading()
 
     def on_started() -> None:
-        """Tell the hub a document reading began."""
+        """Enable the popup's Pause/Stop buttons and tell the hub a reading began."""
+        popup.reading_started.emit()
         if hub is None:
             return
         hub.begin_reading(
@@ -628,7 +629,7 @@ def build_doc_reader(
         on_status=on_status,
         on_progress=on_progress,
         on_finished=on_finished,
-        on_started=on_started if hub is not None else None,
+        on_started=on_started,
         speed_provider=settings.speaking_speed if settings is not None else None,
         engine_selector=selector,
         engine_factories=engine_factories,
@@ -864,7 +865,7 @@ def main() -> None:
         config=config, model_manager=model_manager, settings=settings, hub=hub,
         key_code=codes.push_to_talk,
     )
-    _, quick_reader_listener = build_quick_reader(
+    quick_reader_feature, quick_reader_listener = build_quick_reader(
         config=config, model_manager=model_manager, reading_coordinator=reading_coordinator,
         settings=settings, hub=hub, key_code=codes.quick_reader, output_chooser=output_chooser,
     )
@@ -920,6 +921,8 @@ def main() -> None:
                 ("document reader listener", doc_reader_listener.stop),
                 ("quick reader listener", quick_reader_listener.stop),
                 ("dictation listener", dictation_listener.stop),
+                ("quick reader", quick_reader_feature.stop),
+                ("document reader", doc_reader_feature.stop),
                 ("daemon", daemon.stop),
                 ("settings window", settings_window.close),
                 ("floating widget window", widget.close),

@@ -306,3 +306,16 @@ def test_acquiring_different_engine_still_unloads_one_that_is_in_use() -> None:
     manager.acquire("qwen3_tts", lambda: new)
     assert old.unload_calls == 1
     assert manager.current_engine_id == "qwen3_tts"
+
+
+def test_current_engine_is_the_loaded_object_or_none() -> None:
+    """current_engine returns the loaded engine object, or None when nothing is loaded."""
+    manager, _timers = make_manager()
+    assert manager.current_engine is None
+
+    engine = FakeModelEngine("a")
+    manager.acquire("a", lambda: engine)
+
+    assert manager.current_engine is engine
+    manager.shutdown()
+    assert manager.current_engine is None

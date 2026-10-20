@@ -94,7 +94,9 @@ Pressing Ctrl+Alt+R now works end-to-end:
 2. On trigger, `QuickReaderFeature.on_trigger()` either starts a new
    reading or stops an in-progress one — both dispatched onto separate
    background threads so the listener itself is never blocked.
-3. The background thread reads the clipboard (`ClipboardReader`), then
+3. (Phase 3 design; since Stage 6b Quick Reader splits the text into chunks
+   and speaks them through `ChunkedSpeaker` on one stream — see "Stage 6b
+   addition".) The background thread reads the clipboard (`ClipboardReader`), then
    calls `model_manager.acquire("qwen3_tts", ...)` to get a loaded
    `Qwen3TTS` engine — obeying the same single-residency and idle-unload
    policy every GPU engine uses. If that fails for any reason, it falls
@@ -104,8 +106,9 @@ Pressing Ctrl+Alt+R now works end-to-end:
    Qwen3-TTS -> Kokoro -> Piper — see "Stage 6a addition" below.)
 4. The generated speech is played via `AudioPlayer` (sounddevice-based,
    the same library `MicRecorder` uses for capture), which can be
-   interrupted mid-playback. Its `wait_until_done()` is bounded by the
-   audio's expected duration plus a safety margin, so a misconfigured
+   interrupted mid-playback. (Phase 3 design: `wait_until_done()` was bounded by the
+   audio's expected duration plus a safety margin. Since Stage 6b a broken device
+   is caught by `SpeechStream`'s 10 s stall check instead.) A misconfigured
    default audio output device fails fast with `PlaybackTimeoutError`
    (surfaced as a normal "Playback failed" notification) instead of
    hanging the reading forever. Since Stage 1 (see below), `AudioPlayer`
@@ -135,8 +138,8 @@ documents aloud:
    plain callbacks that `build_doc_reader()` wires to the popup's signals.
 3. `DocumentReaderFeature` extracts text (`text/extractors.py`), strips
    markdown (`text/normalizer.py`), splits it into sentence-bounded chunks
-   (`text/chunker.py`), then synthesizes and plays one chunk at a time,
-   using the same `ModelManager` single-residency policy and the same
+   (`text/chunker.py`), then speaks the chunks through `ChunkedSpeaker` on one continuous
+   stream (Stage 6b; before that it played one chunk at a time), using the same `ModelManager` single-residency policy and the same
    voice-engine chain (Qwen3-TTS -> Kokoro -> Piper since Stage 6a) as
    Quick Reader. Both readers use the one shared engine id
    `TTS_ENGINE_ID` (`"qwen3_tts"`, defined in `model_manager.py`), so
@@ -395,12 +398,10 @@ the factor inside `0.7`–`1.6` (NaN treated as `1.0`).
 Reader and Document Reader both call: it reads the caller's current speed
 from `provider()` and applies it, or returns the audio unchanged if
 `provider` is `None`, or if either call raises (logged as a warning —
-a pacing failure must never break a reading). Quick Reader calls it once
-per reading; Document Reader calls it once per chunk, *before* that
-chunk's inner pause/resume retry loop — a resume after a pause replays
-the exact same already-paced audio rather than resynthesizing or
-re-pacing it (see the spec amendment below for the user-visible effect of
-that choice).
+a pacing failure must never break a reading). Since Stage 6b both readers call it through `ChunkedSpeaker`, once per chunk,
+before the chunk is pushed into the stream; a pause rewinds the heard clip inside
+`SpeechStream`, so a resume replays the same already-paced audio (see the spec
+amendment below for the user-visible effect of that choice).
 
 ### `main()` wiring and notification rule
 
@@ -730,3 +731,180 @@ and re-running the installer fixes it.
 same time-stretch as the other voices (native speed is Stage 6c);
 gapless long-text reading is 6b; resource limits and "stay downshifted for
 60 seconds" hysteresis are 6d.
+
+## Stage 6b addition: gapless long reading
+
+Before Stage 6b, Document Reader opened a new sound stream for every chunk
+and Quick Reader synthesized the whole clipboard text before it said a
+word. Long readings therefore had a click or gap at every join. Stage 6b
+makes a long reading one continuous stream, for both readers.
+
+### The producer/consumer picture
+
+```
+ChunkedSpeaker.run(chunks)            SpeechStream                 sound card
+ (reader's worker thread)        (bounded queue, 3 clips)     (audio callback thread)
+   make chunk i  ──push──▶  [clip][clip][clip]  ──────▶  plays clips back-to-back
+   (EngineChain, pace)        back-pressure: push waits     fades, silence on underrun
+```
+
+- `features/chunked_speaker.py` — `ChunkedSpeaker` is made once per
+  reading. Its `run(chunks)` is a producer loop on the caller's worker
+  thread: for each chunk it asks a `SpeechSource` (in practice an
+  `EngineChain`) for audio, applies the speaking pace (`paced_audio`) and
+  pushes the result into the stream. It returns a `SpeakOutcome`
+  (`DONE`, `STOPPED`, `SPEECH_FAILED` when no voice could make a chunk, `PLAYBACK_FAILED`). `pause()`, `resume()` and `stop()`
+  are thread-safe; `stop()` is a permanent latch, so a stop that lands
+  while the model is still loading means the reading never makes a sound.
+- `audio/speech_stream.py` — `SpeechStream` opens ONE sound stream through
+  `AudioPlayer.open_stream()` and keeps it open for the whole reading.
+  Clips wait in a queue of at most 3 (one playing, two waiting); `push()`
+  blocks when the queue is full (back-pressure), so the producer runs only
+  a few chunks ahead of the listener instead of heating the machine.
+- `audio/playback.py` — `AudioPlayer` gained `open_stream()`,
+  `close_stream()` and `report_device_failed()`. All device logic (the
+  device chooser, the retry, the failure hook) stays in this one class.
+  `AudioPlayer.play()` / `wait_until_done()` / `stop()` still exist
+  unchanged for other callers (OCR Reader, voice preview, Test sound).
+
+### What makes the joins inaudible
+
+- **Fades.** Every clip gets an 8 ms fade-in and fade-out.
+- **Underrun silence.** If the next clip is not ready when the current one
+  ends, the sound card is fed silence (counted as an "underrun"); the
+  stream never stops or restarts, so a slow chunk is a short pause, never
+  a click.
+- **Back-pressure.** The queue bound (3 clips) is why synthesis does not
+  race ahead.
+- **Rate resampling.** The stream opens at the first clip's sample rate.
+  If a later clip has another rate (the voice fell down the chain, e.g.
+  Qwen3-TTS 24 kHz -> Piper 22.05 kHz) it is linearly resampled, so the
+  voice never plays at the wrong speed or pitch.
+
+### Pause, stop and failure
+
+- **Pause** outputs silence at once and rewinds the clip being heard to
+  its start; **resume** replays that piece from the beginning (the
+  long-standing behaviour). A pause that arrives before the stream exists
+  makes the reading start paused.
+- **Stop** wakes everything that could be waiting (a blocked `push()`, the
+  end-of-reading wait) and closes the device exactly once.
+- **Stall detection -> "Playback failed".** If clips are waiting but the
+  sound device has not called back for 10 s, the device is broken (the
+  real `~/.asoundrc` failure found in Phase 3). `push()` /
+  `wait_until_done()` raise `PlaybackTimeoutError`, the device is reported
+  to `AudioPlayer`'s failure hook and the reader says "Playback failed".
+  This replaces the old "expected duration + margin" timeout, which cannot
+  work for a stream that stays open.
+- **Progress** ("piece N of M") is reported when a piece *starts being
+  heard* (a tag travels with each clip and a helper thread reports it from
+  the audio callback), not when it starts being made.
+
+### The voice is held for the whole reading
+
+`EngineChain(hold_engines=True)` (built through `new_reading_chain()`)
+keeps the engine that spoke loaded between pieces and for the whole
+reading, including a long pause. `ChunkedSpeaker.run()` calls
+`close()` only when it leaves, i.e. when playback has *ended*, so
+`ModelManager`'s idle-unload timer starts counting then, not when the last
+chunk was merely synthesized. The chain still re-acquires its engine
+before every piece, so if another feature (e.g. Dictation) took the
+graphics card in the meantime the voice is simply reloaded.
+`make_downshift_handler()` builds the "Primary voice unavailable — using
+backup voice" callback both readers share.
+
+### The chunker
+
+`text/chunker.py` is now sentence-aware and reports exact positions:
+`chunk_spans()` returns `Chunk(text, start, end)` objects and `chunk_text()`
+is a thin wrapper that returns just the texts. Breaks: `. ! ?` followed by
+whitespace, and line breaks (see ruling 10). It never breaks after a
+known abbreviation, an initial, or before a lowercase word. It is linear
+in time (5,000,000 characters in under half a second).
+
+### Decisions made for Stage 6b
+
+Made while writing the plan:
+
+1. **Where the persistent stream lives.** `AudioPlayer` keeps all the
+   output-device logic (chooser, retry, failure hook) and gains the tiny
+   `open_stream` / `close_stream` / `report_device_failed` API; `SpeechStream`
+   is built on it, so exactly one place talks to `sounddevice`. The old
+   `play()` family stays.
+2. **Sample-rate change mid-reading:** the stream opens at the first clip's
+   rate; later clips at another rate are linearly resampled.
+3. **Fade length** 8 ms at both ends of every clip.
+4. **Back-pressure bound** is 3 clips (one playing + two waiting).
+5. **Stall detection:** 10 s without a single audio callback while clips are
+   waiting fails the reading with "Playback failed". (Refinements below.)
+6. **Progress** is reported when a piece starts being heard, not when it
+   starts being made, so the first report arrives when the first sound
+   starts (after the model has loaded).
+7. **Voice held while paused:** the engine stays loaded for the whole
+   reading including a long pause; it is released, and the idle timer
+   starts, when the reading ends.
+8. **Another feature taking the GPU mid-reading:** the chain re-acquires its
+   engine before every piece, so a stolen model is reloaded instead of
+   crashing the reading.
+9. **Quick Reader notification order** (corrected from the plan, which said
+   "Done waits for the text notice before the end is reported"): "Reading..."
+   is sent first; the copied text is sent from a one-off side thread so it
+   can never delay the sound. When playback ends the reading END is
+   reported FIRST (`_deactivate`), then the worker waits at most 6 s for
+   the copied-text notification, then sends "Done" (or the failure
+   message). A stop skips the wait (the stop already said "Stopped").
+10. **Chunker newline rule:** a blank line is always a break. A single
+    newline is a break unless the line before it looks hard-wrapped (at
+    least 70 characters, not ending in `.` `?` `!`, and not ending in `,`
+    `;` `-`). Short lines without punctuation (headings, list items) break.
+    A single capital letter followed by a full stop ("J. Smith", "U.S.")
+    never breaks — a missed break only puts two sentences in one chunk,
+    while a false break after "Dr." is audible.
+11. **Spans are into the text handed to the chunker** (the normalized text
+    for Document Reader). Mapping back to the original file for Stage 7
+    highlighting is Stage 7's job.
+12. **Obsolete tests are deleted, not ported,** where they only exercised
+    the old per-chunk `play()` timing windows; their intent is re-covered
+    by the `SpeechStream` / `ChunkedSpeaker` tests.
+
+Made during the build (they correct or refine the plan):
+
+- **"`close()` releases once" was wrong.** `ModelManager` keeps a use count
+  that `acquire()` raises on every reuse. So `EngineChain(hold_engines=True)`
+  remembers the held engine *object*, gives back the extra count whenever a
+  repeat `acquire` returns the same object (so the hold is exactly one
+  count), and `close()` releases only if the manager's loaded engine (the new
+  `ModelManager.current_engine` property) is still that object. Engine
+  factories must therefore build a NEW object on every load. A late
+  `close()` from an old reading cannot lower a newer reading's count.
+- **The chunker is linear-time.** The first version copied large slices on
+  every full stop and was quadratic; it now looks back only a bounded
+  window (40 characters for the word before a full stop, 200 for the
+  previous line).
+- **SpeechStream details.** The stall clock restarts after the device opens
+  (a slow device open is not a stall); a paused stream is never "stalled";
+  a stop during device open is handled by an `_opening` hand-off (the
+  device is closed by `start()`); the device is closed only by the stream
+  that opened it (`_device_opened`), so a stream that never opened cannot
+  close a shared player's device; after a clean finish the clip-started
+  helper thread is joined (bounded 2 s) so the final "piece N of M" is
+  delivered; the clip-started hook is not called after stop.
+- **Document Reader.** A repeat read on the same feature stops the previous
+  reading first. The pause is applied to the not-yet-published speaker
+  *inside* the publishing lock — the one documented exception to "never
+  call out while holding a lock" (it only flips a flag; without it a resume
+  landing in that window was lost). `ChunkedSpeaker` no longer calls
+  `stream.stop()` after a clean finish (stop drops queued progress tags, so
+  the last "piece N of M" could be lost). An empty chunk list with a stop
+  already latched returns `STOPPED`.
+
+### Known limits (accepted)
+
+- The voice stays loaded while a reading is paused (ruling 7), however long.
+- A stop landing at the same instant as a repeat read can order the reports
+  start-before-end.
+- Quick Reader can show both "Stopped" and "Done" if a stop lands between
+  `run()` returning and the reading end being reported (13 of 300 stress
+  runs; the window existed before Stage 6b).
+- An engine that loads but fails to synthesize stays loaded until the
+  reading ends.
