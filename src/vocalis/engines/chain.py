@@ -7,8 +7,8 @@ import numpy.typing as npt
 
 from vocalis.engines.auto_select import PIPER
 from vocalis.engines.base import Synthesizer, TTSEngine
-from vocalis.engines.registry import EnginePlan
-from vocalis.model_manager import ModelEngine, ModelManager
+from vocalis.engines.registry import EnginePlan, EngineSelector
+from vocalis.model_manager import TTS_ENGINE_ID, ModelEngine, ModelManager
 
 logger = logging.getLogger("vocalis")
 
@@ -18,6 +18,13 @@ class EngineChain:
 
     Remembers which engines already failed, so later pieces of the same
     reading never retry a dead engine and the user is told only once.
+
+    With `hold_engines=True` (used for a whole reading) the engine that spoke
+    is NOT released between pieces: it stays loaded, the idle-unload timer
+    stays off, and `close()` releases it when the reading has finished
+    playing. The engine is still re-acquired before every piece, so if
+    another feature took the graphics card in the meantime it is simply
+    reloaded.
     """
 
     def __init__(
@@ -27,6 +34,7 @@ class EngineChain:
         model_manager: ModelManager,
         fallback_engine: Synthesizer,
         on_downshift: Callable[[str, "str | None"], None],
+        hold_engines: bool = False,
     ) -> None:
         """Create a chain for one reading.
 
@@ -38,6 +46,7 @@ class EngineChain:
                 "piper" step and as the very last resort.
             on_downshift: Called with (failed engine id, next id or None)
                 each time an engine fails and the chain moves on.
+            hold_engines: Keep the speaking engine loaded until close().
         """
         self._plan = plan
         self._factories = factories
@@ -46,6 +55,9 @@ class EngineChain:
         self._on_downshift = on_downshift
         self._position = 0
         self._last_error: Exception | None = None
+        self._hold_engines = hold_engines
+        self._held: str | None = None
+        self._held_engine: ModelEngine | None = None
 
     def synthesize(self, text: str) -> "tuple[npt.NDArray[np.float32], int]":
         """Speak `text` with the first engine that works.
@@ -78,4 +90,74 @@ class EngineChain:
         try:
             return cast(TTSEngine, engine).synthesize(text)
         finally:
+            self._after_use(engine_id, engine)
+
+    def _after_use(self, engine_id: str, engine: ModelEngine) -> None:
+        """Release the engine now, or remember it as held until close()."""
+        if not self._hold_engines:
             self._model_manager.release(engine_id)
+            return
+        if self._held == engine_id and self._held_engine is engine:
+            # Same loaded copy as last piece: ModelManager counted one more
+            # user for this acquire, so give that extra one back. The single
+            # count for the hold itself stays until close().
+            self._model_manager.release(engine_id)
+        # A newly acquired engine has already unloaded the one held before it.
+        self._held = engine_id
+        self._held_engine = engine
+
+    def close(self) -> None:
+        """Release the held engine, starting the idle-unload timer. Idempotent."""
+        held, self._held = self._held, None
+        self._held_engine = None
+        if held is None:
+            return
+        if self._model_manager.current_engine_id != held:
+            return  # another feature already took the card; nothing of ours to release
+        self._model_manager.release(held)
+
+
+def new_reading_chain(
+    engine_selector: EngineSelector | None,
+    engine_factories: Mapping[str, Callable[[], ModelEngine]] | None,
+    primary_engine_factory: Callable[[], ModelEngine],
+    model_manager: ModelManager,
+    fallback_engine: Synthesizer,
+    on_downshift: Callable[[str, "str | None"], None],
+    hold_engines: bool = False,
+) -> EngineChain:
+    """Build the engine chain for one reading.
+
+    With a selector: its plan and factories. Without one: the old fixed
+    Qwen3-TTS voice (then the backup voice). Shared by Quick Reader and
+    Document Reader so the two never drift apart.
+    """
+    if engine_selector is not None:
+        plan = engine_selector.plan()
+        factories = engine_factories or {}
+    else:
+        plan = EnginePlan((TTS_ENGINE_ID,), "Fixed to the built-in voice.")
+        factories = {TTS_ENGINE_ID: primary_engine_factory}
+    return EngineChain(plan, factories, model_manager, fallback_engine, on_downshift, hold_engines=hold_engines)
+
+
+def make_downshift_handler(
+    notify: Callable[[str], None],
+    on_status: Callable[[str], None] | None = None,
+) -> Callable[[str, "str | None"], None]:
+    """Make the on_downshift callback both readers use.
+
+    Stays silent when the backup voice (Piper) itself failed — there is
+    nothing further to fall back to. Otherwise tells the user the first-choice
+    voice is unavailable via `notify` and, if given, `on_status`.
+    """
+
+    def handler(failed_engine_id: str, next_engine_id: "str | None") -> None:
+        """Announce one engine failure."""
+        if failed_engine_id == PIPER:
+            return
+        notify("Primary voice unavailable — using backup voice")
+        if on_status is not None:
+            on_status("Using backup voice")
+
+    return handler
