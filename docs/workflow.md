@@ -494,6 +494,6 @@ reading builds a fresh plan, so a recovered engine is used again.
 
 At startup there are now seven checks, in this order: Parakeet model,
 Qwen3-TTS model, Kokoro voice files, `ydotoold`, OCR tools, the
-onnxruntime graphics-card check, stale `~/.asoundrc`. At install time,
+onnxruntime graphics-card check (the installer fixes it: it re-installs the GPU onnxruntime last), stale `~/.asoundrc`. At install time,
 `fetch_models.py` also downloads the two Kokoro files with a 60-second
 timeout per connection, so a stalled download cannot hang the installer.

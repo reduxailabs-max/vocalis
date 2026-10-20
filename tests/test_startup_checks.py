@@ -5,6 +5,7 @@ from pathlib import Path
 import pytest
 
 from vocalis.config import VocalisConfig
+from vocalis.startup_checks import _gpu_present as _real_gpu_present  # the autouse fixture below stubs the module attribute
 from vocalis.startup_checks import (
     check_capture_tools,
     check_kokoro_model,
@@ -195,3 +196,23 @@ def test_onnx_gpu_warning_only_when_a_gpu_exists_but_cuda_is_missing() -> None:
     assert check_onnx_gpu(lambda: True, lambda: ["CUDAExecutionProvider", "CPUExecutionProvider"]) is None
     assert check_onnx_gpu(lambda: False, lambda: ["CPUExecutionProvider"]) is None
     assert "dictation" in (check_onnx_gpu(lambda: True, lambda: []) or "").lower()
+
+
+
+def test_gpu_present_asks_torch_cuda_is_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """_gpu_present reports torch.cuda.is_available() without making a CUDA context."""
+    import sys
+    import types
+
+    for answer in (True, False):
+        fake = types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda a=answer: a))
+        monkeypatch.setitem(sys.modules, "torch", fake)
+        assert _real_gpu_present() is answer
+
+
+def test_gpu_present_is_false_when_torch_cannot_be_imported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing or broken torch means no graphics card is reported."""
+    import sys
+
+    monkeypatch.setitem(sys.modules, "torch", None)
+    assert _real_gpu_present() is False

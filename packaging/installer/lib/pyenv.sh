@@ -93,8 +93,26 @@ pyenv_install_vocalis() {
 # Install kokoro-onnx WITHOUT its dependencies. It hard-requires plain
 # onnxruntime, which would silently remove the graphics card from
 # Parakeet if installed next to onnxruntime-gpu; its other dependencies
-# are listed in Vocalis's own pyproject.toml.
+# are listed in Vocalis's own pyproject.toml. Note that qwen-tts ALSO pulls
+# in plain onnxruntime, so --no-deps only removes one source of the clash;
+# pyenv_prefer_gpu_onnxruntime (below) is what really protects the GPU.
 pyenv_install_kokoro() {
   local venv_dir="$1"
   pyenv_run_uv pip install --python "${venv_dir}/bin/python" --no-deps "kokoro-onnx==0.4.7"
+}
+
+# Make the GPU build of onnxruntime win. qwen-tts and kokoro-onnx both
+# require plain (CPU) onnxruntime, and it shares one onnxruntime/ folder
+# with onnxruntime-gpu, so whichever was installed last wins. Re-installing
+# the GPU build last (from uv's cache, no dependencies) rewrites the shared
+# files so the GPU version is the one Python imports. If no GPU build is
+# installed (a CPU-only install), do nothing.
+pyenv_prefer_gpu_onnxruntime() {
+  local venv_dir="$1"
+  local version
+  version="$("${venv_dir}/bin/python" -c 'import importlib.metadata as m; print(m.version("onnxruntime-gpu"))' 2>/dev/null || true)"
+  if [[ -z "$version" ]]; then
+    return 0
+  fi
+  pyenv_run_uv pip install --python "${venv_dir}/bin/python" --reinstall --no-deps "onnxruntime-gpu==${version}"
 }

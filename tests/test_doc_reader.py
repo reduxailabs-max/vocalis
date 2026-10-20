@@ -1313,3 +1313,17 @@ def test_a_failing_backup_voice_sends_no_downshift_notification() -> None:
 
     assert notifier.messages == []
     assert "Using backup voice" not in statuses
+
+
+def test_a_stale_generation_does_not_store_its_chain_for_the_next_reading() -> None:
+    """A worker from a stopped reading uses its chain once but never stores it."""
+    primary = FakeSynthesizer()
+    feature, _, _, _ = _make_feature(
+        fallback=FakeSynthesizer(), primary=primary, notifier=RecordingNotifier()
+    )
+
+    # No reading is active, so generation 99 is stale.
+    feature._synthesize_with_fallback("hello", 99)
+
+    assert primary.calls == ["hello"]
+    assert feature._chain is None

@@ -382,7 +382,7 @@ class DocumentReaderFeature:
             chunk = chunks[index]
             self._on_progress(index + 1, total)
             try:
-                audio, sample_rate = self._synthesize_with_fallback(chunk)
+                audio, sample_rate = self._synthesize_with_fallback(chunk, generation)
             except Exception:
                 logger.exception("Both TTS engines failed")
                 if self._deactivate(generation):
@@ -492,9 +492,16 @@ class DocumentReaderFeature:
         self._notifier.notify(_TITLE, "Primary voice unavailable — using backup voice")
         self._on_status("Using backup voice")
 
-    def _synthesize_with_fallback(self, text: str) -> "tuple[npt.NDArray[np.float32], int]":
-        """Speak one piece; the same chain is reused for the whole document so a dead engine is not retried."""
+    def _synthesize_with_fallback(self, text: str, generation: "int | None" = None) -> "tuple[npt.NDArray[np.float32], int]":
+        """Speak one piece; the same chain is reused for the whole document so a dead engine is not retried.
+
+        A chain created for a reading that has since been stopped is used for
+        this call only and is not stored, so it cannot leak into the next reading.
+        """
         chain = self._chain
         if chain is None:
-            chain = self._chain = self._new_chain()
+            chain = self._new_chain()
+            with self._lock:
+                if generation is None or (self._active and self._generation == generation):
+                    self._chain = chain
         return chain.synthesize(text)

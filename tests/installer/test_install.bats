@@ -14,6 +14,7 @@ setup() {
   pyenv_create_venv() { echo "pyenv_create_venv: $*" >> "$CALL_LOG"; mkdir -p "$1/bin"; echo '#!/bin/sh' > "$1/bin/python"; chmod +x "$1/bin/python"; }
   pyenv_install_vocalis() { echo "pyenv_install_vocalis: $*" >> "$CALL_LOG"; }
   pyenv_install_kokoro() { echo "pyenv_install_kokoro: $*" >> "$CALL_LOG"; }
+  pyenv_prefer_gpu_onnxruntime() { echo "pyenv_prefer_gpu_onnxruntime: $*" >> "$CALL_LOG"; }
   models_ensure_piper_binary() { echo "models_ensure_piper_binary: $*" >> "$CALL_LOG"; }
   service_substitute_unit() { echo "service_substitute_unit: $*" >> "$CALL_LOG"; }
   service_enable_and_start() { echo "service_enable_and_start" >> "$CALL_LOG"; }
@@ -133,4 +134,14 @@ teardown() {
   kokoro_line="$(grep -n "pyenv_install_kokoro" "$CALL_LOG" | cut -d: -f1)"
   [ -n "$kokoro_line" ]
   [ "$wheel_line" -lt "$kokoro_line" ]
+}
+
+@test "main puts the GPU onnxruntime back after installing kokoro-onnx" {
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  local kokoro_line gpu_line
+  kokoro_line="$(grep -n "pyenv_install_kokoro" "$CALL_LOG" | cut -d: -f1)"
+  gpu_line="$(grep -n "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG" | cut -d: -f1)"
+  [ -n "$gpu_line" ]
+  [ "$kokoro_line" -lt "$gpu_line" ]
 }

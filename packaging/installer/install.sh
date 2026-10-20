@@ -58,6 +58,7 @@ main() {
   pyenv_create_venv "$venv_dir"
   pyenv_install_vocalis "$venv_dir" "$wheel_path"
   pyenv_install_kokoro "$venv_dir"
+  pyenv_prefer_gpu_onnxruntime "$venv_dir"
 
   mkdir -p "${HOME}/.local/bin"
   rm -f "${HOME}/.local/bin/vocalis"

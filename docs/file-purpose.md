@@ -192,6 +192,6 @@
 | `src/vocalis/cli.py` | Builds the `EngineSelector` and the Kokoro factory (`_make_kokoro_factory`) and passes them to both readers. |
 | `src/vocalis/startup_checks.py` | New `check_kokoro_model()`; `run_startup_checks()` now runs seven checks in order: Parakeet, Qwen3-TTS, Kokoro, `ydotoold`, OCR tools, onnxruntime graphics card, stale `~/.asoundrc`. |
 | `packaging/installer/lib/fetch_models.py` | `ensure_kokoro()` downloads the two Kokoro files (checked by exact size) with a 60-second timeout per connection. |
-| `packaging/installer/lib/pyenv.sh` | `pyenv_install_kokoro()` installs `kokoro-onnx==0.4.7` with `--no-deps`. |
+| `packaging/installer/lib/pyenv.sh` | `pyenv_install_kokoro()` installs `kokoro-onnx==0.4.7` with `--no-deps`; `pyenv_prefer_gpu_onnxruntime()` then re-installs the GPU onnxruntime last so it always wins (qwen-tts and kokoro-onnx both pull plain onnxruntime). |
 | `packaging/installer/install.sh`, `uninstall.sh` | Install calls `pyenv_install_kokoro` and reports the Kokoro check; `uninstall.sh --purge` also removes the Kokoro folder. |
 | `pyproject.toml` | Lists Kokoro's three small dependencies (`colorlog`, `espeakng-loader`, `phonemizer-fork`) because `kokoro-onnx` itself is installed with `--no-deps`. |

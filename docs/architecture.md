@@ -715,13 +715,16 @@ chain**.
 `ModelManager` (as before); the chain calls the always-ready Piper engine
 directly and also uses it as the last resort.
 
-**Why `kokoro-onnx` is installed with `--no-deps`.** It hard-requires
-plain `onnxruntime`. Installed normally next to `onnxruntime-gpu`, it
-would silently take the graphics card away from Parakeet. So
-`pyenv_install_kokoro` installs `kokoro-onnx==0.4.7` with `--no-deps`, and
-its other small dependencies are listed in Vocalis's own `pyproject.toml`
-(`colorlog`, `espeakng-loader`, `phonemizer-fork`). The existing
-`check_onnx_gpu` startup check still guards against a regression.
+**Why `kokoro-onnx` is installed with `--no-deps`, and why the GPU build is
+re-installed last.** Both `qwen-tts` and `kokoro-onnx` require plain
+`onnxruntime`, which shares one folder with `onnxruntime-gpu`; whichever is
+installed last wins, and the wrong one would silently take the graphics card
+away from Parakeet. `pyenv_install_kokoro` installs `kokoro-onnx==0.4.7` with
+`--no-deps` (its other small dependencies are listed in Vocalis's own
+`pyproject.toml`: `colorlog`, `espeakng-loader`, `phonemizer-fork`), and then
+`pyenv_prefer_gpu_onnxruntime` re-installs the GPU build last so it always
+wins. The `check_onnx_gpu` startup check still guards against a regression,
+and re-running the installer fixes it.
 
 **Not in this stage.** Kokoro is called at speed 1.0 and still gets the
 same time-stretch as the other voices (native speed is Stage 6c);

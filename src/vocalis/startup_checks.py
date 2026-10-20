@@ -106,10 +106,13 @@ def check_capture_tools(which: Callable[[str], str | None] = shutil.which) -> st
 
 
 def _gpu_present() -> bool:
-    """Whether a CUDA graphics card is available (asks PyTorch)."""
-    from vocalis.hardware import query_gpu_with_torch
+    """Whether a CUDA graphics card is available (asks PyTorch without creating a CUDA context)."""
+    try:
+        import torch
 
-    return query_gpu_with_torch() is not None
+        return bool(torch.cuda.is_available())
+    except Exception:
+        return False
 
 
 def _onnx_providers() -> list[str]:

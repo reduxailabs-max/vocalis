@@ -12,7 +12,7 @@ requires-python = ">=3.13,<3.14"
 dependencies = [
     "pydantic>=2.6,<3",
     "tomli-w>=1.0,<2",
-    "numpy>=1.26,<3",
+    "numpy>=2.0.2,<3",
     "onnx-asr[gpu]>=0.12,<1",
     "nvidia-cudnn-cu12>=9.0,<10",
     "sounddevice>=0.4.6,<1",

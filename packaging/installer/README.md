@@ -35,9 +35,11 @@ additionally removes your config, downloaded models, Piper and the Kokoro
 voice folder.
 
 The Kokoro Python package (`kokoro-onnx==0.4.7`) is installed with
-`--no-deps` on purpose: it insists on plain `onnxruntime`, which would
-replace the graphics-card version Parakeet needs. Its other small
-dependencies come from Vocalis's own `pyproject.toml`.
+`--no-deps` on purpose. Both `qwen-tts` and `kokoro-onnx` require plain
+`onnxruntime`, which would replace the graphics-card version Parakeet needs.
+Its other small dependencies come from Vocalis's own `pyproject.toml`, and
+the installer then re-installs the GPU build last
+(`pyenv_prefer_gpu_onnxruntime`) so it always wins.
 
 If you're using the self-extracting `uninstall.run` instead, put `--`
 before any flag meant for the uninstaller itself, because the `.run`

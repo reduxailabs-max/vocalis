@@ -7,6 +7,7 @@ is cheap and tests can replace both with fakes.
 """
 import importlib
 import logging
+import re
 from pathlib import Path
 from typing import Any, Callable
 
@@ -22,6 +23,63 @@ class KokoroLoadError(Exception):
 
 class KokoroSynthesisError(Exception):
     """Raised when Kokoro cannot turn text into speech."""
+
+
+_MAX_PIECE_CHARS = 250
+_GAP_SECONDS = 0.06
+
+
+def _split_long_part(part: str, max_chars: int) -> list[str]:
+    """Split one over-long part at whitespace; hard-cut any single word that is still too long."""
+    pieces: list[str] = []
+    current = ""
+    for word in part.split():
+        while len(word) > max_chars:
+            if current:
+                pieces.append(current)
+                current = ""
+            pieces.append(word[:max_chars])
+            word = word[max_chars:]
+        if not current:
+            current = word
+        elif len(current) + 1 + len(word) <= max_chars:
+            current = f"{current} {word}"
+        else:
+            pieces.append(current)
+            current = word
+    if current:
+        pieces.append(current)
+    return pieces
+
+
+def _pieces_for_kokoro(text: str, max_chars: int = _MAX_PIECE_CHARS) -> list[str]:
+    """Cut text into pieces of at most max_chars so Kokoro never silently truncates a long unpunctuated stretch.
+
+    Splits at sentence/clause punctuation first, packs neighbours together
+    while they fit, and splits any still-too-long part at spaces (or hard-cuts
+    a single enormous word). Text that already fits is returned unchanged.
+    """
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return [text]
+    parts: list[str] = []
+    for part in re.split(r"(?<=[.!?;:,])\s+", stripped):
+        parts.extend(_split_long_part(part, max_chars) if len(part) > max_chars else [part])
+    pieces: list[str] = []
+    current = ""
+    for part in parts:
+        if not part:
+            continue
+        if not current:
+            current = part
+        elif len(current) + 1 + len(part) <= max_chars:
+            current = f"{current} {part}"
+        else:
+            pieces.append(current)
+            current = part
+    if current:
+        pieces.append(current)
+    return pieces or [text]
 
 
 def _language_for(voice: str) -> str:
@@ -90,14 +148,15 @@ class KokoroTTS:
         for path in (self._model_path, self._voices_path):
             if not path.exists():
                 raise KokoroLoadError(f"Kokoro file not found: {path}")
-        use_gpu = self._use_gpu() if callable(self._use_gpu) else self._use_gpu
         try:
+            use_gpu = self._use_gpu() if callable(self._use_gpu) else self._use_gpu
             session = self._session_builder(self._model_path, use_gpu)
             self._kokoro = self._kokoro_factory(session, self._voices_path)
         except Exception as exc:
             self._kokoro = None
             raise KokoroLoadError(f"Could not load Kokoro: {exc}") from exc
-        logger.info("Kokoro loaded (graphics card: %s)", use_gpu)
+        providers: list[str] = getattr(session, "get_providers", lambda: [])()
+        logger.info("Kokoro loaded (graphics card requested: %s, providers: %s)", use_gpu, providers)
 
     def unload(self) -> None:
         """Release the model."""
@@ -114,11 +173,20 @@ class KokoroTTS:
             KokoroSynthesisError: If the engine is not loaded, the voice does
                 not exist, or Kokoro fails.
         """
-        if self._kokoro is None:
+        kokoro = self._kokoro
+        if kokoro is None:
             raise KokoroSynthesisError("Kokoro is not loaded")
-        voice = self._current_voice()
         try:
-            samples, sample_rate = self._kokoro.create(text, voice=voice, speed=1.0, lang=_language_for(voice))
+            voice = self._current_voice()
+            lang = _language_for(voice)
+            clips: list[npt.NDArray[np.float32]] = []
+            sample_rate = 0
+            for piece in _pieces_for_kokoro(text):
+                samples, rate = kokoro.create(piece, voice=voice, speed=1.0, lang=lang)
+                sample_rate = int(rate)
+                if clips:
+                    clips.append(np.zeros(int(sample_rate * _GAP_SECONDS), dtype=np.float32))
+                clips.append(np.asarray(samples, dtype=np.float32).reshape(-1))
         except Exception as exc:
             raise KokoroSynthesisError(f"Kokoro could not speak this text: {exc}") from exc
-        return np.asarray(samples, dtype=np.float32).reshape(-1), int(sample_rate)
+        return np.concatenate(clips), sample_rate

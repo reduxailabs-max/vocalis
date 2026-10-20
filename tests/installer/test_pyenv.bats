@@ -125,3 +125,25 @@ teardown() {
   pyenv_install_kokoro "$WORKDIR/venv"
   grep -q "pip install --python $WORKDIR/venv/bin/python --no-deps kokoro-onnx==0.4.7" "$CALL_LOG"
 }
+
+@test "pyenv_prefer_gpu_onnxruntime reinstalls the installed GPU build last" {
+  # Arrange: a fake python that reports onnxruntime-gpu 1.31.0
+  mkdir -p "$WORKDIR/venv/bin"
+  printf '#!/bin/sh\necho 1.31.0\n' > "$WORKDIR/venv/bin/python"
+  chmod +x "$WORKDIR/venv/bin/python"
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  run pyenv_prefer_gpu_onnxruntime "$WORKDIR/venv"
+  [ "$status" -eq 0 ]
+  grep -q "pip install --python $WORKDIR/venv/bin/python --reinstall --no-deps onnxruntime-gpu==1.31.0" "$CALL_LOG"
+}
+
+@test "pyenv_prefer_gpu_onnxruntime does nothing when no GPU build is installed" {
+  # Arrange: a fake python that fails (package not found)
+  mkdir -p "$WORKDIR/venv/bin"
+  printf '#!/bin/sh\nexit 1\n' > "$WORKDIR/venv/bin/python"
+  chmod +x "$WORKDIR/venv/bin/python"
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  run pyenv_prefer_gpu_onnxruntime "$WORKDIR/venv"
+  [ "$status" -eq 0 ]
+  ! grep -q "CALLED" "$CALL_LOG"
+}

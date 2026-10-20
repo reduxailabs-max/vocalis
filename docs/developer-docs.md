@@ -491,7 +491,7 @@ its temporary config outside the repository.
 6. Installer: download the files in `packaging/installer/lib/fetch_models.py`
    (use the shared timeout helper); if it needs a Python package, check
    whether it pulls in a conflicting dependency before deciding how
-   `pyenv.sh` installs it (Kokoro uses `--no-deps`); make `uninstall.sh
+   `pyenv.sh` installs it (Kokoro uses `--no-deps`, and `pyenv_prefer_gpu_onnxruntime` re-installs the GPU onnxruntime last because qwen-tts and kokoro-onnx both pull plain onnxruntime); make `uninstall.sh
    --purge` remove the files.
 7. Add a startup check (see "Adding a new startup check") so a missing
    model produces a clear notification.
