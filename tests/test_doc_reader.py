@@ -15,7 +15,9 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from tests.fake_output import OutputRecorder, manual_stream_factory, pump_stream_factory
 from vocalis.audio.playback import AudioPlayer
+from vocalis.engines.chain import make_downshift_handler
 from vocalis.features.doc_reader import DocumentReaderFeature
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import TTS_ENGINE_ID, ModelManager
@@ -32,9 +34,12 @@ class FakeSynthesizer:
         self,
         sample_rate: int = 22050,
         raise_exc: Exception | None = None,
+        level: float = 0.0,
     ) -> None:
+        """Create a fake voice; `level` is the constant value of its audio (0 = silence)."""
         self.sample_rate = sample_rate
         self.raise_exc = raise_exc
+        self.level = level
         self.calls: "list[str]" = []
         self._loaded = False
 
@@ -52,7 +57,7 @@ class FakeSynthesizer:
         self.calls.append(text)
         if self.raise_exc is not None:
             raise self.raise_exc
-        return np.zeros(100, dtype=np.float32), self.sample_rate
+        return np.full(100, self.level, dtype=np.float32), self.sample_rate
 
 
 class GatedSynthesizer:
@@ -61,8 +66,10 @@ class GatedSynthesizer:
     flight -- deterministic, unlike a fixed sleep() that merely hopes to
     land inside the right window."""
 
-    def __init__(self, sample_rate: int = 22050) -> None:
+    def __init__(self, sample_rate: int = 22050, level: float = 0.0) -> None:
+        """Create a gated fake voice; `level` is the constant value of its audio."""
         self.sample_rate = sample_rate
+        self.level = level
         self.calls: "list[str]" = []
         self._entered = threading.Event()
         self._release = threading.Event()
@@ -90,88 +97,15 @@ class GatedSynthesizer:
         self.calls.append(text)
         self._entered.set()
         assert self._release.wait(timeout=5.0), "release() was never called"
-        return np.zeros(100, dtype=np.float32), self.sample_rate
+        return np.full(100, self.level, dtype=np.float32), self.sample_rate
 
 
-class FakeStream:
-    def __init__(self, **kwargs: Any) -> None:
-        self._finished_callback = kwargs["finished_callback"]
-
-    def start(self) -> None:
-        threading.Thread(target=self._finish_soon, daemon=True).start()
-
-    def _finish_soon(self) -> None:
-        time.sleep(0.02)
-        self._finished_callback()
-
-    def stop(self) -> None:
-        pass
-
-    def close(self) -> None:
-        pass
+StreamStartRecorder = OutputRecorder  # compatibility alias for tests/test_reading_hooks_integration.py
 
 
-def _fake_stream_factory(**kwargs: Any) -> FakeStream:
-    return FakeStream(**kwargs)
-
-
-class StreamStartRecorder:
-    """Records when (and how many times) a stream's start() actually ran,
-    so tests can assert "playback has/hasn't started" from real signal
-    instead of guessing from a fixed sleep duration."""
-
-    def __init__(self) -> None:
-        self.count = 0
-        self.started = threading.Event()
-
-    def record(self) -> None:
-        self.count += 1
-        self.started.set()
-
-
-def _recording_stream_factory(recorder: StreamStartRecorder) -> "Callable[..., FakeStream]":
-    """Build a stream_factory whose streams call `recorder.record()` the
-    moment start() is invoked, i.e. the moment AudioPlayer actually begins
-    playback -- not merely the moment play() was called."""
-
-    class RecordingFakeStream(FakeStream):
-        def start(self) -> None:
-            recorder.record()
-            super().start()
-
-    def factory(**kwargs: Any) -> RecordingFakeStream:
-        return RecordingFakeStream(**kwargs)
-
-    return factory
-
-
-def _endless_stream_factory(recorder: StreamStartRecorder) -> "Callable[..., Any]":
-    """Build a stream_factory whose streams NEVER finish by themselves:
-    playback only ends when AudioPlayer.stop() is called. A test using it
-    is guaranteed the reading is still in progress when it acts, so a stop
-    that silently did nothing would leave the reading unfinished and the
-    test would fail instead of passing vacuously."""
-
-    class EndlessFakeStream(FakeStream):
-        def start(self) -> None:
-            recorder.record()
-
-    def factory(**kwargs: Any) -> EndlessFakeStream:
-        return EndlessFakeStream(**kwargs)
-
-    return factory
-
-
-class _SignalingEvent(threading.Event):
-    """An Event that reports when some thread starts waiting on it."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.waiting = threading.Event()
-
-    def wait(self, timeout: "float | None" = None) -> bool:
-        self.waiting.set()
-        return super().wait(timeout)
+def _endless_stream_factory(recorder: OutputRecorder) -> "Callable[..., Any]":
+    """A stream factory whose streams nobody pulls: a reading that never finishes by itself."""
+    return manual_stream_factory(recorder)
 
 
 class RecordingNotifier:
@@ -198,7 +132,7 @@ def _make_feature(
     primary: "FakeSynthesizer | GatedSynthesizer",
     notifier: RecordingNotifier,
     coordinator: ReadingCoordinator | None = None,
-    stream_factory: "Callable[..., Any]" = _fake_stream_factory,
+    stream_factory: "Callable[..., Any] | None" = None,
     on_started: "Callable[[], None] | None" = None,
     speed_provider: "Callable[[], float] | None" = None,
 ) -> "tuple[DocumentReaderFeature, list[str], list[tuple[int, int]], list[None]]":
@@ -209,7 +143,9 @@ def _make_feature(
         model_manager=ModelManager(),
         primary_engine_factory=lambda: primary,
         fallback_engine=fallback,
-        player=AudioPlayer(stream_factory=stream_factory),
+        player=AudioPlayer(
+            stream_factory=stream_factory or pump_stream_factory(OutputRecorder())
+        ),
         notifier=notifier,  # type: ignore[arg-type]
         reading_coordinator=coordinator or ReadingCoordinator(),
         on_status=statuses.append,
@@ -247,23 +183,6 @@ class SineSynthesizer:
         return audio, self.sample_rate
 
 
-class LengthRecordingPlayer:
-    """A minimal player that records the length of every played chunk
-    and finishes each one naturally right away."""
-
-    def __init__(self) -> None:
-        self.play_lengths: "list[int]" = []
-
-    def play(self, audio: Any, sample_rate: int) -> None:
-        self.play_lengths.append(len(audio))
-
-    def wait_until_done(self) -> bool:
-        return True
-
-    def stop(self) -> None:
-        pass
-
-
 def test_read_text_speaks_every_chunk_and_reports_done() -> None:
     primary = FakeSynthesizer()
     feature, statuses, progresses, finishes = _make_feature(
@@ -274,7 +193,7 @@ def test_read_text_speaks_every_chunk_and_reports_done() -> None:
     wait_until(lambda: bool(finishes))
 
     assert len(primary.calls) == 1  # short text fits in one chunk
-    assert progresses[0] == (1, 1)
+    wait_until(lambda: progresses[:1] == [(1, 1)])
     assert "Done" in statuses
     assert finishes == [None]
     assert feature.is_reading is False
@@ -325,120 +244,124 @@ def test_primary_failure_falls_back_to_piper_once_per_document() -> None:
     assert notifier.messages.count("Primary voice unavailable — using backup voice") == 1
 
 
+def _wait_queued(feature: DocumentReaderFeature, clips: int) -> None:
+    """Wait until the feature's speaker has `clips` chunks queued in its stream."""
+    wait_until(lambda: feature._speaker is not None and feature._speaker.queued_clips == clips)  # noqa: SLF001
+
+
+def _drain(recorder: OutputRecorder, finishes: "list[None]") -> "list[Any]":
+    """Pull the last stream until the reading reports it has finished; returns the pulls."""
+    stream = recorder.streams[-1]
+    pulls: "list[Any]" = []
+    deadline = time.monotonic() + 5.0
+    while not finishes:
+        assert time.monotonic() < deadline, "the reading never finished"
+        pulls.append(stream.pull(2048))
+        time.sleep(0.002)
+    return pulls
+
+
 def test_pause_stops_audio_immediately_and_resume_replays_current_chunk() -> None:
-    primary = FakeSynthesizer()
-    recorder = StreamStartRecorder()
+    """Pause goes silent at once; resume replays the heard chunk from its start without re-making it."""
+    primary = FakeSynthesizer(level=0.5)
+    recorder = OutputRecorder()
     feature, statuses, _progresses, finishes = _make_feature(
         fallback=FakeSynthesizer(),
         primary=primary,
         notifier=RecordingNotifier(),
-        stream_factory=_recording_stream_factory(recorder),
+        stream_factory=manual_stream_factory(recorder),
     )
 
-    feature.read_text("Only one short sentence here to read aloud slowly.")
-    # Deterministic: wait for playback to actually start (rather than
-    # guessing with a fixed sleep) before pausing, so this test reliably
-    # exercises the "stop an already-playing chunk" path, not the
-    # "paused during synthesis" path covered by
-    # test_pause_during_synthesis_blocks_playback_until_resume below.
-    assert recorder.started.wait(timeout=5.0)
+    feature.read_text("A. B.")
+    _wait_queued(feature, 1)
+    stream = recorder.streams[-1]
+    heard = stream.pull(10)
+    assert heard.any()
+
     feature.pause()
+    assert not stream.pull(10).any()
     assert "Paused" in statuses
     assert feature.is_reading is True  # paused, not stopped
 
     feature.resume()
-    wait_until(lambda: bool(finishes))
+    replay = stream.pull(100)
+    np.testing.assert_allclose(replay[:10], heard)  # the same chunk, from its start
+    _drain(recorder, finishes)
     assert "Done" in statuses
+    assert len(primary.calls) == 1  # the pause did not re-make anything
 
 
 def test_pause_during_synthesis_blocks_playback_until_resume() -> None:
-    """Regression guard: pausing while a chunk is still synthesizing must
-    actually block before playback starts for that chunk, not just set a
-    status that the worker thread then ignores. pause() has no stream to
-    stop() yet at that point (play() hasn't been called), so the worker
-    itself must wait on the resume event before ever calling play()."""
-    primary = GatedSynthesizer()
-    recorder = StreamStartRecorder()
+    """A pause that lands while a chunk is still being made keeps it silent until resume."""
+    primary = GatedSynthesizer(level=0.5)
+    recorder = OutputRecorder()
     feature, statuses, _progresses, finishes = _make_feature(
         fallback=FakeSynthesizer(),
         primary=primary,
         notifier=RecordingNotifier(),
-        stream_factory=_recording_stream_factory(recorder),
+        stream_factory=manual_stream_factory(recorder),
     )
-
-    gate = _SignalingEvent()
-    gate.set()
-    feature._resume_event = gate  # noqa: SLF001 -- lets the test see the worker arrive
 
     feature.read_text("Only one short sentence here to read aloud slowly.")
     primary.wait_until_entered()  # synthesis of the first chunk is in flight
     feature.pause()
     assert "Paused" in statuses
-    primary.release()  # let synthesis finish while still paused
+    primary.release()
+    _wait_queued(feature, 1)
+    stream = recorder.streams[-1]
 
-    # Wait until the worker has reached the pause gate: if the bug were
-    # present it would have called play() instead of arriving here.
-    assert gate.waiting.wait(timeout=5.0)
-    assert recorder.count == 0  # playback must not have started while paused
+    assert not stream.pull(50).any()  # paused: not a sound
     assert finishes == []
 
     feature.resume()
-    wait_until(lambda: bool(finishes))
-    assert recorder.count == 1  # playback started only after resume()
+    assert stream.pull(50).any()
+    _drain(recorder, finishes)
     assert "Done" in statuses
 
 
 def test_stop_while_paused_actually_stops() -> None:
-    """Regression guard: stopping while paused must not leave the worker
-    thread blocked forever waiting on a resume that will never come."""
-    primary = FakeSynthesizer()
-    recorder = StreamStartRecorder()
+    """Stopping while paused ends the reading once and closes the sound stream."""
+    primary = FakeSynthesizer(level=0.5)
+    recorder = OutputRecorder()
     feature, statuses, _progresses, finishes = _make_feature(
         fallback=FakeSynthesizer(),
         primary=primary,
         notifier=RecordingNotifier(),
-        stream_factory=_endless_stream_factory(recorder),
+        stream_factory=manual_stream_factory(recorder),
     )
 
-    gate = _CountingEvent()
-    gate.set()
-    feature._resume_event = gate  # noqa: SLF001 -- lets the test see the worker park
-
     feature.read_text("Only one short sentence here to read aloud slowly.")
-    assert recorder.started.wait(timeout=5.0)  # playback has really begun
-    waits_before = gate.wait_calls
+    _wait_queued(feature, 1)
     feature.pause()
-    wait_until(lambda: gate.wait_calls > waits_before)  # worker is parked, waiting for resume
     feature.stop()
 
-    wait_until(lambda: bool(finishes))
+    wait_until(lambda: recorder.closed == 1)
     assert finishes == [None]
     assert feature.is_reading is False
-    _join_workers()  # a worker stuck waiting for a resume would fail here
     assert "Stopped" in statuses
     assert "Done" not in statuses
 
 
 def test_a_second_reader_preempts_this_one_via_the_coordinator() -> None:
+    """Another reading claiming the coordinator stops this one cleanly."""
     coordinator = ReadingCoordinator()
-    primary = FakeSynthesizer()
-    recorder = StreamStartRecorder()
+    recorder = OutputRecorder()
     feature, statuses, _progresses, finishes = _make_feature(
         fallback=FakeSynthesizer(),
-        primary=primary,
+        primary=FakeSynthesizer(level=0.5),
         notifier=RecordingNotifier(),
         coordinator=coordinator,
         stream_factory=_endless_stream_factory(recorder),
     )
 
     feature.read_text("Only one short sentence here to read aloud slowly.")
-    assert recorder.started.wait(timeout=5.0)  # playback has really begun
+    wait_until(lambda: recorder.opened == 1)  # playback has really begun
     coordinator.start_reading(object(), lambda: None)  # a different owner preempts it
 
     wait_until(lambda: bool(finishes))
     assert finishes == [None]
     assert feature.is_reading is False
-    _join_workers()  # a worker stuck waiting for a resume would fail here
+    wait_until(lambda: recorder.closed == 1)
     assert "Stopped" in statuses
     assert "Done" not in statuses
 
@@ -612,175 +535,6 @@ def test_a_notifier_that_raises_is_survived_and_later_messages_still_arrive() ->
     ]
 
 
-class RacingPlayer:
-    def __init__(self) -> None:
-        self.entered = threading.Event()
-        self.release = threading.Event()
-        self.stop_calls = 0
-        self.play_calls = 0
-
-    def play(self, audio: Any, sample_rate: int) -> None:
-        self.play_calls += 1
-        self.entered.set()
-        assert self.release.wait(timeout=5.0), "release was never set"
-
-    def wait_until_done(self) -> bool:
-        return True
-
-    def stop(self) -> None:
-        self.stop_calls += 1
-
-
-def test_stop_landing_just_before_play_starts_still_stops_that_chunk() -> None:
-    finishes: "list[None]" = []
-    player = RacingPlayer()
-    feature = DocumentReaderFeature(
-        model_manager=ModelManager(),
-        primary_engine_factory=lambda: FakeSynthesizer(),
-        fallback_engine=FakeSynthesizer(),
-        player=player,  # type: ignore[arg-type]
-        notifier=RecordingNotifier(),  # type: ignore[arg-type]
-        reading_coordinator=ReadingCoordinator(),
-        on_status=lambda message: None,
-        on_progress=lambda current, total: None,
-        on_finished=lambda: finishes.append(None),
-    )
-
-    feature.read_text("Only one short sentence here to read aloud slowly.")
-    assert player.entered.wait(timeout=5.0)  # worker is inside play()
-    feature.stop()  # player.stop() here is a no-op in real life: no stream yet
-    stops_before_release = player.stop_calls
-    player.release.set()  # play() now returns
-    wait_until(lambda: player.stop_calls > stops_before_release)
-
-    assert player.stop_calls == stops_before_release + 1  # worker re-stopped it
-    assert finishes == [None]
-
-
-class _CountingEvent(threading.Event):
-    """An Event that counts how many times wait() has been entered."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.wait_calls = 0
-
-    def wait(self, timeout: "float | None" = None) -> bool:
-        self.wait_calls += 1
-        return super().wait(timeout)
-
-
-class WindowPlayer:
-    """A player that behaves like the real AudioPlayer in the one respect
-    that matters here: stop() only has an effect once play() has returned
-    (before that there is no stream to stop). The first play() blocks until
-    release is set, so a test can call pause()/stop() in exactly the window
-    between "play() was called" and "a stream exists"."""
-
-    def __init__(self) -> None:
-        self.entered = threading.Event()
-        self.release = threading.Event()
-        self.play_calls = 0
-        self.effective_stops = 0
-        self.returned = threading.Event()
-        self._streaming = False
-        self._stopped = False
-
-    def play(self, audio: Any, sample_rate: int) -> None:
-        self.play_calls += 1
-        self._stopped = False
-        if self.play_calls == 1:
-            self.entered.set()
-            assert self.release.wait(timeout=5.0), "release was never set"
-        self._streaming = True
-
-    def wait_until_done(self) -> bool:
-        self._streaming = False
-        self.returned.set()
-        return not self._stopped
-
-    def stop(self) -> None:
-        if self._streaming:
-            self._stopped = True
-            self.effective_stops += 1
-
-
-def _join_workers() -> None:
-    """Wait (bounded) for every reading worker thread to finish, so a test
-    can assert that nothing more fires after the reading ended."""
-    for thread in threading.enumerate():
-        if "_prepare_and_read" in thread.name:
-            thread.join(timeout=5.0)
-            assert not thread.is_alive(), "worker thread did not finish"
-
-
-def _window_feature(
-    player: WindowPlayer,
-) -> "tuple[DocumentReaderFeature, list[str], list[None]]":
-    """Build a feature around `player`; returns it with its status and
-    on_finished records."""
-    statuses: "list[str]" = []
-    finishes: "list[None]" = []
-    feature = DocumentReaderFeature(
-        model_manager=ModelManager(),
-        primary_engine_factory=lambda: FakeSynthesizer(),
-        fallback_engine=FakeSynthesizer(),
-        player=player,  # type: ignore[arg-type]
-        notifier=RecordingNotifier(),  # type: ignore[arg-type]
-        reading_coordinator=ReadingCoordinator(),
-        on_status=statuses.append,
-        on_progress=lambda current, total: None,
-        on_finished=lambda: finishes.append(None),
-    )
-    return feature, statuses, finishes
-
-
-def test_pause_landing_just_before_play_starts_still_pauses_that_chunk() -> None:
-    player = WindowPlayer()
-    feature, statuses, finishes = _window_feature(player)
-    gate = _CountingEvent()
-    gate.set()
-    feature._resume_event = gate  # noqa: SLF001 -- lets the test see the worker arrive
-
-    feature.read_text("Only one short sentence here to read aloud slowly.")
-    assert player.entered.wait(timeout=5.0)  # worker is inside play(), no stream yet
-    feature.pause()  # player.stop() is a no-op: there is no stream to stop
-    assert player.effective_stops == 0
-    waits_before = gate.wait_calls
-    player.release.set()  # play() now returns
-
-    wait_until(lambda: player.effective_stops == 1)  # worker stopped the chunk itself
-    wait_until(lambda: gate.wait_calls > waits_before)  # and is parked, waiting for resume
-    assert statuses[-1] == "Paused"
-    assert player.play_calls == 1
-    assert finishes == []
-
-    feature.resume()
-    wait_until(lambda: bool(finishes))
-    _join_workers()
-    assert player.play_calls == 2  # the same chunk was replayed
-    assert statuses[-1] == "Done"
-    assert finishes == [None]
-
-
-def test_pause_then_stop_around_play_start_ends_the_reading_once() -> None:
-    player = WindowPlayer()
-    feature, statuses, finishes = _window_feature(player)
-
-    feature.read_text("Only one short sentence here to read aloud slowly.")
-    assert player.entered.wait(timeout=5.0)
-    feature.pause()
-    feature.stop()
-    player.release.set()
-
-    assert player.returned.wait(timeout=5.0)
-    _join_workers()
-    assert statuses[-1] == "Stopped"
-    assert "Done" not in statuses
-    assert finishes == [None]
-    assert player.play_calls == 1
-    assert feature.is_reading is False
-
-
 @pytest.mark.parametrize(
     "error",
     [
@@ -828,16 +582,30 @@ def test_both_engines_failing_reports_could_not_generate_speech() -> None:
     assert feature.is_reading is False
 
 
-def test_playback_raising_reports_playback_failed() -> None:
-    def broken_stream_factory(**kwargs: Any) -> FakeStream:
-        raise RuntimeError("audio device busy")
+class _RefusingStream:
+    """A sound stream that cannot be started."""
 
+    def __init__(self, **kwargs: Any) -> None:
+        """Accept and ignore the stream arguments."""
+
+    def start(self) -> None:
+        """Refuse to start."""
+        raise RuntimeError("device busy")
+
+    def stop(self) -> None:
+        """Nothing to stop."""
+
+    def close(self) -> None:
+        """Nothing to close."""
+
+
+def test_playback_raising_reports_playback_failed() -> None:
     notifier = RecordingNotifier()
     feature, statuses, _progresses, finishes = _make_feature(
         fallback=FakeSynthesizer(),
         primary=FakeSynthesizer(),
         notifier=notifier,
-        stream_factory=broken_stream_factory,
+        stream_factory=lambda **kwargs: _RefusingStream(**kwargs),
     )
 
     feature.read_text("Only one short sentence here to read aloud slowly.")
@@ -881,7 +649,7 @@ def test_an_already_loaded_primary_engine_is_reused_without_fallback() -> None:
         model_manager=manager,
         primary_engine_factory=factory,
         fallback_engine=fallback,
-        player=AudioPlayer(stream_factory=_fake_stream_factory),
+        player=AudioPlayer(stream_factory=pump_stream_factory(OutputRecorder())),
         notifier=RecordingNotifier(),  # type: ignore[arg-type]
         reading_coordinator=ReadingCoordinator(),
         on_status=lambda message: None,
@@ -927,11 +695,11 @@ def test_ocr_reading_replaces_a_document_reading_in_progress() -> None:
         def write(self, text: str) -> bool:
             return True
 
-    recorder = StreamStartRecorder()
+    recorder = OutputRecorder()
     notifier = RecordingNotifier()
     reader, statuses, _progresses, finishes = _make_feature(
         fallback=FakeSynthesizer(),
-        primary=FakeSynthesizer(),
+        primary=FakeSynthesizer(level=0.5),
         notifier=notifier,
         stream_factory=_endless_stream_factory(recorder),
     )
@@ -941,14 +709,13 @@ def test_ocr_reading_replaces_a_document_reading_in_progress() -> None:
     )
     try:
         reader.read_text("First document text.")
-        assert recorder.started.wait(5.0)
-        recorder.started.clear()
+        wait_until(lambda: recorder.opened == 1)
 
         ocr_feature.on_trigger()
         wait_until(lambda: not ocr_feature.is_busy)
-        assert recorder.started.wait(5.0), "the OCR text never started playing"
+        wait_until(lambda: recorder.opened == 2)  # the OCR text started playing
 
-        assert recorder.count == 2
+        assert recorder.closed >= 1  # the first reading's sound stream was shut
         assert not any("Playback failed" in m for m in notifier.messages)
         assert not any("Playback failed" in s for s in statuses)
         assert len(finishes) >= 1  # the old reading was stopped
@@ -1059,134 +826,63 @@ def _two_chunk_text() -> str:
     return f"{long_sentence} {short_sentence}"
 
 
-def test_no_speed_provider_leaves_chunk_audio_unchanged() -> None:
-    primary = SineSynthesizer()
-    player = LengthRecordingPlayer()
-    finishes: "list[None]" = []
-    feature = DocumentReaderFeature(
+def _speed_feature(
+    recorder: OutputRecorder,
+    primary: SineSynthesizer,
+    finishes: "list[None]",
+    speed_provider: "Callable[[], float] | None",
+) -> DocumentReaderFeature:
+    """A feature on a manual (test-pulled) stream that speaks with `primary`."""
+    return DocumentReaderFeature(
         model_manager=ModelManager(),
         primary_engine_factory=lambda: primary,
         fallback_engine=FakeSynthesizer(),
-        player=player,  # type: ignore[arg-type]
+        player=AudioPlayer(stream_factory=manual_stream_factory(recorder)),
         notifier=RecordingNotifier(),  # type: ignore[arg-type]
         reading_coordinator=ReadingCoordinator(),
         on_status=lambda message: None,
         on_progress=lambda current, total: None,
         on_finished=lambda: finishes.append(None),
+        speed_provider=speed_provider,
     )
 
-    feature.read_text("Only one short sentence here to read aloud slowly.")
-    wait_until(lambda: bool(finishes))
 
-    assert player.play_lengths == [int(primary.sample_rate * 2.0)]
+def _non_silent_count(pulls: "list[Any]") -> int:
+    """How many non-silent samples the pulled buffers hold in total."""
+    return int(sum(int(np.count_nonzero(pull)) for pull in pulls))
+
+
+def test_no_speed_provider_leaves_chunk_audio_unchanged() -> None:
+    primary = SineSynthesizer()
+    recorder = OutputRecorder()
+    finishes: "list[None]" = []
+    feature = _speed_feature(recorder, primary, finishes, None)
+
+    feature.read_text("Only one short sentence here to read aloud slowly.")
+    _wait_queued(feature, 1)
+    pulls = _drain(recorder, finishes)
+
+    original_length = int(primary.sample_rate * 2.0)
+    assert abs(_non_silent_count(pulls) - original_length) < 0.01 * original_length
 
 
 def test_speed_provider_is_read_per_chunk_and_produces_two_lengths() -> None:
     """Changing the speed between two chunks of the same document
     produces two differently-sized played chunks."""
     primary = SineSynthesizer()
-    player = LengthRecordingPlayer()
+    recorder = OutputRecorder()
     speeds = iter([1.2, 1.5])
     finishes: "list[None]" = []
-    feature = DocumentReaderFeature(
-        model_manager=ModelManager(),
-        primary_engine_factory=lambda: primary,
-        fallback_engine=FakeSynthesizer(),
-        player=player,  # type: ignore[arg-type]
-        notifier=RecordingNotifier(),  # type: ignore[arg-type]
-        reading_coordinator=ReadingCoordinator(),
-        on_status=lambda message: None,
-        on_progress=lambda current, total: None,
-        on_finished=lambda: finishes.append(None),
-        speed_provider=lambda: next(speeds),
-    )
+    feature = _speed_feature(recorder, primary, finishes, lambda: next(speeds))
 
     feature.read_text(_two_chunk_text())
-    wait_until(lambda: bool(finishes))
+    _wait_queued(feature, 2)
+    pulls = _drain(recorder, finishes)
 
     assert len(primary.calls) == 2  # really two chunks
-    assert len(player.play_lengths) == 2
     original_length = int(primary.sample_rate * 2.0)
-    assert abs(player.play_lengths[0] - original_length / 1.2) < 0.03 * original_length
-    assert abs(player.play_lengths[1] - original_length / 1.5) < 0.03 * original_length
-    assert player.play_lengths[0] != player.play_lengths[1]
-
-
-class PacedWindowPlayer:
-    """Like WindowPlayer (stop() only has an effect once play() has
-    returned -- before that there is no stream to stop) but also records
-    each played chunk's length, so a test can confirm a resumed chunk
-    replays the exact same (already-paced) audio rather than a
-    re-synthesized/re-paced one."""
-
-    def __init__(self) -> None:
-        self.entered = threading.Event()
-        self.release = threading.Event()
-        self.play_lengths: "list[int]" = []
-        self.effective_stops = 0
-        self._streaming = False
-        self._stopped = False
-
-    def play(self, audio: Any, sample_rate: int) -> None:
-        self.play_lengths.append(len(audio))
-        self._stopped = False
-        if len(self.play_lengths) == 1:
-            self.entered.set()
-            assert self.release.wait(timeout=5.0), "release was never set"
-        self._streaming = True
-
-    def wait_until_done(self) -> bool:
-        self._streaming = False
-        return not self._stopped
-
-    def stop(self) -> None:
-        if self._streaming:
-            self._stopped = True
-            self.effective_stops += 1
-
-
-def test_pause_then_resume_replays_the_same_already_paced_chunk() -> None:
-    player = PacedWindowPlayer()
-    primary = SineSynthesizer()
-    statuses: "list[str]" = []
-    finishes: "list[None]" = []
-    feature = DocumentReaderFeature(
-        model_manager=ModelManager(),
-        primary_engine_factory=lambda: primary,
-        fallback_engine=FakeSynthesizer(),
-        player=player,  # type: ignore[arg-type]
-        notifier=RecordingNotifier(),  # type: ignore[arg-type]
-        reading_coordinator=ReadingCoordinator(),
-        on_status=statuses.append,
-        on_progress=lambda current, total: None,
-        on_finished=lambda: finishes.append(None),
-        speed_provider=lambda: 1.5,
-    )
-    gate = _CountingEvent()
-    gate.set()
-    feature._resume_event = gate  # noqa: SLF001 -- lets the test see the worker arrive
-
-    feature.read_text("Only one short sentence here to read aloud slowly.")
-    assert player.entered.wait(timeout=5.0)  # worker is inside play(), no stream yet
-    feature.pause()  # player.stop() is a no-op: there is no stream to stop
-    assert player.effective_stops == 0
-    waits_before = gate.wait_calls
-    player.release.set()  # play() now returns
-
-    wait_until(lambda: player.effective_stops == 1)  # worker stopped the chunk itself
-    wait_until(lambda: gate.wait_calls > waits_before)  # and is parked, waiting for resume
-    assert statuses[-1] == "Paused"
-    assert len(player.play_lengths) == 1
-
-    feature.resume()
-    wait_until(lambda: bool(finishes))
-    _join_workers()
-
-    assert len(player.play_lengths) == 2  # the same chunk was replayed
-    assert player.play_lengths[0] == player.play_lengths[1]  # same already-paced audio
-    assert primary.calls == ["Only one short sentence here to read aloud slowly."]  # synthesized once
-    assert statuses[-1] == "Done"
-    assert finishes == [None]
+    expected = original_length / 1.2 + original_length / 1.5  # both chunks, back to back
+    assert abs(_non_silent_count(pulls) - expected) < 0.03 * original_length * 2
 
 
 def test_a_raising_speed_provider_still_plays_the_original_chunk(
@@ -1195,30 +891,21 @@ def test_a_raising_speed_provider_still_plays_the_original_chunk(
     """A speed_provider that raises must never break the reading: the
     original chunk still plays and a warning is logged."""
     primary = SineSynthesizer()
-    player = LengthRecordingPlayer()
+    recorder = OutputRecorder()
     finishes: "list[None]" = []
 
     def exploding_provider() -> float:
         raise RuntimeError("settings unavailable")
 
-    feature = DocumentReaderFeature(
-        model_manager=ModelManager(),
-        primary_engine_factory=lambda: primary,
-        fallback_engine=FakeSynthesizer(),
-        player=player,  # type: ignore[arg-type]
-        notifier=RecordingNotifier(),  # type: ignore[arg-type]
-        reading_coordinator=ReadingCoordinator(),
-        on_status=lambda message: None,
-        on_progress=lambda current, total: None,
-        on_finished=lambda: finishes.append(None),
-        speed_provider=exploding_provider,
-    )
+    feature = _speed_feature(recorder, primary, finishes, exploding_provider)
 
     with caplog.at_level(logging.WARNING, logger="vocalis"):
         feature.read_text("Only one short sentence here to read aloud slowly.")
-        wait_until(lambda: bool(finishes))
+        _wait_queued(feature, 1)
+        pulls = _drain(recorder, finishes)
 
-    assert player.play_lengths == [int(primary.sample_rate * 2.0)]  # unchanged
+    original_length = int(primary.sample_rate * 2.0)
+    assert abs(_non_silent_count(pulls) - original_length) < 0.01 * original_length  # unchanged
     assert any(record.levelno == logging.WARNING for record in caplog.records)
 
 
@@ -1242,7 +929,7 @@ def _make_selector_feature(
         model_manager=ModelManager(),
         primary_engine_factory=lambda: pytest.fail("the old primary factory must not be used"),
         fallback_engine=fallback,
-        player=AudioPlayer(stream_factory=_fake_stream_factory),
+        player=AudioPlayer(stream_factory=pump_stream_factory(OutputRecorder())),
         notifier=notifier,  # type: ignore[arg-type]
         reading_coordinator=ReadingCoordinator(),
         on_status=statuses.append,
@@ -1305,25 +992,119 @@ def test_a_failed_planned_engine_is_not_retried_and_is_announced_once() -> None:
 
 def test_a_failing_backup_voice_sends_no_downshift_notification() -> None:
     notifier = RecordingNotifier()
-    feature, statuses, _finishes = _make_selector_feature(
-        "kokoro", {}, FakeSynthesizer(), notifier
-    )
+    statuses: "list[str]" = []
+    handler = make_downshift_handler(lambda message: notifier.notify("t", message), statuses.append)
 
-    feature._notify_downshift("piper", None)  # noqa: SLF001
+    handler("piper", None)
 
     assert notifier.messages == []
     assert "Using backup voice" not in statuses
 
 
-def test_a_stale_generation_does_not_store_its_chain_for_the_next_reading() -> None:
-    """A worker from a stopped reading uses its chain once but never stores it."""
-    primary = FakeSynthesizer()
-    feature, _, _, _ = _make_feature(
-        fallback=FakeSynthesizer(), primary=primary, notifier=RecordingNotifier()
+def test_progress_is_reported_when_each_piece_starts_to_be_heard() -> None:
+    recorder = OutputRecorder()
+    primary = FakeSynthesizer(level=0.5)
+    feature, _statuses, progresses, _finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=primary, notifier=RecordingNotifier(),
+        stream_factory=manual_stream_factory(recorder),
+    )
+    # 350 characters each, and capitalised so the chunker sees a sentence start
+    # after every full stop: each sentence becomes its own chunk.
+    sentence = " ".join(["Word"] + ["word"] * 69) + "."
+    feature.read_text(" ".join([sentence] * 3))
+
+    wait_until(lambda: feature._speaker is not None and feature._speaker.queued_clips == 3)  # noqa: SLF001
+    assert progresses == []  # all three are made, none has been heard yet
+
+    stream = recorder.streams[-1]
+    stream.pull(10)
+    wait_until(lambda: progresses == [(1, 3)])
+    stream.pull(10_000)
+    wait_until(lambda: progresses == [(1, 3), (2, 3), (3, 3)])
+
+
+class _NoopTimer:
+    """A timer that does nothing when cancelled."""
+
+    def cancel(self) -> None:
+        """Nothing to cancel."""
+
+
+class _CountingTimers:
+    """A ModelManager timer factory that only counts how many idle timers were started."""
+
+    def __init__(self) -> None:
+        """Start with no timers scheduled."""
+        self.scheduled = 0
+
+    def __call__(self, delay: float, callback: Callable[[], None]) -> "_NoopTimer":
+        """Count one scheduled idle timer."""
+        self.scheduled += 1
+        return _NoopTimer()
+
+
+def test_the_voice_stays_loaded_for_the_whole_reading_and_the_idle_timer_starts_after_playback() -> None:
+    timers = _CountingTimers()
+    recorder = OutputRecorder()
+    primary = FakeSynthesizer(level=0.5)
+    finishes: "list[None]" = []
+    feature = DocumentReaderFeature(
+        model_manager=ModelManager(idle_timeout_seconds=30.0, timer_factory=timers),
+        primary_engine_factory=lambda: primary,
+        fallback_engine=FakeSynthesizer(),
+        player=AudioPlayer(stream_factory=manual_stream_factory(recorder)),
+        notifier=RecordingNotifier(),  # type: ignore[arg-type]
+        reading_coordinator=ReadingCoordinator(),
+        on_status=lambda message: None,
+        on_progress=lambda current, total: None,
+        on_finished=lambda: finishes.append(None),
     )
 
-    # No reading is active, so generation 99 is stale.
-    feature._synthesize_with_fallback("hello", 99)
+    feature.read_text("One short sentence. Another short sentence.")
+    wait_until(lambda: feature._speaker is not None and feature._speaker.queued_clips >= 1)  # noqa: SLF001
+    assert timers.scheduled == 0  # every piece is made, none has been heard: the voice must stay loaded
 
-    assert primary.calls == ["hello"]
-    assert feature._chain is None
+    _drain(recorder, finishes)
+    wait_until(lambda: timers.scheduled == 1)  # the idle timer starts only now that playback has ended
+
+
+def test_stop_before_the_first_sound_exists_never_makes_sound() -> None:
+    recorder = OutputRecorder()
+    primary = GatedSynthesizer(level=0.5)
+    feature, _statuses, _progresses, finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=primary, notifier=RecordingNotifier(),
+        stream_factory=manual_stream_factory(recorder),
+    )
+
+    feature.read_text("Only one short sentence here.")
+    primary.wait_until_entered()
+    feature.stop()
+    primary.release()
+    wait_until(lambda: bool(finishes))
+    threading.Event().wait(0.2)
+
+    assert recorder.opened == 0
+    assert feature.is_reading is False
+
+
+def test_pause_before_the_speaker_exists_starts_the_reading_paused() -> None:
+    """A pause that lands while the text is still being prepared silences the reading from its first sound."""
+    recorder = OutputRecorder()
+    primary = GatedSynthesizer(level=0.5)
+    feature, statuses, _progresses, finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=primary, notifier=RecordingNotifier(),
+        stream_factory=manual_stream_factory(recorder),
+    )
+
+    feature.read_text("Only one short sentence here.")
+    primary.wait_until_entered()
+    feature.pause()  # the speaker is already running its voice, but no sound exists yet
+    primary.release()
+    _wait_queued(feature, 1)
+    stream = recorder.streams[-1]
+
+    assert not stream.pull(50).any()
+    feature.resume()
+    assert stream.pull(50).any()
+    _drain(recorder, finishes)
+    assert "Paused" in statuses and "Done" in statuses

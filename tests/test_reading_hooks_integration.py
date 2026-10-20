@@ -93,7 +93,7 @@ def test_document_read_preempting_quick_read_leaves_hub_active_as_document() -> 
 def test_quick_read_preempting_document_read_leaves_hub_active_as_quick() -> None:
     quick, doc, hub, _log, quick_player, recorder = _build()
     doc.read_text("Hello there.")
-    assert recorder.started.wait(timeout=5.0)
+    doc_wait(lambda: recorder.opened >= 1)
     assert hub.source == "Document"
 
     quick.on_trigger()

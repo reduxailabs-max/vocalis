@@ -7,6 +7,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
+from tests.fake_output import OutputRecorder, pump_stream_factory
 from vocalis.audio.playback import AudioPlayer
 from vocalis.features.doc_reader import DocumentReaderFeature
 from vocalis.features.quick_reader import QuickReaderFeature
@@ -91,7 +92,7 @@ def test_both_features_build_the_primary_engine_only_once() -> None:
         model_manager=manager,
         primary_engine_factory=factory,
         fallback_engine=_CountingEngine(),
-        player=AudioPlayer(stream_factory=lambda **kw: _InstantStream(**kw)),
+        player=AudioPlayer(stream_factory=pump_stream_factory(OutputRecorder())),
         notifier=_Notifier(),  # type: ignore[arg-type]
         reading_coordinator=coordinator,
         on_status=lambda message: None,
