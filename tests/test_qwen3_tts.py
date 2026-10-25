@@ -9,7 +9,7 @@ from unittest.mock import patch
 import numpy as np
 import pytest
 
-from vocalis.engines.qwen3_tts import Qwen3TTS, Qwen3TTSLoadError
+from vocalis.engines.qwen3_tts import Qwen3TTS, Qwen3TTSLoadError, _max_new_tokens_for
 
 
 class FakeQwenModel:
@@ -19,8 +19,10 @@ class FakeQwenModel:
         self.raise_exc = raise_exc
         self.calls: list[dict[str, object]] = []
 
-    def generate_custom_voice(self, text: str, language: str, speaker: str) -> tuple[list[np.ndarray], int]:
-        self.calls.append({"text": text, "language": language, "speaker": speaker})
+    def generate_custom_voice(
+        self, text: str, language: str, speaker: str, **kwargs: object
+    ) -> tuple[list[np.ndarray], int]:
+        self.calls.append({"text": text, "language": language, "speaker": speaker, **kwargs})
         if self.raise_exc is not None:
             raise self.raise_exc
         return self.wavs, self.sample_rate
@@ -59,7 +61,14 @@ def test_load_then_synthesize_calls_generate_custom_voice_with_configured_speake
 
     assert sample_rate == 24000
     np.testing.assert_array_almost_equal(audio, fake_wav)
-    assert fake_model.calls == [{"text": "Hello world", "language": "English", "speaker": "Ryan"}]
+    assert len(fake_model.calls) == 1
+    call = fake_model.calls[0]
+    assert call["text"] == "Hello world"
+    assert call["language"] == "English"
+    assert call["speaker"] == "Ryan"
+    assert call["temperature"] == 0.65
+    assert call["top_k"] == 20
+    assert call["max_new_tokens"] == 200  # "Hello world" is 11 chars * 6 = 66, floored to 200
 
 
 def test_synthesize_propagates_generation_failure() -> None:
@@ -115,3 +124,73 @@ def test_speaker_can_be_a_function_read_on_every_synthesis() -> None:
     voice["name"] = "Dylan"
     engine.synthesize("hello")
     assert [call["speaker"] for call in fake_model.calls] == ["Ryan", "Dylan"]
+
+
+def _sine(seconds: float = 2.0, rate: int = 24000) -> np.ndarray:
+    """A real, long-enough-to-stretch waveform (librosa needs >4096 samples)."""
+    t = np.arange(int(rate * seconds)) / rate
+    return (0.3 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
+
+
+def test_max_new_tokens_scales_with_text_length_within_bounds() -> None:
+    assert _max_new_tokens_for("hi") == 200  # floor
+    assert _max_new_tokens_for("x" * 100) == 600  # 100 * 6, well inside bounds
+    assert _max_new_tokens_for("x" * 1000) == 2048  # ceiling
+
+
+def test_speed_below_one_is_not_applied() -> None:
+    """Qwen3-TTS's own stretch only ever speeds up -- never slows down."""
+    audio = _sine()
+    fake_model = FakeQwenModel(wavs=[audio], sample_rate=24000)
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), speed=0.7)
+    with patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls:
+        mock_model_cls.from_pretrained.return_value = fake_model
+        engine.load()
+
+    result, _ = engine.synthesize("hello there, this sentence needs to be long enough to stretch")
+
+    assert len(result) == len(audio)
+
+
+def test_speed_above_one_point_two_is_capped() -> None:
+    """A requested speed above 1.2x is capped there, not applied in full."""
+    audio = _sine()
+    fake_model = FakeQwenModel(wavs=[audio], sample_rate=24000)
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), speed=1.6)
+    with patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls:
+        mock_model_cls.from_pretrained.return_value = fake_model
+        engine.load()
+
+    result, _ = engine.synthesize("hello there, this sentence needs to be long enough to stretch")
+
+    assert abs(len(result) - len(audio) / 1.2) < 0.03 * len(audio)
+
+
+def test_speed_between_one_and_one_point_two_is_applied_as_given() -> None:
+    audio = _sine()
+    fake_model = FakeQwenModel(wavs=[audio], sample_rate=24000)
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), speed=1.1)
+    with patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls:
+        mock_model_cls.from_pretrained.return_value = fake_model
+        engine.load()
+
+    result, _ = engine.synthesize("hello there, this sentence needs to be long enough to stretch")
+
+    assert abs(len(result) - len(audio) / 1.1) < 0.03 * len(audio)
+
+
+def test_speed_can_be_a_live_callable() -> None:
+    """A callable speed is re-read on every synthesis call."""
+    audio = _sine()
+    fake_model = FakeQwenModel(wavs=[audio], sample_rate=24000)
+    speeds = iter([1.1, 1.2])
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), speed=lambda: next(speeds))
+    with patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls:
+        mock_model_cls.from_pretrained.return_value = fake_model
+        engine.load()
+
+    first, _ = engine.synthesize("hello there, this sentence needs to be long enough to stretch")
+    second, _ = engine.synthesize("hello there, this sentence needs to be long enough to stretch")
+
+    assert abs(len(first) - len(audio) / 1.1) < 0.03 * len(audio)
+    assert abs(len(second) - len(audio) / 1.2) < 0.03 * len(audio)

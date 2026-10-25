@@ -31,7 +31,29 @@ import numpy.typing as npt
 import torch
 from qwen_tts import Qwen3TTSModel
 
+from vocalis.audio.pace import clamp_speed, paced_audio
+
 logger = logging.getLogger("vocalis")
+
+_TEMPERATURE = 0.65
+_TOP_K = 20
+_TOKENS_PER_CHAR = 6
+_MIN_NEW_TOKENS = 200
+_MAX_NEW_TOKENS = 2048
+_STRETCH_MIN_SPEED = 1.0
+_STRETCH_MAX_SPEED = 1.2
+
+
+def _max_new_tokens_for(text: str) -> int:
+    """How many codec tokens to let Qwen3-TTS generate for `text`.
+
+    Scaled to the text's length instead of always requesting the
+    library's full default budget (2048): a short chunk then generates
+    faster and is less likely to wander or repeat near the end. A floor
+    keeps very short text from being cut off; a ceiling never asks for
+    more than the library's own tuned default.
+    """
+    return max(_MIN_NEW_TOKENS, min(_MAX_NEW_TOKENS, len(text) * _TOKENS_PER_CHAR))
 
 
 class Qwen3TTSLoadError(Exception):
@@ -47,6 +69,7 @@ class Qwen3TTS:
         speaker: str | Callable[[], str] = "Ryan",
         language: str = "English",
         use_gpu: bool = True,
+        speed: float | Callable[[], float] = 1.0,
     ) -> None:
         """Create a Qwen3TTS engine (does not load the model yet).
 
@@ -60,11 +83,19 @@ class Qwen3TTS:
             use_gpu: If True, load onto CUDA (the only supported device
                 for Qwen3-TTS); False is only useful in tests that never
                 call load().
+            speed: Desired speaking pace, or a function returning it,
+                re-read on every synthesis. Qwen3-TTS has no native speed
+                control, so this is approximated with a mild (1.0-1.2x)
+                time-stretch of the finished audio -- see
+                _capped_speed(): a bigger stretch, in either direction,
+                audibly hurts this voice, so anything outside that range
+                is simply played at the nearest end of it instead.
         """
         self._model_dir = model_dir
         self._speaker = speaker
         self._language = language
         self._use_gpu = use_gpu
+        self._speed = speed
         self._model: Qwen3TTSModel | None = None
 
     @property
@@ -109,6 +140,16 @@ class Qwen3TTS:
         """The voice to use right now (re-read on every synthesis so a change in Settings applies to the next reading)."""
         return self._speaker() if callable(self._speaker) else self._speaker
 
+    def _current_speed(self) -> float:
+        """The requested speaking pace right now (re-read on every synthesis)."""
+        return self._speed() if callable(self._speed) else self._speed
+
+    def _capped_speed(self) -> float:
+        """The speed actually applied: clamped to the supported range, then
+        narrowed to 1.0-1.2x (see __init__'s `speed` docstring)."""
+        speed = clamp_speed(self._current_speed())
+        return min(max(speed, _STRETCH_MIN_SPEED), _STRETCH_MAX_SPEED)
+
     def synthesize(self, text: str) -> "tuple[npt.NDArray[np.float32], int]":
         """Generate speech audio for the given text using the preset voice.
 
@@ -124,7 +165,13 @@ class Qwen3TTS:
         if self._model is None:
             raise RuntimeError("Qwen3TTS.synthesize() called before load()")
         wavs, sample_rate = self._model.generate_custom_voice(
-            text=text, language=self._language, speaker=self._current_speaker()
+            text=text,
+            language=self._language,
+            speaker=self._current_speaker(),
+            temperature=_TEMPERATURE,
+            top_k=_TOP_K,
+            max_new_tokens=_max_new_tokens_for(text),
         )
         audio = np.asarray(wavs[0], dtype=np.float32).reshape(-1)
-        return audio, int(sample_rate)
+        sample_rate = int(sample_rate)
+        return paced_audio(audio, sample_rate, self._capped_speed), sample_rate
