@@ -85,7 +85,7 @@ def test_synthesize_converts_raw_pcm_to_float32(tmp_path: Path) -> None:
         audio, np.array([0.0, 0.5, -0.5, 0.999969], dtype=np.float32), decimal=5
     )
     argv, input_bytes = runner.calls[0]
-    assert argv == [str(binary), "--model", str(model), "--output_raw"]
+    assert argv == [str(binary), "--model", str(model), "--length_scale", "1.0000", "--output_raw"]
     assert input_bytes == b"hello world"
 
 
@@ -122,3 +122,52 @@ def test_unload_clears_loaded_state(tmp_path: Path) -> None:
     engine.load()
     engine.unload()
     assert engine.is_loaded is False
+
+
+def test_synthesize_passes_length_scale_for_a_faster_speed(tmp_path: Path) -> None:
+    """A speed above 1.0 is the INVERSE as --length_scale (Piper's convention: smaller = faster)."""
+    binary = tmp_path / "piper"
+    binary.write_text("")
+    model = tmp_path / "voice.onnx"
+    model.write_text("")
+    runner = FakeCommandRunner(returncode=0, stdout=_pcm_bytes([0]))
+    engine = PiperTTS(binary_path=binary, model_path=model, command_runner=runner, speed=1.25)
+    engine.load()
+
+    engine.synthesize("hello")
+
+    argv, _ = runner.calls[0]
+    assert argv == [str(binary), "--model", str(model), "--length_scale", "0.8000", "--output_raw"]
+
+
+def test_speed_is_clamped_to_the_supported_range(tmp_path: Path) -> None:
+    binary = tmp_path / "piper"
+    binary.write_text("")
+    model = tmp_path / "voice.onnx"
+    model.write_text("")
+    runner = FakeCommandRunner(returncode=0, stdout=_pcm_bytes([0]))
+    engine = PiperTTS(binary_path=binary, model_path=model, command_runner=runner, speed=9.0)
+    engine.load()
+
+    engine.synthesize("hello")
+
+    argv, _ = runner.calls[0]
+    assert argv == [str(binary), "--model", str(model), "--length_scale", "0.6250", "--output_raw"]
+
+
+def test_speed_can_be_a_live_callable(tmp_path: Path) -> None:
+    """A callable speed is re-read on every synthesis call."""
+    binary = tmp_path / "piper"
+    binary.write_text("")
+    model = tmp_path / "voice.onnx"
+    model.write_text("")
+    runner = FakeCommandRunner(returncode=0, stdout=_pcm_bytes([0]))
+    speeds = iter([1.0, 1.25])
+    engine = PiperTTS(binary_path=binary, model_path=model, command_runner=runner, speed=lambda: next(speeds))
+    engine.load()
+
+    engine.synthesize("one")
+    engine.synthesize("two")
+
+    assert runner.calls[0][0][-2] == "1.0000"
+    assert runner.calls[1][0][-2] == "0.8000"

@@ -13,10 +13,12 @@ same pattern TextOutput/Notifier already use for ydotool/xclip/notify-send.
 import logging
 import subprocess
 from pathlib import Path
-from typing import Protocol
+from typing import Callable, Protocol
 
 import numpy as np
 import numpy.typing as npt
+
+from vocalis.audio.pace import clamp_speed
 
 logger = logging.getLogger("vocalis")
 
@@ -45,6 +47,7 @@ class PiperTTS:
         binary_path: Path,
         model_path: Path,
         sample_rate: int = 22050,
+        speed: float | Callable[[], float] = 1.0,
         command_runner: CommandRunner | None = None,
     ) -> None:
         """Create a PiperTTS engine (does not check files yet).
@@ -54,6 +57,10 @@ class PiperTTS:
             model_path: Path to the .onnx voice model file.
             sample_rate: Sample rate of the voice model's audio output, in
                 Hz (22050 for en_US-lessac-medium, per its .onnx.json).
+            speed: Speaking pace, or a function returning it, re-read on
+                every synthesis and clamped to the supported range.
+                Converted to Piper's own `--length_scale` argument
+                (`1 / speed`: a bigger length means slower speech).
             command_runner: Callable(argv, input_bytes=None) -> CompletedProcess,
                 used to run piper. Defaults to subprocess.run with a
                 30-second timeout. Injectable for tests.
@@ -61,6 +68,7 @@ class PiperTTS:
         self._binary_path = binary_path
         self._model_path = model_path
         self._sample_rate = sample_rate
+        self._speed = speed
         self._run: CommandRunner = command_runner or _default_command_runner
         self._loaded = False
 
@@ -68,6 +76,11 @@ class PiperTTS:
     def is_loaded(self) -> bool:
         """Whether load() has succeeded."""
         return self._loaded
+
+    def _current_speed(self) -> float:
+        """The speaking pace to use right now, clamped to the supported range."""
+        raw = self._speed() if callable(self._speed) else self._speed
+        return clamp_speed(raw)
 
     def load(self) -> None:
         """Verify the piper binary and voice model files exist.
@@ -103,9 +116,17 @@ class PiperTTS:
         """
         if not self._loaded:
             raise RuntimeError("PiperTTS.synthesize() called before load()")
+        length_scale = 1.0 / self._current_speed()
         try:
             result = self._run(
-                [str(self._binary_path), "--model", str(self._model_path), "--output_raw"],
+                [
+                    str(self._binary_path),
+                    "--model",
+                    str(self._model_path),
+                    "--length_scale",
+                    f"{length_scale:.4f}",
+                    "--output_raw",
+                ],
                 input_bytes=text.encode("utf-8"),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
