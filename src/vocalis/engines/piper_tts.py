@@ -11,6 +11,7 @@ to actually hold — each synthesize() call runs a fresh subprocess, the
 same pattern TextOutput/Notifier already use for ydotool/xclip/notify-send.
 """
 import logging
+import os
 import subprocess
 from pathlib import Path
 from typing import Callable, Protocol
@@ -24,10 +25,10 @@ logger = logging.getLogger("vocalis")
 
 
 class CommandRunner(Protocol):
-    """Runs a command, optionally piping bytes to its stdin."""
+    """Runs a command, optionally piping bytes to its stdin with a custom environment."""
 
     def __call__(
-        self, argv: list[str], input_bytes: bytes | None = None
+        self, argv: list[str], input_bytes: bytes | None = None, env: "dict[str, str] | None" = None
     ) -> "subprocess.CompletedProcess[bytes]": ...
 
 
@@ -48,6 +49,7 @@ class PiperTTS:
         model_path: Path,
         sample_rate: int = 22050,
         speed: float | Callable[[], float] = 1.0,
+        max_cpu_threads: "int | None | Callable[[], int | None]" = None,
         command_runner: CommandRunner | None = None,
     ) -> None:
         """Create a PiperTTS engine (does not check files yet).
@@ -61,14 +63,23 @@ class PiperTTS:
                 every synthesis and clamped to the supported range.
                 Converted to Piper's own `--length_scale` argument
                 (`1 / speed`: a bigger length means slower speech).
-            command_runner: Callable(argv, input_bytes=None) -> CompletedProcess,
-                used to run piper. Defaults to subprocess.run with a
-                30-second timeout. Injectable for tests.
+            max_cpu_threads: Best-effort CPU thread cap for the piper
+                subprocess, or a function returning it, re-read on every
+                synthesis. Applied as OMP_NUM_THREADS/ORT_NUM_THREADS
+                environment variables -- the installed piper binary has no
+                CLI flag for this (verified against its own --help output),
+                so this is not a guaranteed cap, only a best effort. None
+                means no cap (the subprocess inherits this process's
+                environment unchanged).
+            command_runner: Callable(argv, input_bytes=None, env=None) ->
+                CompletedProcess, used to run piper. Defaults to
+                subprocess.run with a 30-second timeout. Injectable for tests.
         """
         self._binary_path = binary_path
         self._model_path = model_path
         self._sample_rate = sample_rate
         self._speed = speed
+        self._max_cpu_threads = max_cpu_threads
         self._run: CommandRunner = command_runner or _default_command_runner
         self._loaded = False
 
@@ -81,6 +92,17 @@ class PiperTTS:
         """The speaking pace to use right now, clamped to the supported range."""
         raw = self._speed() if callable(self._speed) else self._speed
         return clamp_speed(raw)
+
+    def _current_max_cpu_threads(self) -> "int | None":
+        """The CPU thread cap to apply right now (re-read on every synthesis)."""
+        return self._max_cpu_threads() if callable(self._max_cpu_threads) else self._max_cpu_threads
+
+    def _thread_cap_env(self) -> "dict[str, str] | None":
+        """OMP_NUM_THREADS/ORT_NUM_THREADS for the piper subprocess, best-effort."""
+        max_threads = self._current_max_cpu_threads()
+        if max_threads is None:
+            return None
+        return {**os.environ, "OMP_NUM_THREADS": str(max_threads), "ORT_NUM_THREADS": str(max_threads)}
 
     def load(self) -> None:
         """Verify the piper binary and voice model files exist.
@@ -128,6 +150,7 @@ class PiperTTS:
                     "--output_raw",
                 ],
                 input_bytes=text.encode("utf-8"),
+                env=self._thread_cap_env(),
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             logger.error("Failed to run piper: %s", exc)
@@ -140,7 +163,7 @@ class PiperTTS:
 
 
 def _default_command_runner(
-    argv: list[str], input_bytes: bytes | None = None
+    argv: list[str], input_bytes: bytes | None = None, env: "dict[str, str] | None" = None
 ) -> "subprocess.CompletedProcess[bytes]":
     """Default CommandRunner: subprocess.run with a 30-second timeout."""
-    return subprocess.run(argv, input=input_bytes, timeout=30.0, capture_output=True)
+    return subprocess.run(argv, input=input_bytes, timeout=30.0, capture_output=True, env=env)

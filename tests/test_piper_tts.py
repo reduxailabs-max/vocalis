@@ -18,10 +18,12 @@ class FakeCommandRunner:
         self.returncode = returncode
         self.stdout = stdout
         self.raise_exc = raise_exc
-        self.calls: list[tuple[list[str], bytes | None]] = []
+        self.calls: list[tuple[list[str], "bytes | None", "dict[str, str] | None"]] = []
 
-    def __call__(self, argv: list[str], input_bytes: bytes | None = None) -> "subprocess.CompletedProcess[bytes]":
-        self.calls.append((argv, input_bytes))
+    def __call__(
+        self, argv: list[str], input_bytes: bytes | None = None, env: "dict[str, str] | None" = None
+    ) -> "subprocess.CompletedProcess[bytes]":
+        self.calls.append((argv, input_bytes, env))
         if self.raise_exc is not None:
             raise self.raise_exc
         return subprocess.CompletedProcess(args=argv, returncode=self.returncode, stdout=self.stdout)
@@ -84,7 +86,7 @@ def test_synthesize_converts_raw_pcm_to_float32(tmp_path: Path) -> None:
     np.testing.assert_array_almost_equal(
         audio, np.array([0.0, 0.5, -0.5, 0.999969], dtype=np.float32), decimal=5
     )
-    argv, input_bytes = runner.calls[0]
+    argv, input_bytes, _env = runner.calls[0]
     assert argv == [str(binary), "--model", str(model), "--length_scale", "1.0000", "--output_raw"]
     assert input_bytes == b"hello world"
 
@@ -136,7 +138,7 @@ def test_synthesize_passes_length_scale_for_a_faster_speed(tmp_path: Path) -> No
 
     engine.synthesize("hello")
 
-    argv, _ = runner.calls[0]
+    argv, _, _ = runner.calls[0]
     assert argv == [str(binary), "--model", str(model), "--length_scale", "0.8000", "--output_raw"]
 
 
@@ -151,7 +153,7 @@ def test_speed_is_clamped_to_the_supported_range(tmp_path: Path) -> None:
 
     engine.synthesize("hello")
 
-    argv, _ = runner.calls[0]
+    argv, _, _ = runner.calls[0]
     assert argv == [str(binary), "--model", str(model), "--length_scale", "0.6250", "--output_raw"]
 
 
@@ -171,3 +173,55 @@ def test_speed_can_be_a_live_callable(tmp_path: Path) -> None:
 
     assert runner.calls[0][0][-2] == "1.0000"
     assert runner.calls[1][0][-2] == "0.8000"
+
+
+def test_synthesize_sets_thread_env_vars_when_a_cap_is_given(tmp_path: Path) -> None:
+    binary = tmp_path / "piper"
+    binary.write_text("")
+    model = tmp_path / "voice.onnx"
+    model.write_text("")
+    runner = FakeCommandRunner(stdout=_pcm_bytes([0]))
+    engine = PiperTTS(binary_path=binary, model_path=model, max_cpu_threads=4, command_runner=runner)
+    engine.load()
+
+    engine.synthesize("hi")
+
+    _argv, _input_bytes, env = runner.calls[0]
+    assert env is not None
+    assert env["OMP_NUM_THREADS"] == "4"
+    assert env["ORT_NUM_THREADS"] == "4"
+
+
+def test_synthesize_passes_no_env_override_when_no_cap(tmp_path: Path) -> None:
+    binary = tmp_path / "piper"
+    binary.write_text("")
+    model = tmp_path / "voice.onnx"
+    model.write_text("")
+    runner = FakeCommandRunner(stdout=_pcm_bytes([0]))
+    engine = PiperTTS(binary_path=binary, model_path=model, command_runner=runner)
+    engine.load()
+
+    engine.synthesize("hi")
+
+    _argv, _input_bytes, env = runner.calls[0]
+    assert env is None
+
+
+def test_thread_cap_can_be_a_live_callable(tmp_path: Path) -> None:
+    binary = tmp_path / "piper"
+    binary.write_text("")
+    model = tmp_path / "voice.onnx"
+    model.write_text("")
+    runner = FakeCommandRunner(stdout=_pcm_bytes([0]))
+    cap = {"value": 2}
+    engine = PiperTTS(
+        binary_path=binary, model_path=model, max_cpu_threads=lambda: cap["value"], command_runner=runner
+    )
+    engine.load()
+    cap["value"] = 6
+
+    engine.synthesize("hi")
+
+    _argv, _input_bytes, env = runner.calls[0]
+    assert env is not None
+    assert env["OMP_NUM_THREADS"] == "6"
