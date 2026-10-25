@@ -15,6 +15,7 @@ scheduled under is still current — otherwise something reacquired the
 engine after the timer fired but before it got the lock, and unloading
 would pull the rug out from under that caller.
 """
+import gc
 import logging
 import threading
 from typing import Callable, Protocol
@@ -243,6 +244,10 @@ class ModelManager:
         Guarantees bookkeeping is reset to "nothing loaded" even if the
         engine's own unload() raises (e.g. a CUDA teardown error) — losing
         track of a resident model would be worse than losing the error.
+        Runs a full garbage collection afterwards, on top of the engine's
+        own torch.cuda.empty_cache(): a reference cycle holding the model
+        (or its tensors) alive would otherwise delay VRAM release until
+        Python's own cyclic collector happened to run on its own schedule.
         """
         try:
             if self._current_engine is not None:
@@ -254,6 +259,7 @@ class ModelManager:
             self._current_engine = None
             self._current_engine_id = None
             self._use_count = 0
+            gc.collect()
 
     def _cancel_idle_timer_locked(self) -> None:
         """Cancel the pending idle timer, if any. Caller must hold self._lock."""

@@ -319,3 +319,13 @@ def test_current_engine_is_the_loaded_object_or_none() -> None:
     assert manager.current_engine is engine
     manager.shutdown()
     assert manager.current_engine is None
+
+
+def test_shutdown_runs_garbage_collection_after_unloading() -> None:
+    from unittest.mock import patch
+
+    manager = ModelManager()
+    manager.acquire("engine", lambda: FakeModelEngine("engine"))
+    with patch("vocalis.model_manager.gc.collect") as mock_collect:
+        manager.shutdown()
+    mock_collect.assert_called_once()
