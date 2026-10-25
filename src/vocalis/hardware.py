@@ -31,6 +31,7 @@ class HardwareInfo:
     ram_available_mb: int | None
     cpu_count: int | None
     load_1min: float | None
+    own_process_ram_mb: int | None = None
 
 
 def query_gpu_with_torch() -> GpuInfo | None:
@@ -41,6 +42,13 @@ def query_gpu_with_torch() -> GpuInfo | None:
         return None
     free_bytes, total_bytes = torch.cuda.mem_get_info(0)
     return GpuInfo(torch.cuda.get_device_name(0), total_bytes // _BYTES_PER_MB, free_bytes // _BYTES_PER_MB)
+
+
+def query_own_process_ram_mb() -> "int | None":
+    """Return Vocalis's own peak resident memory in MB, or None if unreadable."""
+    import resource  # slow-ish, POSIX-only import, kept local
+
+    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // _KB_PER_MB
 
 
 def _read_meminfo(path: Path) -> tuple[int | None, int | None]:
@@ -75,8 +83,9 @@ def probe_hardware(
     loadavg_path: Path = Path("/proc/loadavg"),
     cpu_count: Callable[[], int | None] = os.cpu_count,
     gpu_query: Callable[[], GpuInfo | None] | None = None,
+    own_ram_query: Callable[[], "int | None"] = query_own_process_ram_mb,
 ) -> HardwareInfo:
-    """Take a snapshot of GPU, RAM and CPU; unreadable parts become None."""
+    """Take a snapshot of GPU, RAM, CPU and Vocalis's own memory use; unreadable parts become None."""
     query = gpu_query if gpu_query is not None else query_gpu_with_torch
     try:
         gpu = query()
@@ -88,8 +97,13 @@ def probe_hardware(
     except Exception:
         logger.debug("CPU count failed; treating as unknown", exc_info=True)
         cpus = None
+    try:
+        own_ram = own_ram_query()
+    except Exception:
+        logger.debug("Own-process RAM query failed; treating as unknown", exc_info=True)
+        own_ram = None
     ram_total, ram_available = _read_meminfo(meminfo_path)
-    return HardwareInfo(gpu, ram_total, ram_available, cpus, _read_load(loadavg_path))
+    return HardwareInfo(gpu, ram_total, ram_available, cpus, _read_load(loadavg_path), own_ram)
 
 
 def describe(info: HardwareInfo) -> str:

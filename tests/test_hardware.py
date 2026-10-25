@@ -16,13 +16,42 @@ def _files(tmp_path: Path, meminfo: str = MEMINFO, loadavg: str = "1.50 1.00 0.5
 
 def test_reads_ram_load_cpu_and_gpu(tmp_path: Path) -> None:
     m, l = _files(tmp_path)
-    info = probe_hardware(m, l, cpu_count=lambda: 8, gpu_query=lambda: GpuInfo("RTX", 8188, 7000))
-    assert info == HardwareInfo(GpuInfo("RTX", 8188, 7000), 15625, 7812, 8, 1.5)
+    info = probe_hardware(
+        m, l, cpu_count=lambda: 8, gpu_query=lambda: GpuInfo("RTX", 8188, 7000), own_ram_query=lambda: None,
+    )
+    assert info == HardwareInfo(GpuInfo("RTX", 8188, 7000), 15625, 7812, 8, 1.5, None)
 
 
 def test_missing_proc_files_give_none_not_an_error(tmp_path: Path) -> None:
-    info = probe_hardware(tmp_path / "nope", tmp_path / "nope2", cpu_count=lambda: None, gpu_query=lambda: None)
-    assert info == HardwareInfo(None, None, None, None, None)
+    info = probe_hardware(
+        tmp_path / "nope", tmp_path / "nope2", cpu_count=lambda: None, gpu_query=lambda: None, own_ram_query=lambda: None,
+    )
+    assert info == HardwareInfo(None, None, None, None, None, None)
+
+
+def test_reads_own_process_ram(tmp_path: Path) -> None:
+    m, l = _files(tmp_path)
+    info = probe_hardware(
+        m, l, cpu_count=lambda: 8, gpu_query=lambda: GpuInfo("RTX", 8188, 7000), own_ram_query=lambda: 512,
+    )
+    assert info.own_process_ram_mb == 512
+
+
+def test_a_raising_own_ram_query_means_unknown(tmp_path: Path) -> None:
+    m, l = _files(tmp_path)
+
+    def boom() -> "int | None":
+        raise RuntimeError("resource module unavailable")
+
+    info = probe_hardware(m, l, cpu_count=lambda: 4, gpu_query=lambda: None, own_ram_query=boom)
+    assert info.own_process_ram_mb is None
+
+
+def test_query_own_process_ram_mb_returns_a_positive_number() -> None:
+    from vocalis.hardware import query_own_process_ram_mb
+
+    value = query_own_process_ram_mb()
+    assert value is None or value > 0
 
 
 def test_garbage_proc_content_gives_none(tmp_path: Path) -> None:
