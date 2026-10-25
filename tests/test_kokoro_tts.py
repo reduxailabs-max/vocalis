@@ -30,13 +30,15 @@ def _files(tmp_path: Path) -> tuple[Path, Path]:
     return model, voices
 
 
-def _engine(tmp_path: Path, kokoro: _FakeKokoro | None = None, **kwargs: Any) -> tuple[KokoroTTS, list[tuple[Path, bool]], _FakeKokoro]:
+def _engine(tmp_path: Path, kokoro: _FakeKokoro | None = None, **kwargs: Any) -> tuple[KokoroTTS, list[tuple[Path, bool, "int | None", "int | None"]], _FakeKokoro]:
     model, voices = _files(tmp_path)
-    built: list[tuple[Path, bool]] = []
+    built: list[tuple[Path, bool, "int | None", "int | None"]] = []
     fake = kokoro or _FakeKokoro()
 
-    def session_builder(path: Path, use_gpu: bool) -> object:
-        built.append((path, use_gpu))
+    def session_builder(
+        path: Path, use_gpu: bool, intra_op_num_threads: "int | None" = None, gpu_mem_limit_mb: "int | None" = None,
+    ) -> object:
+        built.append((path, use_gpu, intra_op_num_threads, gpu_mem_limit_mb))
         return object()
 
     engine = KokoroTTS(model, voices, session_builder=session_builder, kokoro_factory=lambda _s, _v: fake, **kwargs)
@@ -63,7 +65,7 @@ def test_load_wraps_any_library_failure(tmp_path: Path) -> None:
     """Whatever the ONNX library raises becomes KokoroLoadError."""
     model, voices = _files(tmp_path)
 
-    def boom(_path: Path, _gpu: bool) -> object:
+    def boom(_path: Path, _gpu: bool, _threads: "int | None" = None, _vram: "int | None" = None) -> object:
         raise RuntimeError("cuda exploded")
 
     engine = KokoroTTS(model, voices, session_builder=boom)
@@ -256,3 +258,79 @@ def test_speed_can_be_a_live_callable(tmp_path: Path) -> None:
     engine.synthesize("one")
     engine.synthesize("two")
     assert [call[2] for call in fake.calls] == [0.8, 1.4]
+
+
+def test_load_passes_the_cpu_thread_cap_to_the_session_builder(tmp_path: Path) -> None:
+    engine, built, _ = _engine(tmp_path, max_cpu_threads=4)
+    engine.load()
+    assert built[0][2] == 4
+
+
+def test_load_passes_no_thread_cap_when_unset(tmp_path: Path) -> None:
+    engine, built, _ = _engine(tmp_path)
+    engine.load()
+    assert built[0][2] is None
+
+
+def test_load_passes_the_gpu_vram_ceiling_to_the_session_builder(tmp_path: Path) -> None:
+    engine, built, _ = _engine(tmp_path, gpu_vram_ceiling_mb=512)
+    engine.load()
+    assert built[0][3] == 512
+
+
+def test_thread_cap_can_be_a_live_callable(tmp_path: Path) -> None:
+    cap = {"value": 2}
+    engine, built, _ = _engine(tmp_path, max_cpu_threads=lambda: cap["value"])
+    cap["value"] = 6
+    engine.load()
+    assert built[0][2] == 6
+
+
+class _FakeSessionOptions:
+    def __init__(self) -> None:
+        self.intra_op_num_threads: "int | None" = None
+
+
+class _FakeOrt:
+    def __init__(self, providers: list) -> None:  # type: ignore[type-arg]
+        self._providers = providers
+        self.sessions: list[dict] = []  # type: ignore[type-arg]
+
+    def get_available_providers(self) -> list:  # type: ignore[type-arg]
+        return self._providers
+
+    def SessionOptions(self) -> _FakeSessionOptions:
+        return _FakeSessionOptions()
+
+    def InferenceSession(self, path: str, sess_options: Any, providers: list) -> Any:  # type: ignore[type-arg]
+        self.sessions.append({"path": path, "sess_options": sess_options, "providers": providers})
+        return object()
+
+
+def test_default_session_builder_sets_intra_op_num_threads(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    from vocalis.engines.kokoro_tts import _default_session_builder
+
+    fake_ort = _FakeOrt(["CPUExecutionProvider"])
+    monkeypatch.setattr("vocalis.engines.kokoro_tts.importlib.import_module", lambda _name: fake_ort)
+    _default_session_builder(tmp_path / "m.onnx", False, intra_op_num_threads=4)
+    assert fake_ort.sessions[0]["sess_options"].intra_op_num_threads == 4
+
+
+def test_default_session_builder_sets_gpu_mem_limit_on_cuda(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    from vocalis.engines.kokoro_tts import _default_session_builder
+
+    fake_ort = _FakeOrt(["CUDAExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setattr("vocalis.engines.kokoro_tts.importlib.import_module", lambda _name: fake_ort)
+    _default_session_builder(tmp_path / "m.onnx", True, gpu_mem_limit_mb=512)
+    providers = fake_ort.sessions[0]["providers"]
+    assert providers[0] == ("CUDAExecutionProvider", {"gpu_mem_limit": 512 * 1024 * 1024})
+
+
+def test_default_session_builder_skips_gpu_mem_limit_when_not_given(monkeypatch, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    from vocalis.engines.kokoro_tts import _default_session_builder
+
+    fake_ort = _FakeOrt(["CUDAExecutionProvider", "CPUExecutionProvider"])
+    monkeypatch.setattr("vocalis.engines.kokoro_tts.importlib.import_module", lambda _name: fake_ort)
+    _default_session_builder(tmp_path / "m.onnx", True)
+    providers = fake_ort.sessions[0]["providers"]
+    assert providers[0] == ("CUDAExecutionProvider", {})

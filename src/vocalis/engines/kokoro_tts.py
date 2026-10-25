@@ -89,13 +89,21 @@ def _language_for(voice: str) -> str:
     return "en-gb" if voice.startswith("b") else "en-us"
 
 
-def _default_session_builder(model_path: Path, use_gpu: bool) -> Any:
+def _default_session_builder(
+    model_path: Path, use_gpu: bool, intra_op_num_threads: "int | None" = None, gpu_mem_limit_mb: "int | None" = None,
+) -> Any:
     """Create the ONNX session, on the graphics card only if asked and available."""
     ort = importlib.import_module("onnxruntime")
-    providers = ["CPUExecutionProvider"]
+    providers: list[Any] = ["CPUExecutionProvider"]
     if use_gpu and "CUDAExecutionProvider" in ort.get_available_providers():
-        providers = ["CUDAExecutionProvider", "CPUExecutionProvider"]
-    return ort.InferenceSession(str(model_path), providers=providers)
+        cuda_options: dict[str, Any] = {}
+        if gpu_mem_limit_mb is not None:
+            cuda_options["gpu_mem_limit"] = gpu_mem_limit_mb * 1024 * 1024
+        providers = [("CUDAExecutionProvider", cuda_options), "CPUExecutionProvider"]
+    session_options = ort.SessionOptions()
+    if intra_op_num_threads is not None:
+        session_options.intra_op_num_threads = intra_op_num_threads
+    return ort.InferenceSession(str(model_path), sess_options=session_options, providers=providers)
 
 
 def _default_kokoro_factory(session: Any, voices_path: Path) -> Any:
@@ -114,7 +122,9 @@ class KokoroTTS:
         voice: "str | Callable[[], str]" = "af_heart",
         use_gpu: "bool | Callable[[], bool]" = False,
         speed: "float | Callable[[], float]" = 1.0,
-        session_builder: Callable[[Path, bool], Any] = _default_session_builder,
+        max_cpu_threads: "int | None | Callable[[], int | None]" = None,
+        gpu_vram_ceiling_mb: "int | None | Callable[[], int | None]" = None,
+        session_builder: Callable[..., Any] = _default_session_builder,
         kokoro_factory: Callable[[Any, Path], Any] = _default_kokoro_factory,
     ) -> None:
         """Create a KokoroTTS engine (does not load the model yet).
@@ -129,6 +139,12 @@ class KokoroTTS:
             speed: Speaking pace, or a function returning it, re-read on
                 every synthesis and clamped to the supported range.
                 Passed straight to Kokoro's own `speed=` parameter.
+            max_cpu_threads: Cap for ONNX Runtime's intra_op_num_threads, or
+                a function returning it, re-read at load time. None means
+                no cap.
+            gpu_vram_ceiling_mb: Cap for ONNX Runtime's CUDA gpu_mem_limit
+                provider option, or a function returning it, re-read at
+                load time. None means no cap; ignored off the GPU.
             session_builder: Builds the ONNX session; injectable for tests.
             kokoro_factory: Wraps a session into a synthesizer; injectable for tests.
         """
@@ -137,6 +153,8 @@ class KokoroTTS:
         self._voice = voice
         self._use_gpu = use_gpu
         self._speed = speed
+        self._max_cpu_threads = max_cpu_threads
+        self._gpu_vram_ceiling_mb = gpu_vram_ceiling_mb
         self._session_builder = session_builder
         self._kokoro_factory = kokoro_factory
         self._kokoro: Any | None = None
@@ -145,6 +163,14 @@ class KokoroTTS:
     def is_loaded(self) -> bool:
         """Whether the model is currently loaded."""
         return self._kokoro is not None
+
+    def _current_max_cpu_threads(self) -> "int | None":
+        """The CPU thread cap to apply right now (re-read at every load)."""
+        return self._max_cpu_threads() if callable(self._max_cpu_threads) else self._max_cpu_threads
+
+    def _current_gpu_vram_ceiling_mb(self) -> "int | None":
+        """The GPU VRAM ceiling to apply right now (re-read at every load)."""
+        return self._gpu_vram_ceiling_mb() if callable(self._gpu_vram_ceiling_mb) else self._gpu_vram_ceiling_mb
 
     def load(self) -> None:
         """Load the model.
@@ -157,7 +183,9 @@ class KokoroTTS:
                 raise KokoroLoadError(f"Kokoro file not found: {path}")
         try:
             use_gpu = self._use_gpu() if callable(self._use_gpu) else self._use_gpu
-            session = self._session_builder(self._model_path, use_gpu)
+            session = self._session_builder(
+                self._model_path, use_gpu, self._current_max_cpu_threads(), self._current_gpu_vram_ceiling_mb(),
+            )
             self._kokoro = self._kokoro_factory(session, self._voices_path)
         except Exception as exc:
             self._kokoro = None
