@@ -1374,16 +1374,53 @@ language/speaker pair is configured; basic text normalization for numbers,
 URLs and symbols is added to `text/normalizer.py`.
 
 **6d — Resource limits.** New Settings controls (and matching `LiveSettings`
-getters) for a maximum CPU thread count (`torch.set_num_threads`, ONNX
-`intra_op_num_threads`) and maximum RAM; `gpu_vram_ceiling_mb` is finally
-enforced (`torch.cuda.set_per_process_memory_fraction`, ONNX
-`gpu_mem_limit`), replacing its current dead-setting status; the 6a
-auto-selection policy is re-run adaptively (checked at the start of each
-reading, and again only on a load/synthesis failure, with at least a 60s
-hysteresis before downshifting again — never flip-flopping mid-reading); the
-systemd unit template gains a `Nice=` line; the Piper subprocess gets a
-thread cap; model unload calls `gc.collect()` in addition to the existing
-`torch.cuda.empty_cache()`.
+getters), all optional (`None` = no cap, the current unconstrained
+behaviour):
+
+- `max_cpu_threads: int | None`. Applied at each engine load: Qwen3-TTS via
+  `torch.set_num_threads(n)` (process-global, re-applied at each load since
+  it's cheap and keeps behaviour obviously tied to the current live
+  setting); Kokoro via its ONNX `SessionOptions.intra_op_num_threads` at
+  session build (already rebuilt fresh per reading). Piper's installed CLI
+  binary has **no thread-count flag at all** (verified directly against the
+  real binary's `--help` output, not assumed) — its subprocess instead gets
+  `OMP_NUM_THREADS`/`ORT_NUM_THREADS` environment variables set to the
+  configured value. This is explicitly documented as **best-effort**: Piper
+  doesn't document honouring these, so the docs must say so rather than
+  imply a guarantee.
+- `max_ram_mb: int | None`. Deliberately a **soft/advisory** signal, not an
+  OS-level hard cap: feeds into `auto_select.py`'s existing "stressed"
+  determination (comparing Vocalis's own current RSS against this ceiling)
+  so a low setting triggers a downshift to a lighter engine. A hard
+  `resource.setrlimit(RLIMIT_AS, ...)` cap was considered and rejected — it
+  can crash Vocalis itself (`MemoryError`) on a conservative user-chosen
+  number, which is worse than a slower engine. This is the one place this
+  stage deliberately interprets "enforced" as "influences the adaptive
+  downshift" rather than "hard-blocks."
+- `gpu_vram_ceiling_mb` (already exists, currently a dead setting) is
+  finally enforced: `torch.cuda.set_per_process_memory_fraction(ceiling_mb /
+  total_mb)` for Qwen3-TTS, and ONNX Runtime's CUDA execution-provider
+  `gpu_mem_limit` option (bytes) for Kokoro-on-GPU — both applied at the
+  point each engine builds its session/model, reading the live setting
+  fresh each time.
+
+**Adaptive downshift with hysteresis.** `EngineSelector.plan()` already
+calls `decide()` fresh at the start of every reading and a chain already
+only moves forward (never back) within one reading — both already satisfy
+"checked at the start of each reading" and "never flip-flopping
+mid-reading" with no new code. What's missing is memory **across**
+readings: today, a downshift in reading N due to transient stress would be
+immediately forgotten by reading N+1, which could upshift right back the
+moment hardware noise clears, causing an unwanted reload. A small stateful
+wrapper around `EngineSelector` fixes this: it remembers the last
+downshift's timestamp and tier, and for at least 60s after a downshift, it
+caps the plan returned to new readings at that tier (never lower than what
+fresh `decide()` would choose, only capped from above). After 60s, the next
+`plan()` call re-evaluates fully, free of the cap.
+
+Also in this stage: the systemd unit template gains a `Nice=10` line; model
+unload in `ModelManager._unload_current_locked()` calls `gc.collect()` in
+addition to the existing `torch.cuda.empty_cache()`.
 
 ### Out of scope (and why)
 
