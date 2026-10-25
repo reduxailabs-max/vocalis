@@ -329,3 +329,13 @@ def test_shutdown_runs_garbage_collection_after_unloading() -> None:
     with patch("vocalis.model_manager.gc.collect") as mock_collect:
         manager.shutdown()
     mock_collect.assert_called_once()
+
+
+def test_shutdown_runs_garbage_collection_even_when_unload_raises() -> None:
+    from unittest.mock import patch
+
+    manager = ModelManager()
+    manager.acquire("parakeet", lambda: RaisingUnloadEngine())
+    with patch("vocalis.model_manager.gc.collect") as mock_collect:
+        manager.shutdown()
+    mock_collect.assert_called_once()
