@@ -36,7 +36,7 @@ class AutoDecision:
     reason: str
 
 
-def is_stressed(hw: HardwareInfo, policy: AutoPolicy) -> bool:
+def is_stressed(hw: HardwareInfo, policy: AutoPolicy, max_own_ram_mb: "int | None" = None) -> bool:
     """Whether the processor or memory is busy enough to avoid the heavy voice."""
     if hw.load_1min is not None and hw.cpu_count:
         if hw.load_1min / hw.cpu_count > policy.stress_load_per_core:
@@ -47,10 +47,18 @@ def is_stressed(hw: HardwareInfo, policy: AutoPolicy) -> bool:
             floor = max(floor, int(hw.ram_total_mb * policy.stress_min_free_ram_fraction))
         if hw.ram_available_mb < floor:
             return True
+    if max_own_ram_mb is not None and hw.own_process_ram_mb is not None:
+        if hw.own_process_ram_mb >= max_own_ram_mb:
+            return True
     return False
 
 
-def decide(hw: HardwareInfo, policy: AutoPolicy = AutoPolicy(), held_vram_mb: int = 0) -> AutoDecision:
+def decide(
+    hw: HardwareInfo,
+    policy: AutoPolicy = AutoPolicy(),
+    held_vram_mb: int = 0,
+    max_own_ram_mb: "int | None" = None,
+) -> AutoDecision:
     """Pick the engine order for the current hardware snapshot.
 
     Args:
@@ -58,6 +66,8 @@ def decide(hw: HardwareInfo, policy: AutoPolicy = AutoPolicy(), held_vram_mb: in
         policy: The thresholds.
         held_vram_mb: Graphics memory Vocalis itself currently holds, added
             back to "free" so its own loaded model never counts as stress.
+        max_own_ram_mb: The user's advisory RAM ceiling for Vocalis itself
+            (None means no ceiling), checked against hw.own_process_ram_mb.
     """
     if hw.gpu is None:
         return AutoDecision((PIPER, KOKORO), "No graphics card was found, so Vocalis is using the lightest voice.")
@@ -65,7 +75,7 @@ def decide(hw: HardwareInfo, policy: AutoPolicy = AutoPolicy(), held_vram_mb: in
         return AutoDecision((PIPER, KOKORO), "Your PC is very low on memory, so Vocalis is using the lightest voice.")
     if hw.gpu.total_mb <= policy.qwen3_min_gpu_total_mb:
         return AutoDecision((KOKORO, PIPER), "Your graphics card is small, so Vocalis is using the lighter voice.")
-    if is_stressed(hw, policy):
+    if is_stressed(hw, policy, max_own_ram_mb):
         return AutoDecision((KOKORO, PIPER), "Your PC is busy right now, so Vocalis is using the lighter voice.")
     if hw.gpu.free_mb + held_vram_mb < policy.qwen3_need_free_mb:
         return AutoDecision(

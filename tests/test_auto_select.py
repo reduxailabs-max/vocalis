@@ -1,4 +1,6 @@
 """Tests for vocalis.engines.auto_select — the pure rule table behind "Auto" voice choice."""
+from dataclasses import replace
+
 from vocalis.engines.auto_select import (
     KOKORO, PIPER, QWEN3_TTS, AutoPolicy, decide, is_stressed, kokoro_should_use_gpu,
 )
@@ -91,3 +93,23 @@ def test_kokoro_uses_the_gpu_only_when_there_is_room() -> None:
     assert kokoro_should_use_gpu(_hw(free=2000)) is True
     assert kokoro_should_use_gpu(_hw(free=500)) is False
     assert kokoro_should_use_gpu(_hw(total=None)) is False
+
+
+def test_own_ram_use_over_the_cap_counts_as_stress() -> None:
+    hw = replace(_hw(), own_process_ram_mb=3000)
+    assert is_stressed(hw, AutoPolicy(), max_own_ram_mb=2048) is True
+
+
+def test_own_ram_use_under_the_cap_is_not_stress() -> None:
+    hw = replace(_hw(), own_process_ram_mb=1000)
+    assert is_stressed(hw, AutoPolicy(), max_own_ram_mb=2048) is False
+
+
+def test_no_cap_means_own_ram_use_is_never_stress() -> None:
+    hw = replace(_hw(), own_process_ram_mb=999999)
+    assert is_stressed(hw, AutoPolicy(), max_own_ram_mb=None) is False
+
+
+def test_decide_downshifts_when_own_ram_is_over_the_cap() -> None:
+    hw = replace(_hw(), own_process_ram_mb=3000)
+    assert decide(hw, max_own_ram_mb=2048).chain[0] == KOKORO

@@ -61,3 +61,88 @@ def test_kokoro_use_gpu_follows_free_graphics_memory(free: int, expected: bool) 
     """Kokoro runs on the GPU only with enough free memory."""
     hw = HardwareInfo(GpuInfo("Big", 8188, free), 16000, 10000, 8, 1.0)
     assert _selector("auto", hw).kokoro_use_gpu() is expected
+
+
+def test_first_ever_plan_is_never_held_down() -> None:
+    """A fresh selector's first decision is the hardware's true choice."""
+    assert _selector("auto", STRONG).plan().chain[0] == QWEN3_TTS
+
+
+def test_a_downshift_is_held_for_the_hold_window() -> None:
+    hw = {"value": STRONG}
+    clock = {"value": 0.0}
+    selector = EngineSelector(
+        preference=lambda: "auto", hardware_probe=lambda: hw["value"], now=lambda: clock["value"],
+    )
+    assert selector.plan().chain[0] == QWEN3_TTS  # first call: strong PC
+
+    hw["value"] = NO_GPU  # PC gets stressed
+    clock["value"] = 1.0
+    assert selector.plan().chain[0] == PIPER  # real downshift, recorded
+
+    hw["value"] = STRONG  # PC recovers immediately
+    clock["value"] = 2.0  # but only 1s after the downshift
+    assert selector.plan().chain[0] == PIPER  # still held down
+
+
+def test_the_hold_expires_after_the_window() -> None:
+    hw = {"value": STRONG}
+    clock = {"value": 0.0}
+    selector = EngineSelector(
+        preference=lambda: "auto",
+        hardware_probe=lambda: hw["value"],
+        now=lambda: clock["value"],
+        downshift_hold_seconds=60.0,
+    )
+    assert selector.plan().chain[0] == QWEN3_TTS
+
+    hw["value"] = NO_GPU
+    clock["value"] = 1.0
+    assert selector.plan().chain[0] == PIPER
+
+    hw["value"] = STRONG
+    clock["value"] = 61.1  # past the 60s hold
+    assert selector.plan().chain[0] == QWEN3_TTS
+
+
+def test_a_further_downshift_during_the_hold_resets_the_timer() -> None:
+    hw = {"value": STRONG}
+    clock = {"value": 0.0}
+    selector = EngineSelector(
+        preference=lambda: "auto", hardware_probe=lambda: hw["value"], now=lambda: clock["value"],
+    )
+    assert selector.plan().chain[0] == QWEN3_TTS
+
+    medium = HardwareInfo(GpuInfo("Big", 4096, 4096), 16000, 10000, 8, 1.0)  # -> KOKORO
+    hw["value"] = medium
+    clock["value"] = 1.0
+    assert selector.plan().chain[0] == KOKORO
+
+    hw["value"] = NO_GPU  # a further, worse downshift resets the hold
+    clock["value"] = 2.0
+    assert selector.plan().chain[0] == PIPER
+
+    hw["value"] = medium  # trying to climb only to the middle tier, 10s later
+    clock["value"] = 12.0
+    assert selector.plan().chain[0] == PIPER  # still held, timer restarted at t=2.0
+
+
+def test_hysteresis_does_not_apply_to_a_forced_choice() -> None:
+    hw = {"value": STRONG}
+    clock = {"value": 0.0}
+    selector = EngineSelector(
+        preference=lambda: "piper", hardware_probe=lambda: hw["value"], now=lambda: clock["value"],
+    )
+    assert selector.plan().chain == (PIPER, KOKORO)
+    hw["value"] = STRONG
+    assert selector.plan().chain == (PIPER, KOKORO)  # forced choice, no hysteresis state touched
+
+
+def test_max_own_ram_mb_is_called_on_every_plan() -> None:
+    from unittest.mock import Mock
+
+    ram_cap = Mock(return_value=None)
+    selector = EngineSelector(preference=lambda: "auto", hardware_probe=lambda: STRONG, max_own_ram_mb=ram_cap)
+    selector.plan()
+    selector.plan()
+    assert ram_cap.call_count == 2
