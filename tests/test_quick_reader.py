@@ -3,7 +3,6 @@
 Uses fakes for every collaborator — this suite verifies orchestration
 logic only, the same approach test_dictation.py already established.
 """
-import logging
 import subprocess
 import threading
 import time
@@ -115,12 +114,6 @@ def make_feature(
         on_reading_changed=on_reading_changed,
     )
     return feature, primary, fallback, player, notifier, manager
-
-
-def sine(freq: float = 440.0, seconds: float = 2.0, rate: int = 24000) -> npt.NDArray[np.float32]:
-    """Make a quiet sine wave long enough for a real time-stretch."""
-    t = np.arange(int(rate * seconds)) / rate
-    return (0.3 * np.sin(2 * np.pi * freq * t)).astype(np.float32)
 
 
 def wait_until(predicate, timeout: float = 5.0) -> None:  # type: ignore[no-untyped-def]

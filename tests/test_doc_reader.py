@@ -5,7 +5,6 @@ already established, plus a real temporary file for read_file() so
 extraction genuinely runs (extractors.py itself is unit-tested
 separately in test_extractors.py).
 """
-import logging
 import threading
 import time
 from pathlib import Path
@@ -153,32 +152,6 @@ def _make_feature(
         on_started=on_started,
     )
     return feature, statuses, progresses, finishes
-
-
-class SineSynthesizer:
-    """Returns a real ~2 s 24 kHz sine every call -- long enough for an
-    actual time-stretch to measurably change its length (unlike
-    FakeSynthesizer's 100-sample zeros)."""
-
-    def __init__(self, sample_rate: int = 24000) -> None:
-        self.sample_rate = sample_rate
-        self.calls: "list[str]" = []
-
-    def load(self) -> None:
-        pass
-
-    def unload(self) -> None:
-        pass
-
-    @property
-    def is_loaded(self) -> bool:
-        return True
-
-    def synthesize(self, text: str) -> "tuple[npt.NDArray[np.float32], int]":
-        self.calls.append(text)
-        t = np.arange(int(self.sample_rate * 2.0)) / self.sample_rate
-        audio = (0.3 * np.sin(2 * np.pi * 440.0 * t)).astype(np.float32)
-        return audio, self.sample_rate
 
 
 def test_read_text_speaks_every_chunk_and_reports_done() -> None:
