@@ -456,6 +456,7 @@ from vocalis.config import ShortcutsConfig  # noqa: E402
 from vocalis.cli import resolve_shortcuts  # noqa: E402
 from vocalis.engines.qwen3_tts import Qwen3TTS  # noqa: E402
 from vocalis.engines.kokoro_tts import KokoroTTS  # noqa: E402
+from vocalis.engines.piper_tts import PiperTTS  # noqa: E402
 from vocalis.hotkeys.shortcut_parser import DEFAULT_SHORTCUTS  # noqa: E402
 from vocalis.settings import LiveSettings  # noqa: E402
 from vocalis.ui.status_hub import StatusHub  # noqa: E402
@@ -938,6 +939,7 @@ def test_fallback_engine_reads_the_live_speed(tmp_path: Path) -> None:
             reading_coordinator=ReadingCoordinator(), settings=settings,
         )
     piper = feature._fallback_engine  # noqa: SLF001
+    assert isinstance(piper, PiperTTS)
     assert piper._current_speed() == settings.speaking_speed()  # noqa: SLF001
     settings.update(settings.config.model_copy(update={"speaking_speed": 0.9}))
     assert piper._current_speed() == 0.9  # noqa: SLF001
@@ -949,6 +951,7 @@ def test_build_quick_reader_without_settings_uses_the_configured_speed() -> None
             config=VocalisConfig(), model_manager=ModelManager(), reading_coordinator=ReadingCoordinator(),
         )
     engine = feature._primary_engine_factory()  # noqa: SLF001
+    assert isinstance(engine, Qwen3TTS)
     assert engine._current_speed() == VocalisConfig().speaking_speed  # noqa: SLF001
 
 
@@ -990,6 +993,7 @@ def test_fallback_engine_reads_the_live_cpu_cap(tmp_path: Path) -> None:
             reading_coordinator=ReadingCoordinator(), settings=settings,
         )
     piper = feature._fallback_engine  # noqa: SLF001
+    assert isinstance(piper, PiperTTS)
     assert piper._current_max_cpu_threads() is None  # noqa: SLF001
     settings.update(settings.config.model_copy(update={"max_cpu_threads": 3}))
     assert piper._current_max_cpu_threads() == 3  # noqa: SLF001
@@ -1016,6 +1020,7 @@ def test_build_quick_reader_without_settings_uses_the_configured_caps() -> None:
             config=config, model_manager=ModelManager(), reading_coordinator=ReadingCoordinator(),
         )
     engine = feature._primary_engine_factory()  # noqa: SLF001
+    assert isinstance(engine, Qwen3TTS)
     assert engine._current_max_cpu_threads() == 5  # noqa: SLF001
     assert engine._current_gpu_vram_ceiling_mb() == 2000  # noqa: SLF001
 

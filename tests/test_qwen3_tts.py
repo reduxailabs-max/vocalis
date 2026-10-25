@@ -4,11 +4,12 @@ Uses a fake model object in place of the real Qwen3TTSModel (which needs
 a GPU and a multi-gigabyte download), so tests never touch real hardware.
 """
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, call, patch
 
 import numpy as np
 import pytest
 
+import vocalis.engines.qwen3_tts as qwen3_tts_module
 from vocalis.engines.qwen3_tts import Qwen3TTS, Qwen3TTSLoadError, _max_new_tokens_for
 
 
@@ -102,6 +103,27 @@ def test_unload_releases_gpu_memory_when_use_gpu_true() -> None:
         engine.unload()
 
     mock_empty_cache.assert_called_once()
+
+
+def test_unload_runs_gc_collect_before_emptying_the_cuda_cache() -> None:
+    """gc.collect() must break any reference cycle before empty_cache() runs,
+    otherwise empty_cache() has nothing real to hand back to the OS/driver."""
+    fake_model = FakeQwenModel(wavs=[np.zeros(1, dtype=np.float32)], sample_rate=24000)
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=True)
+    with patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls:
+        mock_model_cls.from_pretrained.return_value = fake_model
+        engine.load()
+
+    manager = Mock()
+    with (
+        patch("vocalis.engines.qwen3_tts.gc.collect") as mock_gc_collect,
+        patch("vocalis.engines.qwen3_tts.torch.cuda.empty_cache") as mock_empty_cache,
+    ):
+        manager.attach_mock(mock_gc_collect, "gc_collect")
+        manager.attach_mock(mock_empty_cache, "empty_cache")
+        engine.unload()
+
+    assert manager.mock_calls == [call.gc_collect(), call.empty_cache()]
 
 
 def test_unload_does_not_touch_cuda_when_use_gpu_false() -> None:
@@ -207,15 +229,40 @@ def test_load_applies_the_cpu_thread_cap() -> None:
     mock_set_threads.assert_called_once_with(4)
 
 
-def test_load_does_not_touch_threads_when_no_cap() -> None:
+def test_load_applies_torch_default_threads_when_no_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+    """With no cap, load() restores torch's own default thread count
+    rather than leaving torch.set_num_threads() untouched."""
+    monkeypatch.setattr(qwen3_tts_module, "_default_num_threads", None)
     engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=False)
     with (
         patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
         patch("vocalis.engines.qwen3_tts.torch.set_num_threads") as mock_set_threads,
+        patch("vocalis.engines.qwen3_tts.torch.get_num_threads", return_value=8),
     ):
         mock_model_cls.from_pretrained.return_value = object()
         engine.load()
-    mock_set_threads.assert_not_called()
+    mock_set_threads.assert_called_once_with(8)
+
+
+def test_cpu_thread_cap_resets_to_torch_default_when_turned_back_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Setting a cap, then turning it back off, must restore torch's own
+    default thread count -- not silently leave the old cap in place."""
+    monkeypatch.setattr(qwen3_tts_module, "_default_num_threads", None)
+    cap: dict[str, "int | None"] = {"value": 4}
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=False, max_cpu_threads=lambda: cap["value"])
+    with (
+        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
+        patch("vocalis.engines.qwen3_tts.torch.set_num_threads") as mock_set_threads,
+        patch("vocalis.engines.qwen3_tts.torch.get_num_threads", return_value=8),
+    ):
+        mock_model_cls.from_pretrained.return_value = object()
+
+        engine.load()
+        mock_set_threads.assert_called_once_with(4)
+
+        cap["value"] = None
+        engine.load()
+        mock_set_threads.assert_called_with(8)
 
 
 def test_cpu_thread_cap_can_be_a_live_callable() -> None:

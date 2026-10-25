@@ -22,6 +22,7 @@ import os
 
 os.environ.setdefault("TORCH_DISABLE_NATIVE_JIT", "1")
 
+import gc
 import logging
 from collections.abc import Callable
 from pathlib import Path
@@ -43,6 +44,26 @@ _MAX_NEW_TOKENS = 2048
 _STRETCH_MIN_SPEED = 1.0
 _STRETCH_MAX_SPEED = 1.2
 _BYTES_PER_MB = 1024 * 1024
+
+
+_default_num_threads: "int | None" = None
+
+
+def _torch_default_num_threads() -> int:
+    """torch's own default CPU thread count, captured once on first use.
+
+    torch.set_num_threads() is a process-global setting with no per-call
+    "unset" -- the only way back to torch's own default, once a cap has
+    been applied, is to set it explicitly. Caching the value returned by
+    torch.get_num_threads() the first time it is needed (before any
+    Qwen3TTS instance has had a chance to apply a cap of its own) lets
+    load() restore it precisely whenever the live cap later resolves back
+    to None, instead of leaving whatever cap was last applied in place.
+    """
+    global _default_num_threads
+    if _default_num_threads is None:
+        _default_num_threads = torch.get_num_threads()
+    return _default_num_threads
 
 
 def _max_new_tokens_for(text: str) -> int:
@@ -142,8 +163,7 @@ class Qwen3TTS:
                 files, CUDA unavailable, out-of-memory, etc.).
         """
         max_threads = self._current_max_cpu_threads()
-        if max_threads is not None:
-            torch.set_num_threads(max_threads)
+        torch.set_num_threads(max_threads if max_threads is not None else _torch_default_num_threads())
         if self._use_gpu:
             self._apply_vram_ceiling()
         try:
@@ -167,9 +187,20 @@ class Qwen3TTS:
         only an explicit torch.cuda.empty_cache() call does, and without it
         ModelManager's whole idle-unload policy would not actually free VRAM
         for this engine while the process keeps running.
+
+        gc.collect() runs here, before empty_cache(), rather than after: a
+        Python reference cycle holding the model (or one of its tensors)
+        alive would keep its CUDA memory allocated even after self._model is
+        set to None, so empty_cache() alone would have nothing real to hand
+        back to the OS/driver. Breaking the cycle first lets the tensor's
+        refcount actually reach zero, so the empty_cache() call that follows
+        empties a cache that is genuinely free -- making the combination of
+        this gc.collect() and ModelManager's own (a separate, additional
+        safety net run after unload() returns) effective.
         """
         self._model = None
         if self._use_gpu:
+            gc.collect()
             torch.cuda.empty_cache()
 
     def _current_speaker(self) -> str:
