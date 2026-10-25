@@ -775,3 +775,19 @@ def test_a_finished_reading_still_announces_done_once() -> None:
     feature._finish_reading(1, SpeakOutcome.DONE, notice)  # noqa: SLF001
 
     assert [msg for _, msg in notifier.messages] == ["Done"]
+
+
+def test_clipboard_text_is_normalized_before_being_spoken() -> None:
+    """A URL or symbol in the copied text is spoken, not read as symbols;
+    the desktop notification still shows the original, un-normalized text."""
+    primary = FakeSynthesizer(audio=np.zeros(100, dtype=np.float32))
+    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
+    feature, _, _, _, notifier, _ = make_feature(
+        primary, fallback, clipboard_text="Cost is $5 & visit https://example.com"
+    )
+
+    feature.on_trigger()
+    wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
+
+    assert primary.calls == ["Cost is 5 dollars and visit example dot com"]
+    assert ("Vocalis — Quick Reader", "Cost is $5 & visit https://example.com") in notifier.messages

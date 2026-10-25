@@ -1,5 +1,5 @@
 """Tests for vocalis.text.normalizer.normalize_markdown."""
-from vocalis.text.normalizer import normalize_markdown
+from vocalis.text.normalizer import normalize_markdown, normalize_text
 
 
 def test_strips_heading_markers() -> None:
@@ -65,3 +65,39 @@ def test_nul_characters_in_the_input_never_collide_with_code_placeholders() -> N
     result = normalize_markdown("Use `real` here \x00CODE0\x00 and `other`.")
 
     assert result == "Use real here CODE0 and other."
+
+
+def test_normalize_text_speaks_urls() -> None:
+    assert normalize_text("Visit https://example.com/docs for info") == "Visit example dot com slash docs for info"
+
+
+def test_normalize_text_speaks_www_urls() -> None:
+    assert normalize_text("See www.example.com") == "See www dot example dot com"
+
+
+def test_normalize_text_strips_a_trailing_slash() -> None:
+    assert normalize_text("Go to https://example.com/") == "Go to example dot com"
+
+
+def test_normalize_text_speaks_currency() -> None:
+    assert normalize_text("It costs $42") == "It costs 42 dollars"
+
+
+def test_normalize_text_speaks_percent() -> None:
+    assert normalize_text("Up 50% today") == "Up 50 percent today"
+
+
+def test_normalize_text_expands_ampersand_and_at() -> None:
+    assert normalize_text("Rock & Roll, email me @home") == "Rock and Roll, email me at home"
+
+
+def test_normalize_text_leaves_plain_numbers_alone() -> None:
+    assert normalize_text("I have 42 apples and 3.14 pie") == "I have 42 apples and 3.14 pie"
+
+
+def test_normalize_text_handles_empty_string() -> None:
+    assert normalize_text("") == ""
+
+
+def test_normalize_markdown_also_normalizes_urls_and_symbols() -> None:
+    assert normalize_markdown("Cost is $5 & visit https://example.com") == "Cost is 5 dollars and visit example dot com"

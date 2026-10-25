@@ -30,6 +30,7 @@ from vocalis.model_manager import ModelEngine, ModelManager
 from vocalis.notify import Notifier
 from vocalis.output.clipboard import ClipboardReader
 from vocalis.text.chunker import chunk_text
+from vocalis.text.normalizer import normalize_text
 
 logger = logging.getLogger("vocalis")
 
@@ -277,7 +278,7 @@ class QuickReaderFeature:
             self._speaker = speaker
         text_notice = threading.Thread(target=self._notifier.notify, args=(_TITLE, text), daemon=True)
         text_notice.start()
-        outcome = speaker.run(chunk_text(text))
+        outcome = speaker.run(chunk_text(normalize_text(text)))
         with self._lock:
             if self._speaker is speaker:
                 self._speaker = None

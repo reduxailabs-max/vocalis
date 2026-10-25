@@ -39,6 +39,42 @@ _BOLD_UNDERSCORE_RE = re.compile(r"(?<!\w)__(?!\s)(.+?)(?<!\s)__(?!\w)")
 _ITALIC_UNDERSCORE_RE = re.compile(r"(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)")
 _INLINE_WHITESPACE_RE = re.compile(r"[ \t]+")
 _EXCESS_BLANK_LINES_RE = re.compile(r"\n{3,}")
+_URL_RE = re.compile(r"\bhttps?://[^\s,;:!?)]+|\bwww\.[^\s,;:!?)]+", re.IGNORECASE)
+_CURRENCY_RE = re.compile(r"\$(\d+(?:\.\d+)?)")
+_PERCENT_RE = re.compile(r"(\d)%")
+
+
+def _speak_url(match: "re.Match[str]") -> str:
+    """Turn one matched URL into a short, spoken-friendly phrase."""
+    url = re.sub(r"^https?://", "", match.group(0), flags=re.IGNORECASE)
+    url = url.replace(".", " dot ").replace("/", " slash ")
+    url = re.sub(r"\s+", " ", url).strip()
+    return re.sub(r"\s*slash$", "", url)
+
+
+def normalize_text(text: str) -> str:
+    """Make raw text easier for a TTS engine to pronounce.
+
+    Deliberately basic, and independent of normalize_markdown (Quick
+    Reader's clipboard text is never markdown): speaks out URLs
+    ("https://example.com/docs" -> "example dot com slash docs"), dollar
+    amounts ("$42" -> "42 dollars") and percentages ("50%" -> "50
+    percent"), and expands the two symbols a voice engine otherwise
+    either misreads or skips (& and @). Plain numbers are left alone --
+    the voice engines already read digit sequences correctly, so
+    over-normalizing them would do more harm than good.
+
+    Args:
+        text: Raw text, already markdown-free (or never markdown).
+
+    Returns:
+        The same text with the substitutions above applied. Never raises.
+    """
+    result = _URL_RE.sub(_speak_url, text)
+    result = _CURRENCY_RE.sub(r"\1 dollars", result)
+    result = _PERCENT_RE.sub(r"\1 percent", result)
+    result = result.replace("&", " and ").replace("@", " at ")
+    return re.sub(r"[ \t]+", " ", result).strip()
 
 
 def normalize_markdown(text: str) -> str:
@@ -86,4 +122,4 @@ def normalize_markdown(text: str) -> str:
     for i, code_text in enumerate(inline_codes):
         result = result.replace(f"\x00CODE{i}\x00", code_text)
 
-    return result.strip()
+    return normalize_text(result)
