@@ -122,13 +122,18 @@ audio shorter than 4096 samples (too short to stretch meaningfully).
 `vocalis.audio.pace` (which `config.py` does, just to get
 `MIN_SPEED`/`MAX_SPEED`) never pays librosa's import cost.
 
-`paced_audio(audio, sample_rate, provider)` is the shared entry point both
-readers call: with `provider` is `None` it returns `audio` unchanged; otherwise
-it calls `provider()` for the current speed and applies it, catching any
-exception from either call, logging it as a warning, and returning the
-original `audio` — a pacing failure must never break a reading. Since Stage 6b both readers call it through `ChunkedSpeaker`, once per chunk,
-before the chunk is pushed into the stream; a pause rewinds the heard clip inside
-`SpeechStream`, so a resume replays the same already-paced audio.
+`paced_audio(audio, sample_rate, provider)` is the shared entry point: with
+`provider` is `None` it returns `audio` unchanged; otherwise it calls
+`provider()` for the current speed and applies it, catching any exception
+from either call, logging it as a warning, and returning the original
+`audio` — a pacing failure must never break a reading. Since Stage 6c it has
+exactly one caller, `Qwen3TTS.synthesize()`, capped to a mild 1.0-1.2x (that
+engine has no native speed control of its own, and a bigger stretch audibly
+hurts its voice). Kokoro and Piper have real speed controls and never call
+it: Kokoro passes the speed straight to `kokoro.create(..., speed=...)`, and
+Piper converts it to its `--length_scale` argument (`1 / speed`). A pause
+still rewinds the heard clip inside `SpeechStream`, so a resume replays the
+same already-paced audio.
 
 **Complexity:** O(n) in sample count for the stretch itself (one-time
 librosa JIT-compilation cost on first use, pre-paid at startup by

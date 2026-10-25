@@ -9,7 +9,7 @@ src/vocalis/
 │   ├── capture.py        # MicRecorder: sounddevice-based mic capture
 │   ├── speech_stream.py   # SpeechStream: one persistent gapless output stream per reading (Stage 6b)
 │   ├── output_device.py   # OutputDeviceChooser: probes and caches a working sound output
-│   ├── pace.py            # apply_speed/paced_audio: pitch-preserving speaking-pace change
+│   ├── pace.py            # apply_speed/paced_audio: pitch-preserving speaking-pace change (Stage 6c: Qwen3-TTS's own capped 1.0-1.2x stretch only)
 │   └── playback.py        # AudioPlayer: interruptible playback + open_stream/close_stream (Stage 6b)
 ├── cli.py               # main(): the heavy app startup (imported lazily by entry.py)
 ├── config.py           # VocalisConfig pydantic model + TOML load/save
@@ -18,11 +18,11 @@ src/vocalis/
 │   ├── auto_select.py     # pure Auto policy: which engine order for this PC right now (Stage 6a)
 │   ├── base.py            # Synthesizer / TTSEngine protocols (Stage 6a)
 │   ├── chain.py           # EngineChain: try engines in order, fall down on failure; hold/close a voice for a reading (Stage 6a, 6b)
-│   ├── kokoro_tts.py      # KokoroTTS: light, natural voice via kokoro-onnx (Stage 6a)
+│   ├── kokoro_tts.py      # KokoroTTS: light, natural voice via kokoro-onnx (Stage 6a; native speed control, Stage 6c)
 │   ├── registry.py        # EngineSelector/EnginePlan: user choice + PC state -> engine order (Stage 6a)
 │   ├── parakeet.py        # ParakeetSTT: onnx-asr wrapper implementing ModelEngine
-│   ├── piper_tts.py        # PiperTTS: CPU-only fallback voice, never GPU-managed
-│   ├── qwen3_tts.py        # Qwen3TTS: primary voice, GPU, via ModelManager
+│   ├── piper_tts.py        # PiperTTS: CPU-only fallback voice, never GPU-managed (native --length_scale speed, Stage 6c)
+│   ├── qwen3_tts.py        # Qwen3TTS: primary voice, GPU, via ModelManager (tuned generation params + capped speed stretch, Stage 6c)
 │   └── tesseract_ocr.py    # TesseractOCR: CPU-only text recognition, never GPU-managed
 ├── entry.py              # `vocalis` console-script entrypoint — stays light so --settings is fast (Stage 5 fix)
 ├── features/
@@ -52,7 +52,7 @@ src/vocalis/
 ├── text/
 │   ├── chunker.py          # chunk_spans/chunk_text: sentence-aware chunks with exact spans (Stage 6b)
 │   ├── extractors.py       # extract_text: txt/md/pdf/docx/html readers + typed errors
-│   └── normalizer.py       # normalize_markdown: markdown -> speakable text
+│   └── normalizer.py       # normalize_markdown + normalize_text: markdown/plain text -> speakable text (numbers, URLs, symbols; Stage 6c)
 ├── ui/
 │   ├── doc_popup.py        # DocumentReaderPopup: PySide6 Document Reader window
 │   ├── floating_widget.py  # FloatingWidget: small always-on-top reading box

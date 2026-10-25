@@ -263,8 +263,11 @@ preview your voice before you commit to it.
   (faster), default **1.15x** (a little faster than the voice's natural
   pace). It applies from the next piece of speech it generates — if you
   change it while something is already mid-sentence, that part keeps its
-  old speed and the new speed takes over from the next piece onward. This
-  is the same for every voice (Qwen3-TTS, Kokoro and Piper).
+  old speed and the new speed takes over from the next piece onward.
+  Kokoro and Piper follow the slider across its whole range. Qwen3-TTS has
+  no speed control of its own, so it only ever speeds up, and only up to
+  **1.2x** — asking for slower than natural, or faster than 1.2x, still
+  sounds like Qwen3-TTS's normal pace, to protect its voice quality.
   **Note:** if you change the speed while a Document Reader reading is
   *paused*, the new speed takes effect from the next chunk once you
   resume — the paused chunk itself resumes at the speed it was already

@@ -121,7 +121,8 @@ Background thread (Stage 6b — long text is read in chunks on one stream):
   -> side thread: notify(text)                 # copied text; never delays the sound
   -> ChunkedSpeaker.run(chunks):
        for each chunk: EngineChain.synthesize (voice held loaded, falls down the
-       plan on failure) -> paced_audio -> push into the SpeechStream
+       plan on failure; each engine paces its own output -- see "Reading-time
+       pacing flow" below) -> push into the SpeechStream
        (one open sound stream, at most 3 clips queued; the producer waits when full)
   -> playback ended: report the reading END first, then wait <= 6 s for the
      copied-text notification, then notify("Done")  (a stop skips the wait)
@@ -172,7 +173,8 @@ Worker thread (_prepare_and_read, then _read_worker):
   -> ChunkedSpeaker.run(chunks)   (Stage 6b; replaces the old play-one-chunk loop)
        producer: for each chunk, EngineChain.synthesize (voice held loaded for
                  the whole reading; falls down Qwen3-TTS -> Kokoro -> Piper, or
-                 the user's choice, notifying once) -> paced_audio -> push
+                 the user's choice, notifying once; each engine paces its own
+                 output) -> push
        consumer: SpeechStream plays the clips back-to-back on ONE open stream
        "piece N of M": on_progress(N, M) when piece N STARTS BEING HEARD
        pause(): silence at once, the heard piece rewinds; resume() replays it
@@ -275,17 +277,20 @@ main()
                           on_preview_voice=<built by _make_on_preview_voice>)
 ```
 
-Reading-time pacing flow (Quick Reader and Document Reader; since Stage 6b
-`ChunkedSpeaker` applies it once per chunk before the chunk is pushed into the
-stream; the last line below is the old `player.play()` call):
+Reading-time pacing flow (Quick Reader and Document Reader; since Stage 6c
+each voice engine applies its own pace inside synthesize(), instead of a
+shared post-processing step):
 
 ```
-synthesize text -> audio, sample_rate
--> audio = paced_audio(audio, sample_rate, settings.speaking_speed)
-     -> provider() reads the CURRENT speed at the moment of synthesis
-     -> apply_speed() time-stretches unless speed is within 1% of 1.0
-     -> any failure here is logged and the original audio is played instead
--> player.play(audio, sample_rate)
+EngineChain.synthesize(text)
+  -> KokoroTTS / PiperTTS: pass the configured speed straight to the engine's
+     own speed knob (Kokoro's `speed=`, Piper's `--length_scale`) -- no
+     separate stretch, no quality loss
+  -> Qwen3TTS: no native speed control, so it stretches its OWN output with
+     apply_speed()/paced_audio(), capped to 1.0-1.2x (never slower than
+     natural speech, never sped up past 1.2x, to protect its voice quality);
+     any failure here is logged and the original audio is used instead
+-> ChunkedSpeaker pushes the (already-paced) audio into the SpeechStream
 ```
 
 Device-failure flow, shared by both readers through one chooser:

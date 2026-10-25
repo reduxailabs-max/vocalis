@@ -385,7 +385,7 @@ every `play()`) and an optional `on_device_failed(device)` hook:
 - `on_device_failed` is never called on a natural finish or a user-
   initiated `stop()` — only on a real stall or open failure.
 
-### Pacing (`audio/pace.py`): one shared helper, applied once per chunk/reading
+### Pacing (`audio/pace.py`): each engine applies its own
 
 `apply_speed(audio, sample_rate, speed)` runs the already-synthesized
 waveform through `librosa.effects.time_stretch` (pitch-preserving);
@@ -394,14 +394,19 @@ waveform through `librosa.effects.time_stretch` (pitch-preserving);
 `MAX_SPEED`) does not pay librosa's import cost. `clamp_speed()` keeps
 the factor inside `0.7`–`1.6` (NaN treated as `1.0`).
 
-`paced_audio(audio, sample_rate, provider)` is the one function Quick
-Reader and Document Reader both call: it reads the caller's current speed
+`paced_audio(audio, sample_rate, provider)` reads the caller's current speed
 from `provider()` and applies it, or returns the audio unchanged if
-`provider` is `None`, or if either call raises (logged as a warning —
-a pacing failure must never break a reading). Since Stage 6b both readers call it through `ChunkedSpeaker`, once per chunk,
-before the chunk is pushed into the stream; a pause rewinds the heard clip inside
-`SpeechStream`, so a resume replays the same already-paced audio (see the spec
-amendment below for the user-visible effect of that choice).
+`provider` is `None`, or if either call raises (logged as a warning — a
+pacing failure must never break a reading). Since Stage 6c it has exactly one
+caller: `Qwen3TTS.synthesize()`, which has no native speed control of its own
+and uses it for a mild, capped (1.0-1.2x) time-stretch — never slower than
+natural speech, never sped up past 1.2x, so the stretch never gets heavy
+enough to hurt this voice's quality. Kokoro and Piper have real speed
+controls and never call `paced_audio` at all: `KokoroTTS.synthesize()`
+passes the configured speed straight to `kokoro.create(..., speed=...)`, and
+`PiperTTS.synthesize()` converts it to Piper's `--length_scale` argument
+(`1 / speed`). A pause still rewinds the heard clip inside `SpeechStream`, so
+a resume replays the same already-paced audio.
 
 ### `main()` wiring and notification rule
 
@@ -751,8 +756,9 @@ ChunkedSpeaker.run(chunks)            SpeechStream                 sound card
 - `features/chunked_speaker.py` — `ChunkedSpeaker` is made once per
   reading. Its `run(chunks)` is a producer loop on the caller's worker
   thread: for each chunk it asks a `SpeechSource` (in practice an
-  `EngineChain`) for audio, applies the speaking pace (`paced_audio`) and
-  pushes the result into the stream. It returns a `SpeakOutcome`
+  `EngineChain`, whose chosen engine already applied its own pace -- see
+  "Stage 6c addition: clarity" below) for audio and pushes it into the
+  stream. It returns a `SpeakOutcome`
   (`DONE`, `STOPPED`, `SPEECH_FAILED` when no voice could make a chunk, `PLAYBACK_FAILED`). `pause()`, `resume()` and `stop()`
   are thread-safe; `stop()` is a permanent latch, so a stop that lands
   while the model is still loading means the reading never makes a sound.
@@ -906,5 +912,75 @@ Made during the build (they correct or refine the plan):
 - Quick Reader can show both "Stopped" and "Done" if a stop lands between
   `run()` returning and the reading end being reported (13 of 300 stress
   runs; the window existed before Stage 6b).
-- An engine that loads but fails to synthesize stays loaded until the
-  reading ends.
+
+## Stage 6c addition: clarity
+
+Stage 6b made long readings gapless; Stage 6c makes them sound better.
+Four independent changes, each scoped to the engine or layer that owns the
+problem.
+
+### Each engine paces itself
+
+Before Stage 6c, every engine's output went through one shared
+`paced_audio()` step in `ChunkedSpeaker`, which always used a lossy
+`librosa` time-stretch — even for engines that have a real speed knob.
+Now each engine applies its own pace during `synthesize()`, and
+`ChunkedSpeaker` no longer touches pacing at all:
+
+- `KokoroTTS` and `PiperTTS` gained a `speed` constructor argument (a
+  float or a live callable, read fresh on every call, the same pattern
+  `voice`/`speaker` already use). Kokoro passes it straight through to
+  `kokoro.create(..., speed=...)`; Piper converts it to its
+  `--length_scale` command-line argument (`1 / speed`). Neither ever
+  calls `apply_speed()`.
+- `Qwen3TTS` has no native speed control, so it keeps the `librosa`
+  stretch — but only for a mild, capped range (**1.0x-1.2x**): a bigger
+  stretch, in either direction, audibly hurts this voice, so a slower or
+  more-sped-up request is simply played at the nearest end of that range
+  instead. `audio/pace.py` is unchanged; `paced_audio()`'s only caller is
+  now `Qwen3TTS.synthesize()`.
+- `cli.py`'s `_make_qwen_factory()` / `_make_kokoro_factory()` and both
+  `PiperTTS(...)` construction sites now resolve `speed` the same way
+  they already resolve `voice`/`speaker` (`settings.speaking_speed` when
+  live settings exist, else the config value), and pass it to the engine.
+  `QuickReaderFeature` and `DocumentReaderFeature` lost their
+  `speed_provider` constructor argument entirely — pacing is no longer
+  something a reader orchestrates.
+
+### Qwen3-TTS generation tuning
+
+`Qwen3TTS.synthesize()` now passes three extra arguments to
+`generate_custom_voice()`: a lower, steadier `temperature` (`0.65` instead
+of the library's own `0.9` default), a lower `top_k` (`20` instead of
+`50`), and a `max_new_tokens` scaled to the text's length (`6` tokens per
+character, floored at `200`, capped at the library's own default of
+`2048`) instead of always requesting the full default budget. A typical
+~300-character chunk now asks for roughly half the token budget it used
+to, which is both faster and less prone to the model wandering or
+repeating near the end of a long generation; an occasional very long
+chunk is still capped at the library's tuned default rather than cut off.
+
+### English-native speaker, with a warning on a mismatch
+
+The default Qwen3-TTS speaker was already `Ryan` (English-native); Stage
+6c adds a check that stays useful if that ever changes. Qwen3-TTS always
+generates speech with `language="English"` (configuring the spoken
+language itself is not yet exposed), but five of its nine preset voices
+are native to Chinese, one to Japanese, and one to Korean. `EnginesConfig`
+gained a `model_validator` that logs a warning (never raises — a
+mismatched choice still works, it just sounds worse) whenever
+`qwen3_tts_speaker` is not one of the two English-native presets (`Ryan`,
+`Aiden`).
+
+### Basic text normalization
+
+`text/normalizer.py` gained `normalize_text()`: a small, deliberately
+basic pass that speaks out URLs (`https://example.com/docs` -> "example
+dot com slash docs"), dollar amounts (`$42` -> "42 dollars") and
+percentages (`50%` -> "50 percent"), and expands `&`/`@` into "and"/"at".
+Plain numbers are left alone — the voice engines already read digit
+sequences correctly, so over-normalizing them would do more harm than
+good. `normalize_markdown()` now calls it as its last step, so Document
+Reader gets it for free; Quick Reader (whose clipboard text is never
+markdown) calls it directly, right before chunking, while still notifying
+the user with the original, un-normalized copied text.

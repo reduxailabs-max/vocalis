@@ -69,7 +69,7 @@
 
 | File | Purpose |
 |---|---|
-| `src/vocalis/audio/pace.py` | `apply_speed()`/`clamp_speed()` — pitch-preserving speed change via `librosa.effects.time_stretch` (imported lazily, inside the function); `paced_audio()` — the one helper Quick Reader and Document Reader both call to apply the current speaking pace, swallowing any pacing failure and returning the original audio unchanged. |
+| `src/vocalis/audio/pace.py` | `apply_speed()`/`clamp_speed()` — pitch-preserving speed change via `librosa.effects.time_stretch` (imported lazily, inside the function); `paced_audio()` — swallows any pacing failure and returns the original audio unchanged (since Stage 6c, its only caller is `Qwen3TTS.synthesize()`, capped to 1.0-1.2x; Kokoro and Piper use their own native speed controls instead — see Stage 6c below). |
 | `src/vocalis/audio/output_device.py` | `OutputDeviceChooser` — probes candidate sound outputs (opens a stream, waits for the callback to fire) and caches the first one that really works; `mark_failed()`/`reset()`; a short-lived negative cache (15s default) so a "nothing works" answer is retried instead of sticking forever. |
 
 ## Stage 1 (Sound and voice) — changed files
@@ -81,8 +81,8 @@
 | `src/vocalis/settings.py` | `LiveSettings` gained `audio_output_device()` and `speaking_speed()` live accessors. |
 | `src/vocalis/ui/settings_window.py` | Gained the Sound output drop-down + **Test sound** button, the Speaking speed slider, and the **Preview voice** button; takes `output_names`/`on_test_sound`/`on_preview_voice` callables. |
 | `src/vocalis/cli.py` | Builds one shared `OutputDeviceChooser`, wires it into both readers' `AudioPlayer`s and into `build_ui()`'s Settings window; adds `_make_device_failure_hook()`, `_make_on_test_sound()`, `_make_on_preview_voice()` and the `_test_tone()` helper. |
-| `src/vocalis/features/quick_reader.py` | Gained `speed_provider`; pacing applied via `paced_audio()` (since Stage 6b once per chunk, inside `ChunkedSpeaker`). |
-| `src/vocalis/features/doc_reader.py` | Gained `speed_provider`; pacing applied via `paced_audio()` (since Stage 6b pacing happens once per chunk inside `ChunkedSpeaker`; the old `_play_chunk_until_done()` helper was removed). |
+| `src/vocalis/features/quick_reader.py` | Gained `speed_provider`; pacing applied via `paced_audio()` (since Stage 6b once per chunk, inside `ChunkedSpeaker`; since Stage 6c `speed_provider` was removed again — each voice engine paces its own output now, see Stage 6c below). |
+| `src/vocalis/features/doc_reader.py` | Gained `speed_provider`; pacing applied via `paced_audio()` (since Stage 6b pacing happens once per chunk inside `ChunkedSpeaker`, and the old `_play_chunk_until_done()` helper was removed; since Stage 6c `speed_provider` was removed again — each voice engine paces its own output now, see Stage 6c below). |
 
 ## Stage 2 (Service and autostart) — new files
 
@@ -218,3 +218,20 @@
 | `src/vocalis/features/quick_reader.py` | Reads long clipboard text in chunks through `ChunkedSpeaker`; copied-text notice sent from a side thread. |
 | `src/vocalis/features/doc_reader.py` | Speaks through `ChunkedSpeaker`; "piece N of M" when a piece starts being heard; repeat read stops the previous one. |
 | `tests/test_chunker.py`, `test_playback.py`, `test_engine_chain.py`, `test_model_manager.py`, `test_doc_reader.py`, `test_quick_reader.py`, `test_cross_feature_integration.py`, `test_shared_tts_engine.py`, `test_reading_hooks_integration.py` | Extended or ported to the fake sound output. |
+
+## Stage 6c: clarity
+
+**Changed files**
+
+| File | Change |
+|---|---|
+| `src/vocalis/engines/qwen3_tts.py` | Gained a `speed` constructor argument (own capped 1.0-1.2x `librosa` stretch, `paced_audio()`'s only remaining caller); `synthesize()` now tunes `temperature`/`top_k`/`max_new_tokens`. |
+| `src/vocalis/engines/kokoro_tts.py` | Gained a `speed` constructor argument, passed straight to Kokoro's own `speed=` parameter. |
+| `src/vocalis/engines/piper_tts.py` | Gained a `speed` constructor argument, converted to Piper's own `--length_scale` argument (`1 / speed`). |
+| `src/vocalis/features/chunked_speaker.py` | Lost `speed_provider` — pacing is now each engine's own job. |
+| `src/vocalis/features/quick_reader.py` | Lost `speed_provider`; clipboard text is now passed through `normalize_text()` before chunking (the desktop notification still shows the original text). |
+| `src/vocalis/features/doc_reader.py` | Lost `speed_provider`. |
+| `src/vocalis/cli.py` | `_make_qwen_factory()`/`_make_kokoro_factory()` and both `PiperTTS(...)` construction sites now resolve and pass a live `speed`. |
+| `src/vocalis/config.py` | `EnginesConfig` gained a `model_validator` that warns (never blocks) when `qwen3_tts_speaker` is not English-native (`Ryan`/`Aiden`). |
+| `src/vocalis/text/normalizer.py` | Gained `normalize_text()` (URLs, `$`/`%`/`&`/`@`); `normalize_markdown()` now calls it as its last step. |
+| `tests/test_qwen3_tts.py`, `tests/test_kokoro_tts.py`, `tests/test_piper_tts.py`, `tests/test_chunked_speaker.py`, `tests/test_quick_reader.py`, `tests/test_doc_reader.py`, `tests/test_cli.py`, `tests/test_config.py`, `tests/test_normalizer.py` | Extended or ported for the above. |
