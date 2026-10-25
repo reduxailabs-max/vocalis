@@ -100,7 +100,6 @@ def make_feature(
     player: AudioPlayer | None = None,
     reading_coordinator: "ReadingCoordinator | None" = None,
     on_reading_changed: "Callable[[bool], None] | None" = None,
-    speed_provider: "Callable[[], float] | None" = None,
 ) -> "tuple[QuickReaderFeature, FakeSynthesizer, FakeSynthesizer, Any, FakeNotifier, ModelManager]":
     manager = ModelManager()
     notifier = FakeNotifier()
@@ -114,7 +113,6 @@ def make_feature(
         notifier=notifier,  # type: ignore[arg-type]
         reading_coordinator=reading_coordinator,
         on_reading_changed=on_reading_changed,
-        speed_provider=speed_provider,
     )
     return feature, primary, fallback, player, notifier, manager
 
@@ -537,84 +535,6 @@ def test_the_reading_claim_is_released_while_holding_the_feature_lock() -> None:
     wait_until(lambda: bool(coordinator.lock_held_at_finish))
 
     assert coordinator.lock_held_at_finish == [True]
-
-
-def _played_length(player: Any) -> int:
-    """How many audible samples reached the (fake) sound card."""
-    return len(player.output.played())
-
-
-def test_no_speed_provider_leaves_audio_unchanged() -> None:
-    """Without a speed_provider, the clip's length is unchanged (only the ~8 ms fades are lost)."""
-    audio = sine()
-    primary = FakeSynthesizer(audio=audio, sample_rate=24000)
-    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-    feature, _, _, player, notifier, _ = make_feature(primary, fallback, clipboard_text="pace me")
-
-    feature.on_trigger()
-    wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
-
-    assert player.output.opened == 1
-    assert player.output.kwargs[0]["samplerate"] == 24000
-    assert abs(_played_length(player) - len(audio)) < 0.03 * len(audio)
-
-
-def test_speed_provider_returning_one_leaves_audio_unchanged() -> None:
-    """A neutral speed (1.0) also leaves the length unchanged."""
-    audio = sine()
-    primary = FakeSynthesizer(audio=audio, sample_rate=24000)
-    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-    feature, _, _, player, notifier, _ = make_feature(
-        primary, fallback, clipboard_text="pace me", speed_provider=lambda: 1.0
-    )
-
-    feature.on_trigger()
-    wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
-
-    assert player.output.opened == 1
-    assert abs(_played_length(player) - len(audio)) < 0.03 * len(audio)
-
-
-def test_speed_provider_shortens_the_audio_handed_to_the_player() -> None:
-    """A speed_provider returning 1.5 shortens the played audio by ~1/1.5."""
-    audio = sine()
-    primary = FakeSynthesizer(audio=audio, sample_rate=24000)
-    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-    feature, _, _, player, notifier, _ = make_feature(
-        primary, fallback, clipboard_text="pace me", speed_provider=lambda: 1.5
-    )
-
-    feature.on_trigger()
-    wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
-
-    assert player.output.opened == 1
-    assert player.output.kwargs[0]["samplerate"] == 24000
-    assert abs(_played_length(player) - len(audio) / 1.5) < 0.03 * len(audio)
-
-
-def test_a_raising_speed_provider_still_plays_the_original_audio(
-    caplog: "pytest.LogCaptureFixture",
-) -> None:
-    """A speed_provider that raises must never break the reading: the
-    original audio still plays and a warning is logged."""
-    audio = sine()
-    primary = FakeSynthesizer(audio=audio, sample_rate=24000)
-    fallback = FakeSynthesizer(audio=np.zeros(1, dtype=np.float32))
-
-    def exploding_provider() -> float:
-        raise RuntimeError("settings unavailable")
-
-    feature, _, _, player, notifier, _ = make_feature(
-        primary, fallback, clipboard_text="pace me", speed_provider=exploding_provider
-    )
-
-    with caplog.at_level(logging.WARNING, logger="vocalis"):
-        feature.on_trigger()
-        wait_until(lambda: any(msg == "Done" for _, msg in notifier.messages))
-
-    assert player.output.opened == 1
-    assert abs(_played_length(player) - len(audio)) < 0.03 * len(audio)
-    assert any(record.levelno == logging.WARNING for record in caplog.records)
 
 
 def _build_with_selector(

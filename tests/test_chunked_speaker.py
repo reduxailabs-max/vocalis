@@ -254,20 +254,3 @@ def test_the_voice_is_released_only_after_playback_has_ended() -> None:
     thread.join(timeout=5.0)
     assert outcomes == [SpeakOutcome.DONE]
     assert source.closed == 1
-
-
-def test_the_speaking_pace_is_applied_to_each_chunk() -> None:
-    """The speaking pace is applied to each chunk."""
-    player, recorder = _manual_player()
-    source = FakeSource(length=8000)
-    speaker = ChunkedSpeaker(player, lambda: source, speed_provider=lambda: 1.6, fade_seconds=0.0)
-    thread, outcomes = _start(speaker, ["one"])
-    wait_until(lambda: speaker.queued_clips == 1)
-    manual = cast(ManualStream, recorder.streams[-1])
-
-    out = manual.pull(9000)
-    thread.join(timeout=5.0)
-
-    assert outcomes == [SpeakOutcome.DONE]
-    # 8000 samples sped up by the maximum pace (1.6x) is about 5000 samples, clearly shorter.
-    assert 3500 < np.count_nonzero(out) < 6500

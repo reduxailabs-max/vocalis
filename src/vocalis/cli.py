@@ -167,15 +167,16 @@ def _make_notifier(config: VocalisConfig, settings: LiveSettings | None) -> Noti
 def _make_qwen_factory(
     config: VocalisConfig, settings: LiveSettings | None
 ) -> Callable[[], Qwen3TTS]:
-    """A factory building Qwen3TTS; the voice is read live when settings are given."""
+    """A factory building Qwen3TTS; the voice and speed are read live when settings are given."""
     qwen_model_dir = Path(config.engines.qwen3_tts_model_dir)
     speaker: "str | Callable[[], str]" = (
         settings.voice if settings is not None else config.engines.qwen3_tts_speaker
     )
+    speed: "float | Callable[[], float]" = settings.speaking_speed if settings is not None else config.speaking_speed
 
     def primary_engine_factory() -> Qwen3TTS:
         """Build the primary text-to-speech engine."""
-        return Qwen3TTS(model_dir=qwen_model_dir, speaker=speaker)
+        return Qwen3TTS(model_dir=qwen_model_dir, speaker=speaker, speed=speed)
 
     return primary_engine_factory
 
@@ -199,14 +200,17 @@ def _make_engine_selector(
 def _make_kokoro_factory(
     config: VocalisConfig, settings: LiveSettings | None, selector: EngineSelector
 ) -> Callable[[], KokoroTTS]:
-    """A factory building KokoroTTS; the voice is read live, graphics-card use is decided at load."""
+    """A factory building KokoroTTS; voice and speed are read live, graphics-card use is decided at load."""
     model_path = Path(config.engines.kokoro_model_path)
     voices_path = Path(config.engines.kokoro_voices_path)
     voice: "str | Callable[[], str]" = settings.kokoro_voice if settings is not None else config.engines.kokoro_voice
+    speed: "float | Callable[[], float]" = settings.speaking_speed if settings is not None else config.speaking_speed
 
     def kokoro_factory() -> KokoroTTS:
         """Build the light voice engine."""
-        return KokoroTTS(model_path=model_path, voices_path=voices_path, voice=voice, use_gpu=selector.kokoro_use_gpu)
+        return KokoroTTS(
+            model_path=model_path, voices_path=voices_path, voice=voice, use_gpu=selector.kokoro_use_gpu, speed=speed
+        )
 
     return kokoro_factory
 
@@ -461,6 +465,7 @@ def build_quick_reader(
     fallback_engine = PiperTTS(
         binary_path=Path(config.engines.piper_binary_path),
         model_path=Path(config.engines.piper_voice_model_path),
+        speed=settings.speaking_speed if settings is not None else config.speaking_speed,
     )
     fallback_engine.load()
     notifier = _make_notifier(config, settings)
@@ -490,7 +495,6 @@ def build_quick_reader(
         notifier=notifier,
         reading_coordinator=reading_coordinator,
         on_reading_changed=on_reading_changed if hub is not None else None,
-        speed_provider=settings.speaking_speed if settings is not None else None,
         engine_selector=selector,
         engine_factories=engine_factories,
     )
@@ -573,6 +577,7 @@ def build_doc_reader(
     fallback_engine = PiperTTS(
         binary_path=Path(config.engines.piper_binary_path),
         model_path=Path(config.engines.piper_voice_model_path),
+        speed=settings.speaking_speed if settings is not None else config.speaking_speed,
     )
     fallback_engine.load()
     notifier = _make_notifier(config, settings)
@@ -630,7 +635,6 @@ def build_doc_reader(
         on_progress=on_progress,
         on_finished=on_finished,
         on_started=on_started,
-        speed_provider=settings.speaking_speed if settings is not None else None,
         engine_selector=selector,
         engine_factories=engine_factories,
     )

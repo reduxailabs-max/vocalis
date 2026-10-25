@@ -134,7 +134,6 @@ def _make_feature(
     coordinator: ReadingCoordinator | None = None,
     stream_factory: "Callable[..., Any] | None" = None,
     on_started: "Callable[[], None] | None" = None,
-    speed_provider: "Callable[[], float] | None" = None,
 ) -> "tuple[DocumentReaderFeature, list[str], list[tuple[int, int]], list[None]]":
     statuses: "list[str]" = []
     progresses: "list[tuple[int, int]]" = []
@@ -152,7 +151,6 @@ def _make_feature(
         on_progress=lambda current, total: progresses.append((current, total)),
         on_finished=lambda: finishes.append(None),
         on_started=on_started,
-        speed_provider=speed_provider,
     )
     return feature, statuses, progresses, finishes
 
@@ -836,99 +834,6 @@ def test_the_reading_claim_is_released_while_holding_the_feature_lock() -> None:
     wait_until(lambda: bool(finishes))
 
     assert coordinator.lock_held_at_finish == [True]
-
-
-def _two_chunk_text() -> str:
-    """Two sentences that chunk_text() is guaranteed to split into two
-    separate chunks (the first alone already exceeds the default
-    max_chars, forcing the second sentence into its own chunk)."""
-    long_sentence = "A" * 320 + "."
-    short_sentence = "B" * 20 + "."
-    return f"{long_sentence} {short_sentence}"
-
-
-def _speed_feature(
-    recorder: OutputRecorder,
-    primary: SineSynthesizer,
-    finishes: "list[None]",
-    speed_provider: "Callable[[], float] | None",
-) -> DocumentReaderFeature:
-    """A feature on a manual (test-pulled) stream that speaks with `primary`."""
-    return DocumentReaderFeature(
-        model_manager=ModelManager(),
-        primary_engine_factory=lambda: primary,
-        fallback_engine=FakeSynthesizer(),
-        player=AudioPlayer(stream_factory=manual_stream_factory(recorder)),
-        notifier=RecordingNotifier(),  # type: ignore[arg-type]
-        reading_coordinator=ReadingCoordinator(),
-        on_status=lambda message: None,
-        on_progress=lambda current, total: None,
-        on_finished=lambda: finishes.append(None),
-        speed_provider=speed_provider,
-    )
-
-
-def _non_silent_count(pulls: "list[Any]") -> int:
-    """How many non-silent samples the pulled buffers hold in total."""
-    return int(sum(int(np.count_nonzero(pull)) for pull in pulls))
-
-
-def test_no_speed_provider_leaves_chunk_audio_unchanged() -> None:
-    """Without a speed provider the chunk is played at its original length."""
-    primary = SineSynthesizer()
-    recorder = OutputRecorder()
-    finishes: "list[None]" = []
-    feature = _speed_feature(recorder, primary, finishes, None)
-
-    feature.read_text("Only one short sentence here to read aloud slowly.")
-    _wait_queued(feature, 1)
-    pulls = _drain(recorder, finishes)
-
-    original_length = int(primary.sample_rate * 2.0)
-    assert abs(_non_silent_count(pulls) - original_length) < 0.01 * original_length
-
-
-def test_speed_provider_is_read_per_chunk_and_produces_two_lengths() -> None:
-    """Changing the speed between two chunks of the same document
-    produces two differently-sized played chunks."""
-    primary = SineSynthesizer()
-    recorder = OutputRecorder()
-    speeds = iter([1.2, 1.5])
-    finishes: "list[None]" = []
-    feature = _speed_feature(recorder, primary, finishes, lambda: next(speeds))
-
-    feature.read_text(_two_chunk_text())
-    _wait_queued(feature, 2)
-    pulls = _drain(recorder, finishes)
-
-    assert len(primary.calls) == 2  # really two chunks
-    original_length = int(primary.sample_rate * 2.0)
-    expected = original_length / 1.2 + original_length / 1.5  # both chunks, back to back
-    assert abs(_non_silent_count(pulls) - expected) < 0.03 * original_length * 2
-
-
-def test_a_raising_speed_provider_still_plays_the_original_chunk(
-    caplog: "pytest.LogCaptureFixture",
-) -> None:
-    """A speed_provider that raises must never break the reading: the
-    original chunk still plays and a warning is logged."""
-    primary = SineSynthesizer()
-    recorder = OutputRecorder()
-    finishes: "list[None]" = []
-
-    def exploding_provider() -> float:
-        raise RuntimeError("settings unavailable")
-
-    feature = _speed_feature(recorder, primary, finishes, exploding_provider)
-
-    with caplog.at_level(logging.WARNING, logger="vocalis"):
-        feature.read_text("Only one short sentence here to read aloud slowly.")
-        _wait_queued(feature, 1)
-        pulls = _drain(recorder, finishes)
-
-    original_length = int(primary.sample_rate * 2.0)
-    assert abs(_non_silent_count(pulls) - original_length) < 0.01 * original_length  # unchanged
-    assert any(record.levelno == logging.WARNING for record in caplog.records)
 
 
 def _make_selector_feature(

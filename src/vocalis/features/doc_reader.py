@@ -72,7 +72,6 @@ class DocumentReaderFeature:
         on_finished: Callable[[], None],
         language: str = "English",
         on_started: Callable[[], None] | None = None,
-        speed_provider: Callable[[], float] | None = None,
         engine_selector: EngineSelector | None = None,
         engine_factories: Mapping[str, Callable[[], ModelEngine]] | None = None,
     ) -> None:
@@ -105,12 +104,6 @@ class DocumentReaderFeature:
             on_started: Called with no arguments when a reading starts;
                 the app uses it to show the widget. A callback that
                 raises is logged and ignored. None means no hook.
-            speed_provider: Called (with no arguments) once per chunk,
-                right after that chunk is synthesized, to get the
-                current speaking speed to apply before playback. None
-                (the default) means no pacing is applied. A failure
-                reading the speed or applying it never breaks the
-                reading -- see vocalis.audio.pace.paced_audio.
         """
         self._model_manager = model_manager
         self._primary_engine_factory = primary_engine_factory
@@ -123,7 +116,6 @@ class DocumentReaderFeature:
         self._on_finished = on_finished
         self._language = language
         self._on_started = on_started
-        self._speed_provider = speed_provider
         self._engine_selector = engine_selector
         self._engine_factories = engine_factories
 
@@ -358,7 +350,6 @@ class DocumentReaderFeature:
         speaker = ChunkedSpeaker(
             player=self._player,
             source_factory=self._new_source,
-            speed_provider=self._speed_provider,
             on_chunk_started=lambda current, total: self._report_progress(generation, current, total),
         )
         with self._lock:

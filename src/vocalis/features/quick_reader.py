@@ -54,7 +54,6 @@ class QuickReaderFeature:
         language: str = "English",
         reading_coordinator: ReadingCoordinator | None = None,
         on_reading_changed: Callable[[bool], None] | None = None,
-        speed_provider: Callable[[], float] | None = None,
         engine_selector: EngineSelector | None = None,
         engine_factories: Mapping[str, Callable[[], ModelEngine]] | None = None,
     ) -> None:
@@ -82,12 +81,6 @@ class QuickReaderFeature:
             on_reading_changed: Called with True when a reading starts and
                 False when it ends (stopped or finished). A callback that
                 raises is logged and ignored. None means no hook.
-            speed_provider: Called (with no arguments) once per chunk,
-                right after that chunk is synthesized, to get the current
-                speaking speed to apply before playback. None (the
-                default) means no pacing is applied. A failure reading
-                the speed or applying it never breaks the reading -- see
-                vocalis.audio.pace.paced_audio.
             engine_selector: Chooses which voice engines to try, in order,
                 for each reading. None (the default) means the fixed
                 built-in Qwen3-TTS voice, then the backup voice.
@@ -103,7 +96,6 @@ class QuickReaderFeature:
         self._language = language
         self._reading_coordinator = reading_coordinator
         self._on_reading_changed = on_reading_changed
-        self._speed_provider = speed_provider
         self._engine_selector = engine_selector
         self._engine_factories = engine_factories
         self._report_lock = threading.Lock()
@@ -275,7 +267,6 @@ class QuickReaderFeature:
         speaker = ChunkedSpeaker(
             player=self._player,
             source_factory=self._new_source,
-            speed_provider=self._speed_provider,
         )
         with self._lock:
             # Published only if still current, under the same lock stop uses to

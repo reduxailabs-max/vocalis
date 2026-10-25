@@ -455,6 +455,7 @@ from typing import Callable, cast  # noqa: E402
 from vocalis.config import ShortcutsConfig  # noqa: E402
 from vocalis.cli import resolve_shortcuts  # noqa: E402
 from vocalis.engines.qwen3_tts import Qwen3TTS  # noqa: E402
+from vocalis.engines.kokoro_tts import KokoroTTS  # noqa: E402
 from vocalis.hotkeys.shortcut_parser import DEFAULT_SHORTCUTS  # noqa: E402
 from vocalis.settings import LiveSettings  # noqa: E402
 from vocalis.ui.status_hub import StatusHub  # noqa: E402
@@ -895,40 +896,60 @@ def test_build_doc_reader_without_output_chooser_keeps_a_plain_audio_player(qtbo
     assert player._on_device_failed is None  # noqa: SLF001
 
 
-def test_build_quick_reader_speed_provider_follows_live_settings(tmp_path: Path) -> None:
+def test_primary_engine_reads_the_live_speed(tmp_path: Path, qtbot) -> None:  # type: ignore[no-untyped-def]
+    settings = _live_settings(tmp_path)
+    manager = ModelManager()
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        quick, _ = build_quick_reader(
+            config=settings.config, model_manager=manager,
+            reading_coordinator=ReadingCoordinator(), settings=settings,
+        )
+    doc, popup, _ = build_doc_reader(
+        config=settings.config, model_manager=manager,
+        reading_coordinator=ReadingCoordinator(), settings=settings,
+    )
+    qtbot.addWidget(popup)
+    settings.update(settings.config.model_copy(update={"speaking_speed": 1.4}))
+    for feature in (quick, doc):
+        engine = feature._primary_engine_factory()  # noqa: SLF001
+        assert isinstance(engine, Qwen3TTS)
+        assert engine._current_speed() == 1.4  # noqa: SLF001
+
+
+def test_kokoro_factory_reads_the_live_speed(tmp_path: Path) -> None:
     settings = _live_settings(tmp_path)
     with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
         feature, _ = build_quick_reader(
             config=settings.config, model_manager=ModelManager(),
             reading_coordinator=ReadingCoordinator(), settings=settings,
         )
-    speed_provider = feature._speed_provider  # noqa: SLF001
-    assert speed_provider is not None
-    assert speed_provider() == settings.speaking_speed()
-    settings.update(settings.config.model_copy(update={"speaking_speed": 1.4}))
-    assert speed_provider() == 1.4
+    kokoro = (feature._engine_factories or {})["kokoro"]()  # noqa: SLF001
+    assert isinstance(kokoro, KokoroTTS)
+    assert kokoro._current_speed() == settings.speaking_speed()  # noqa: SLF001
+    settings.update(settings.config.model_copy(update={"speaking_speed": 1.3}))
+    assert kokoro._current_speed() == 1.3  # noqa: SLF001
 
 
-def test_build_doc_reader_speed_provider_follows_live_settings(tmp_path: Path, qtbot) -> None:  # type: ignore[no-untyped-def]
+def test_fallback_engine_reads_the_live_speed(tmp_path: Path) -> None:
     settings = _live_settings(tmp_path)
-    feature, popup, _ = build_doc_reader(
-        config=settings.config, model_manager=ModelManager(),
-        reading_coordinator=ReadingCoordinator(), settings=settings,
-    )
-    qtbot.addWidget(popup)
-    speed_provider = feature._speed_provider  # noqa: SLF001
-    assert speed_provider is not None
-    assert speed_provider() == settings.speaking_speed()
-    settings.update(settings.config.model_copy(update={"speaking_speed": 0.8}))
-    assert speed_provider() == 0.8
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        feature, _ = build_quick_reader(
+            config=settings.config, model_manager=ModelManager(),
+            reading_coordinator=ReadingCoordinator(), settings=settings,
+        )
+    piper = feature._fallback_engine  # noqa: SLF001
+    assert piper._current_speed() == settings.speaking_speed()  # noqa: SLF001
+    settings.update(settings.config.model_copy(update={"speaking_speed": 0.9}))
+    assert piper._current_speed() == 0.9  # noqa: SLF001
 
 
-def test_build_quick_reader_without_settings_has_no_speed_provider() -> None:
+def test_build_quick_reader_without_settings_uses_the_configured_speed() -> None:
     with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
         feature, _ = build_quick_reader(
             config=VocalisConfig(), model_manager=ModelManager(), reading_coordinator=ReadingCoordinator(),
         )
-    assert feature._speed_provider is None  # noqa: SLF001
+    engine = feature._primary_engine_factory()  # noqa: SLF001
+    assert engine._current_speed() == VocalisConfig().speaking_speed  # noqa: SLF001
 
 
 def test_main_builds_one_shared_chooser_and_passes_it_to_both_builders(tmp_path: Path, qapp) -> None:  # type: ignore[no-untyped-def]

@@ -24,7 +24,6 @@ from typing import Callable, Protocol, Sequence
 import numpy as np
 import numpy.typing as npt
 
-from vocalis.audio.pace import paced_audio
 from vocalis.audio.playback import AudioPlayer
 from vocalis.audio.speech_stream import (
     DEFAULT_FADE_SECONDS,
@@ -64,7 +63,6 @@ class ChunkedSpeaker:
         self,
         player: AudioPlayer,
         source_factory: Callable[[], SpeechSource],
-        speed_provider: Callable[[], float] | None = None,
         on_chunk_started: Callable[[int, int], None] | None = None,
         fade_seconds: float = DEFAULT_FADE_SECONDS,
         stall_seconds: float = DEFAULT_STALL_SECONDS,
@@ -75,7 +73,6 @@ class ChunkedSpeaker:
         Args:
             player: Opens the real output stream.
             source_factory: Builds the voice source for this reading (called once in run()).
-            speed_provider: Current speaking pace, read once per chunk; None = no pacing.
             on_chunk_started: Called with (current, total), 1-based, when a
                 chunk starts to be heard. Runs on a helper thread.
             fade_seconds: Fade at each end of every chunk's audio.
@@ -83,7 +80,6 @@ class ChunkedSpeaker:
             max_queued_clips: How far ahead of the listener the producer may get.
         """
         self._source_factory = source_factory
-        self._speed_provider = speed_provider
         self._on_chunk_started = on_chunk_started
         self._stop = threading.Event()
         self._total = 0
@@ -159,7 +155,6 @@ class ChunkedSpeaker:
                 return SpeakOutcome.SPEECH_FAILED
             if self._stop.is_set():
                 return SpeakOutcome.STOPPED
-            audio = paced_audio(audio, sample_rate, self._speed_provider)
             try:
                 if not opened:
                     self._stream.start(sample_rate)
