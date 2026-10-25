@@ -167,16 +167,28 @@ def _make_notifier(config: VocalisConfig, settings: LiveSettings | None) -> Noti
 def _make_qwen_factory(
     config: VocalisConfig, settings: LiveSettings | None
 ) -> Callable[[], Qwen3TTS]:
-    """A factory building Qwen3TTS; the voice and speed are read live when settings are given."""
+    """A factory building Qwen3TTS; voice, speed and the resource caps are read live when settings are given."""
     qwen_model_dir = Path(config.engines.qwen3_tts_model_dir)
     speaker: "str | Callable[[], str]" = (
         settings.voice if settings is not None else config.engines.qwen3_tts_speaker
     )
     speed: "float | Callable[[], float]" = settings.speaking_speed if settings is not None else config.speaking_speed
+    max_cpu_threads: "int | None | Callable[[], int | None]" = (
+        settings.max_cpu_threads if settings is not None else config.max_cpu_threads or None
+    )
+    gpu_vram_ceiling_mb: "int | None | Callable[[], int | None]" = (
+        settings.gpu_vram_ceiling_mb if settings is not None else config.gpu_vram_ceiling_mb
+    )
 
     def primary_engine_factory() -> Qwen3TTS:
         """Build the primary text-to-speech engine."""
-        return Qwen3TTS(model_dir=qwen_model_dir, speaker=speaker, speed=speed)
+        return Qwen3TTS(
+            model_dir=qwen_model_dir,
+            speaker=speaker,
+            speed=speed,
+            max_cpu_threads=max_cpu_threads,
+            gpu_vram_ceiling_mb=gpu_vram_ceiling_mb,
+        )
 
     return primary_engine_factory
 
@@ -188,28 +200,43 @@ def _make_engine_selector(
     preference: Callable[[], str],
     model_manager: ModelManager,
     hardware_probe: Callable[[], HardwareInfo],
+    max_own_ram_mb: Callable[[], "int | None"] = lambda: None,
 ) -> EngineSelector:
     """A selector that credits Qwen3-TTS's own graphics memory back while it is loaded."""
 
     def held_vram_mb() -> int:
         return _QWEN3_HELD_VRAM_MB if model_manager.current_engine_id == QWEN3_TTS else 0
 
-    return EngineSelector(preference=preference, hardware_probe=hardware_probe, held_vram_mb=held_vram_mb)
+    return EngineSelector(
+        preference=preference, hardware_probe=hardware_probe, held_vram_mb=held_vram_mb, max_own_ram_mb=max_own_ram_mb,
+    )
 
 
 def _make_kokoro_factory(
     config: VocalisConfig, settings: LiveSettings | None, selector: EngineSelector
 ) -> Callable[[], KokoroTTS]:
-    """A factory building KokoroTTS; voice and speed are read live, graphics-card use is decided at load."""
+    """A factory building KokoroTTS; voice, speed and the resource caps are read live, graphics-card use is decided at load."""
     model_path = Path(config.engines.kokoro_model_path)
     voices_path = Path(config.engines.kokoro_voices_path)
     voice: "str | Callable[[], str]" = settings.kokoro_voice if settings is not None else config.engines.kokoro_voice
     speed: "float | Callable[[], float]" = settings.speaking_speed if settings is not None else config.speaking_speed
+    max_cpu_threads: "int | None | Callable[[], int | None]" = (
+        settings.max_cpu_threads if settings is not None else config.max_cpu_threads or None
+    )
+    gpu_vram_ceiling_mb: "int | None | Callable[[], int | None]" = (
+        settings.gpu_vram_ceiling_mb if settings is not None else config.gpu_vram_ceiling_mb
+    )
 
     def kokoro_factory() -> KokoroTTS:
         """Build the light voice engine."""
         return KokoroTTS(
-            model_path=model_path, voices_path=voices_path, voice=voice, use_gpu=selector.kokoro_use_gpu, speed=speed
+            model_path=model_path,
+            voices_path=voices_path,
+            voice=voice,
+            use_gpu=selector.kokoro_use_gpu,
+            speed=speed,
+            max_cpu_threads=max_cpu_threads,
+            gpu_vram_ceiling_mb=gpu_vram_ceiling_mb,
         )
 
     return kokoro_factory
@@ -458,7 +485,10 @@ def build_quick_reader(
         settings.quick_reader_engine if settings is not None else (lambda: config.engines.quick_reader_engine)
     )
     selector = _make_engine_selector(
-        preference, model_manager, hardware_probe if hardware_probe is not None else probe_hardware
+        preference,
+        model_manager,
+        hardware_probe if hardware_probe is not None else probe_hardware,
+        settings.max_ram_mb if settings is not None else (lambda: config.max_ram_mb or None),
     )
     engine_factories: dict[str, Callable[[], ModelEngine]] = {QWEN3_TTS: primary_engine_factory, "kokoro": _make_kokoro_factory(config, settings, selector)}
 
@@ -466,6 +496,7 @@ def build_quick_reader(
         binary_path=Path(config.engines.piper_binary_path),
         model_path=Path(config.engines.piper_voice_model_path),
         speed=settings.speaking_speed if settings is not None else config.speaking_speed,
+        max_cpu_threads=settings.max_cpu_threads if settings is not None else (config.max_cpu_threads or None),
     )
     fallback_engine.load()
     notifier = _make_notifier(config, settings)
@@ -570,7 +601,10 @@ def build_doc_reader(
         settings.document_reader_engine if settings is not None else (lambda: config.engines.document_reader_engine)
     )
     selector = _make_engine_selector(
-        preference, model_manager, hardware_probe if hardware_probe is not None else probe_hardware
+        preference,
+        model_manager,
+        hardware_probe if hardware_probe is not None else probe_hardware,
+        settings.max_ram_mb if settings is not None else (lambda: config.max_ram_mb or None),
     )
     engine_factories: dict[str, Callable[[], ModelEngine]] = {QWEN3_TTS: primary_engine_factory, "kokoro": _make_kokoro_factory(config, settings, selector)}
 
@@ -578,6 +612,7 @@ def build_doc_reader(
         binary_path=Path(config.engines.piper_binary_path),
         model_path=Path(config.engines.piper_voice_model_path),
         speed=settings.speaking_speed if settings is not None else config.speaking_speed,
+        max_cpu_threads=settings.max_cpu_threads if settings is not None else (config.max_cpu_threads or None),
     )
     fallback_engine.load()
     notifier = _make_notifier(config, settings)

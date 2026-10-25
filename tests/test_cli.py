@@ -952,6 +952,74 @@ def test_build_quick_reader_without_settings_uses_the_configured_speed() -> None
     assert engine._current_speed() == VocalisConfig().speaking_speed  # noqa: SLF001
 
 
+def test_primary_engine_reads_the_live_cpu_and_vram_caps(tmp_path: Path) -> None:
+    settings = _live_settings(tmp_path)
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        feature, _ = build_quick_reader(
+            config=settings.config, model_manager=ModelManager(),
+            reading_coordinator=ReadingCoordinator(), settings=settings,
+        )
+    engine = feature._primary_engine_factory()  # noqa: SLF001
+    assert isinstance(engine, Qwen3TTS)
+    assert engine._current_max_cpu_threads() is None  # noqa: SLF001
+    assert engine._current_gpu_vram_ceiling_mb() == settings.gpu_vram_ceiling_mb()  # noqa: SLF001
+    settings.update(settings.config.model_copy(update={"max_cpu_threads": 4, "gpu_vram_ceiling_mb": 3000}))
+    assert engine._current_max_cpu_threads() == 4  # noqa: SLF001
+    assert engine._current_gpu_vram_ceiling_mb() == 3000  # noqa: SLF001
+
+
+def test_kokoro_factory_reads_the_live_cpu_and_vram_caps(tmp_path: Path) -> None:
+    settings = _live_settings(tmp_path)
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        feature, _ = build_quick_reader(
+            config=settings.config, model_manager=ModelManager(),
+            reading_coordinator=ReadingCoordinator(), settings=settings,
+        )
+    kokoro = (feature._engine_factories or {})["kokoro"]()  # noqa: SLF001
+    assert isinstance(kokoro, KokoroTTS)
+    settings.update(settings.config.model_copy(update={"max_cpu_threads": 2, "gpu_vram_ceiling_mb": 1500}))
+    assert kokoro._current_max_cpu_threads() == 2  # noqa: SLF001
+    assert kokoro._current_gpu_vram_ceiling_mb() == 1500  # noqa: SLF001
+
+
+def test_fallback_engine_reads_the_live_cpu_cap(tmp_path: Path) -> None:
+    settings = _live_settings(tmp_path)
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        feature, _ = build_quick_reader(
+            config=settings.config, model_manager=ModelManager(),
+            reading_coordinator=ReadingCoordinator(), settings=settings,
+        )
+    piper = feature._fallback_engine  # noqa: SLF001
+    assert piper._current_max_cpu_threads() is None  # noqa: SLF001
+    settings.update(settings.config.model_copy(update={"max_cpu_threads": 3}))
+    assert piper._current_max_cpu_threads() == 3  # noqa: SLF001
+
+
+def test_engine_selector_reads_the_live_max_ram(tmp_path: Path) -> None:
+    settings = _live_settings(tmp_path)
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        feature, _ = build_quick_reader(
+            config=settings.config, model_manager=ModelManager(),
+            reading_coordinator=ReadingCoordinator(), settings=settings,
+        )
+    selector = feature._engine_selector  # noqa: SLF001
+    assert selector is not None
+    assert selector._max_own_ram_mb() is None  # noqa: SLF001
+    settings.update(settings.config.model_copy(update={"max_ram_mb": 2048}))
+    assert selector._max_own_ram_mb() == 2048  # noqa: SLF001
+
+
+def test_build_quick_reader_without_settings_uses_the_configured_caps() -> None:
+    config = VocalisConfig(max_cpu_threads=5, gpu_vram_ceiling_mb=2000)
+    with patch("vocalis.cli.list_hotkey_capable_devices", return_value=[]):
+        feature, _ = build_quick_reader(
+            config=config, model_manager=ModelManager(), reading_coordinator=ReadingCoordinator(),
+        )
+    engine = feature._primary_engine_factory()  # noqa: SLF001
+    assert engine._current_max_cpu_threads() == 5  # noqa: SLF001
+    assert engine._current_gpu_vram_ceiling_mb() == 2000  # noqa: SLF001
+
+
 def test_main_builds_one_shared_chooser_and_passes_it_to_both_builders(tmp_path: Path, qapp) -> None:  # type: ignore[no-untyped-def]
     seen: dict[str, object] = {}
 
