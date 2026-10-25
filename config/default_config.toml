@@ -27,3 +27,6 @@ audio_output_device = "auto"
 speaking_speed = 1.15
 model_idle_timeout_seconds = 30.0
 gpu_vram_ceiling_mb = 6144
+# 0 means no limit.
+max_cpu_threads = 0
+max_ram_mb = 0

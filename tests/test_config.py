@@ -229,3 +229,25 @@ def test_speaker_check_is_case_insensitive(caplog: pytest.LogCaptureFixture) -> 
     with caplog.at_level(logging.WARNING, logger="vocalis"):
         EnginesConfig(qwen3_tts_speaker="ryan")
     assert not caplog.records
+
+
+def test_max_cpu_threads_and_max_ram_default_to_no_limit() -> None:
+    config = VocalisConfig()
+    assert config.max_cpu_threads == 0
+    assert config.max_ram_mb == 0
+
+
+def test_max_cpu_threads_and_max_ram_accept_a_positive_value() -> None:
+    config = VocalisConfig(max_cpu_threads=4, max_ram_mb=4096)
+    assert config.max_cpu_threads == 4
+    assert config.max_ram_mb == 4096
+
+
+def test_max_cpu_threads_rejects_a_negative_value() -> None:
+    with pytest.raises(ValidationError):
+        VocalisConfig(max_cpu_threads=-1)
+
+
+def test_max_ram_mb_rejects_a_negative_value() -> None:
+    with pytest.raises(ValidationError):
+        VocalisConfig(max_ram_mb=-1)

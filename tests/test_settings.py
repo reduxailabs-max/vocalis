@@ -135,3 +135,28 @@ def test_kokoro_voices_are_real_english_voice_names() -> None:
 
     assert "af_heart" in KOKORO_VOICES
     assert all(name[:2] in ("af", "am", "bf", "bm") for name in KOKORO_VOICES)
+
+
+def test_max_cpu_threads_returns_none_when_unset(tmp_path: Path) -> None:
+    settings = make(tmp_path, VocalisConfig(max_cpu_threads=0))
+    assert settings.max_cpu_threads() is None
+
+
+def test_max_cpu_threads_returns_the_configured_value(tmp_path: Path) -> None:
+    settings = make(tmp_path, VocalisConfig(max_cpu_threads=4))
+    assert settings.max_cpu_threads() == 4
+
+
+def test_max_ram_mb_returns_none_when_unset(tmp_path: Path) -> None:
+    settings = make(tmp_path, VocalisConfig(max_ram_mb=0))
+    assert settings.max_ram_mb() is None
+
+
+def test_max_ram_mb_returns_the_configured_value(tmp_path: Path) -> None:
+    settings = make(tmp_path, VocalisConfig(max_ram_mb=2048))
+    assert settings.max_ram_mb() == 2048
+
+
+def test_gpu_vram_ceiling_mb_returns_the_configured_value(tmp_path: Path) -> None:
+    settings = make(tmp_path, VocalisConfig(gpu_vram_ceiling_mb=3000))
+    assert settings.gpu_vram_ceiling_mb() == 3000

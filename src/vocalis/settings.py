@@ -84,6 +84,20 @@ class LiveSettings:
         """The speaking pace to use for the next reading."""
         return self.config.speaking_speed
 
+    def max_cpu_threads(self) -> int | None:
+        """The CPU thread cap to use for the next load, or None for no cap."""
+        value = self.config.max_cpu_threads
+        return value if value > 0 else None
+
+    def max_ram_mb(self) -> int | None:
+        """The advisory RAM ceiling used by Auto's stress check, or None for no cap."""
+        value = self.config.max_ram_mb
+        return value if value > 0 else None
+
+    def gpu_vram_ceiling_mb(self) -> int:
+        """The GPU VRAM ceiling to use for the next load."""
+        return self.config.gpu_vram_ceiling_mb
+
     def shortcuts_need_restart(self) -> bool:
         """Whether the saved shortcuts mean something different from those in use.
 

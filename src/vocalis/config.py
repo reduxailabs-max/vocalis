@@ -116,6 +116,8 @@ class VocalisConfig(BaseModel):
 
     audio_output_device is "auto" or the name of a sound output; blank is
     rejected (validated after trimming spaces).
+    max_cpu_threads and max_ram_mb are 0 when unset ("no limit"); see
+    LiveSettings.max_cpu_threads()/max_ram_mb() for the resolved int | None form.
     """
 
     shortcuts: ShortcutsConfig = ShortcutsConfig()
@@ -126,6 +128,8 @@ class VocalisConfig(BaseModel):
     speaking_speed: float = Field(default=1.15, ge=MIN_SPEED, le=MAX_SPEED)
     model_idle_timeout_seconds: float = Field(default=30.0, gt=0, le=3600)
     gpu_vram_ceiling_mb: int = Field(default=6144, gt=0)
+    max_cpu_threads: int = Field(default=0, ge=0)
+    max_ram_mb: int = Field(default=0, ge=0)
 
 
 def default_config_path() -> Path:
