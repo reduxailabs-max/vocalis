@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QSlider,
+    QSpinBox,
     QVBoxLayout,
     QWidget,
 )
@@ -41,6 +42,10 @@ _ENGINE_CHOICES: tuple[tuple[str, str], ...] = (
 _SPEED_SLIDER_MINIMUM = 70
 _SPEED_SLIDER_MAXIMUM = 160
 _SPEED_SCALE = 100.0
+_CPU_THREADS_MAXIMUM = 128
+_MAX_RAM_MAXIMUM_MB = 262144
+_VRAM_CEILING_MINIMUM_MB = 256
+_VRAM_CEILING_MAXIMUM_MB = 65536
 
 
 def _combo(items: tuple[str, ...]) -> QComboBox:
@@ -99,6 +104,12 @@ class SettingsWindow(QWidget):
         self._speed_slider = QSlider(Qt.Orientation.Horizontal)
         self._speed_slider.setMinimum(_SPEED_SLIDER_MINIMUM)
         self._speed_slider.setMaximum(_SPEED_SLIDER_MAXIMUM)
+        self._cpu_threads_spin = QSpinBox()
+        self._cpu_threads_spin.setRange(0, _CPU_THREADS_MAXIMUM)
+        self._max_ram_spin = QSpinBox()
+        self._max_ram_spin.setRange(0, _MAX_RAM_MAXIMUM_MB)
+        self._vram_ceiling_spin = QSpinBox()
+        self._vram_ceiling_spin.setRange(_VRAM_CEILING_MINIMUM_MB, _VRAM_CEILING_MAXIMUM_MB)
         self._speed_label = QLabel("")
         self._preview_button = QPushButton("Preview voice (uses saved settings)")
         self._save_button = QPushButton("Save")
@@ -132,6 +143,9 @@ class SettingsWindow(QWidget):
         speed_row.addWidget(self._speed_slider)
         speed_row.addWidget(self._speed_label)
         form.addRow("Speaking speed", speed_row)
+        form.addRow("Max CPU threads (0 = no limit)", self._cpu_threads_spin)
+        form.addRow("Max RAM, MB (0 = no limit)", self._max_ram_spin)
+        form.addRow("GPU VRAM ceiling, MB", self._vram_ceiling_spin)
         buttons = QHBoxLayout()
         buttons.addWidget(self._preview_button)
         buttons.addStretch(1)
@@ -185,6 +199,9 @@ class SettingsWindow(QWidget):
         self._fill_output_combo(config.audio_output_device)
         self._speed_slider.setValue(round(config.speaking_speed * _SPEED_SCALE))
         self._update_speed_label(self._speed_slider.value())
+        self._cpu_threads_spin.setValue(config.max_cpu_threads)
+        self._max_ram_spin.setValue(config.max_ram_mb)
+        self._vram_ceiling_spin.setValue(config.gpu_vram_ceiling_mb)
 
     def present(self) -> None:
         """Bring the window to the front; refresh it from saved settings only if it was hidden."""
@@ -266,6 +283,9 @@ class SettingsWindow(QWidget):
                 "engines": engines,
                 "audio_output_device": self._selected_output_value(),
                 "speaking_speed": self._speed_slider.value() / _SPEED_SCALE,
+                "max_cpu_threads": self._cpu_threads_spin.value(),
+                "max_ram_mb": self._max_ram_spin.value(),
+                "gpu_vram_ceiling_mb": self._vram_ceiling_spin.value(),
             }
         )
 

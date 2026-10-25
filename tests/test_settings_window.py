@@ -159,6 +159,36 @@ def test_saving_writes_output_and_speed_and_applies_live(qtbot, tmp_path) -> Non
     assert settings.speaking_speed() == 1.40
 
 
+def test_resource_limit_defaults_are_shown(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, window, _applied, _path = make(qtbot, tmp_path)
+    assert window._cpu_threads_spin.value() == 0  # noqa: SLF001
+    assert window._max_ram_spin.value() == 0  # noqa: SLF001
+    assert window._vram_ceiling_spin.value() == 6144  # noqa: SLF001
+
+
+def test_saving_writes_the_resource_limits(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings, window, _applied, path = make(qtbot, tmp_path)
+    window._cpu_threads_spin.setValue(4)  # noqa: SLF001
+    window._max_ram_spin.setValue(2048)  # noqa: SLF001
+    window._vram_ceiling_spin.setValue(3000)  # noqa: SLF001
+    window._on_save_clicked()  # noqa: SLF001
+    saved = load_config(path)
+    assert saved.max_cpu_threads == 4
+    assert saved.max_ram_mb == 2048
+    assert saved.gpu_vram_ceiling_mb == 3000
+    assert settings.max_cpu_threads() == 4
+    assert settings.max_ram_mb() == 2048
+    assert settings.gpu_vram_ceiling_mb() == 3000
+
+
+def test_resource_limits_round_trip_through_reload(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    config = VocalisConfig(max_cpu_threads=2, max_ram_mb=1024, gpu_vram_ceiling_mb=5000)
+    _settings, window, _applied, _path = make(qtbot, tmp_path, config=config)
+    assert window._cpu_threads_spin.value() == 2  # noqa: SLF001
+    assert window._max_ram_spin.value() == 1024  # noqa: SLF001
+    assert window._vram_ceiling_spin.value() == 5000  # noqa: SLF001
+
+
 def test_saving_with_automatic_selected_stores_auto(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
     settings, window, _applied, path = make(qtbot, tmp_path, output_names=lambda: ["Speakers"])
     window._save_button.click()  # noqa: SLF001
