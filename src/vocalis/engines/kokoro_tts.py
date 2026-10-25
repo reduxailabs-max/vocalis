@@ -14,6 +14,8 @@ from typing import Any, Callable
 import numpy as np
 import numpy.typing as npt
 
+from vocalis.audio.pace import clamp_speed
+
 logger = logging.getLogger("vocalis")
 
 
@@ -111,6 +113,7 @@ class KokoroTTS:
         voices_path: Path,
         voice: "str | Callable[[], str]" = "af_heart",
         use_gpu: "bool | Callable[[], bool]" = False,
+        speed: "float | Callable[[], float]" = 1.0,
         session_builder: Callable[[Path, bool], Any] = _default_session_builder,
         kokoro_factory: Callable[[Any, Path], Any] = _default_kokoro_factory,
     ) -> None:
@@ -123,6 +126,9 @@ class KokoroTTS:
                 synthesis so a Settings change applies to the next reading).
             use_gpu: Whether to run on the graphics card, or a function
                 answering that at load time.
+            speed: Speaking pace, or a function returning it, re-read on
+                every synthesis and clamped to the supported range.
+                Passed straight to Kokoro's own `speed=` parameter.
             session_builder: Builds the ONNX session; injectable for tests.
             kokoro_factory: Wraps a session into a synthesizer; injectable for tests.
         """
@@ -130,6 +136,7 @@ class KokoroTTS:
         self._voices_path = voices_path
         self._voice = voice
         self._use_gpu = use_gpu
+        self._speed = speed
         self._session_builder = session_builder
         self._kokoro_factory = kokoro_factory
         self._kokoro: Any | None = None
@@ -166,6 +173,11 @@ class KokoroTTS:
         """The voice to use right now."""
         return self._voice() if callable(self._voice) else self._voice
 
+    def _current_speed(self) -> float:
+        """The speaking pace to use right now, clamped to the supported range."""
+        raw = self._speed() if callable(self._speed) else self._speed
+        return clamp_speed(raw)
+
     def synthesize(self, text: str) -> "tuple[npt.NDArray[np.float32], int]":
         """Turn text into speech.
 
@@ -179,10 +191,11 @@ class KokoroTTS:
         try:
             voice = self._current_voice()
             lang = _language_for(voice)
+            speed = self._current_speed()
             clips: list[npt.NDArray[np.float32]] = []
             sample_rate = 0
             for piece in _pieces_for_kokoro(text):
-                samples, rate = kokoro.create(piece, voice=voice, speed=1.0, lang=lang)
+                samples, rate = kokoro.create(piece, voice=voice, speed=speed, lang=lang)
                 sample_rate = int(rate)
                 if clips:
                     clips.append(np.zeros(int(sample_rate * _GAP_SECONDS), dtype=np.float32))

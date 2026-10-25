@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 import pytest
 
+from vocalis.audio.pace import MAX_SPEED
 from vocalis.engines.kokoro_tts import KokoroLoadError, KokoroSynthesisError, KokoroTTS
 
 
@@ -221,3 +222,37 @@ def test_missing_file_means_no_builder_is_called(tmp_path: Path) -> None:
     with pytest.raises(KokoroLoadError):
         engine.load()
     assert calls == []
+
+
+def test_default_speed_is_neutral(tmp_path: Path) -> None:
+    """Without a configured speed, Kokoro is asked for its natural pace."""
+    engine, _, fake = _engine(tmp_path)
+    engine.load()
+    engine.synthesize("hello")
+    assert fake.calls[0][2] == 1.0
+
+
+def test_synthesize_passes_the_configured_speed(tmp_path: Path) -> None:
+    """The configured speed is handed straight to Kokoro."""
+    engine, _, fake = _engine(tmp_path, speed=1.3)
+    engine.load()
+    engine.synthesize("hello")
+    assert fake.calls[0][2] == 1.3
+
+
+def test_speed_is_clamped_to_the_supported_range(tmp_path: Path) -> None:
+    """An out-of-range speed is clamped to MAX_SPEED before reaching Kokoro."""
+    engine, _, fake = _engine(tmp_path, speed=9.0)
+    engine.load()
+    engine.synthesize("hello")
+    assert fake.calls[0][2] == MAX_SPEED
+
+
+def test_speed_can_be_a_live_callable(tmp_path: Path) -> None:
+    """A callable speed is re-read on every synthesis call."""
+    speeds = iter([0.8, 1.4])
+    engine, _, fake = _engine(tmp_path, speed=lambda: next(speeds))
+    engine.load()
+    engine.synthesize("one")
+    engine.synthesize("two")
+    assert [call[2] for call in fake.calls] == [0.8, 1.4]
