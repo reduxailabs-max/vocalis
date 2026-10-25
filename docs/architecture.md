@@ -985,3 +985,78 @@ good. `normalize_markdown()` now calls it as its last step, so Document
 Reader gets it for free; Quick Reader (whose clipboard text is never
 markdown) calls it directly, right before chunking, while still notifying
 the user with the original, un-normalized copied text.
+
+## Stage 6d addition: resource limits
+
+Stage 6c made the voices sound better; Stage 6d makes Vocalis share the PC
+more politely. Three settings control this — `max_cpu_threads` and
+`max_ram_mb` (new `VocalisConfig` int fields, default `0`, meaning "no
+limit") and the existing `gpu_vram_ceiling_mb` (default 6144, never a `0`
+sentinel — it is always a real ceiling). All three are exposed in the
+Settings window as spin boxes (`ui/settings_window.py`:
+`Max CPU threads (0 = no limit)`, `Max RAM, MB (0 = no limit)`,
+`GPU VRAM ceiling, MB`) and read live through three new `LiveSettings`
+getters — `max_cpu_threads()` and `max_ram_mb()` translate the config's `0`
+into `None`; `gpu_vram_ceiling_mb()` just passes the value through.
+
+**CPU threads and GPU VRAM are applied per engine, at load time:**
+
+- **Qwen3-TTS** (`engines/qwen3_tts.py`) calls `torch.set_num_threads()`
+  with the live `max_cpu_threads` value, and, when running on the GPU,
+  caps VRAM with `torch.cuda.set_per_process_memory_fraction()`: the
+  ceiling in MB is converted to a fraction of the card's total memory
+  (via `torch.cuda.mem_get_info()`) and clamped to 1.0 if the configured
+  ceiling is larger than the card actually has. Both are re-read fresh on
+  every `load()` (the callable form `LiveSettings` hands engines), and the
+  VRAM cap is best-effort — a failing GPU query is caught, logged as a
+  warning, and never blocks the model from loading.
+- **Kokoro** (`engines/kokoro_tts.py`) applies the same two caps through
+  ONNX Runtime instead of torch: `max_cpu_threads` becomes
+  `SessionOptions.intra_op_num_threads`, and `gpu_vram_ceiling_mb` becomes
+  the CUDA execution provider's `gpu_mem_limit` option (bytes). Also
+  applied at load time, also best-effort.
+- **Piper** has no lever for either — its installed binary's `--help`
+  output has no thread-count flag at all, and it has no VRAM to cap
+  (CPU-only). Its only hook is `OMP_NUM_THREADS`/`ORT_NUM_THREADS`, set on
+  the subprocess environment Piper is launched with. Since Piper has no
+  persistent "load" (`engines/piper_tts.py` spawns a fresh process per
+  synthesis call), these are re-read fresh on *every* synthesis, not once.
+  This is explicitly best-effort: Piper does not document honoring either
+  variable, so setting them is a polite request, not a guarantee.
+
+**`max_ram_mb` is deliberately advisory, not an OS-level limit.** Vocalis
+never calls `resource.setrlimit()` and never risks a `MemoryError` crash by
+enforcing a hard ceiling on itself. Instead it feeds into the existing
+Auto-selection "is the PC stressed" check: `HardwareInfo` gained an
+`own_process_ram_mb` field (`hardware.py`'s `query_own_process_ram_mb()`,
+reading the `VmRSS:` line of `/proc/self/status` fresh on every probe —
+Vocalis's own *current* resident memory, not its peak). `auto_select.is_stressed()`
+now also returns `True` whenever `own_process_ram_mb` is at or above the
+live `max_ram_mb` ceiling, alongside its existing CPU-load and system-wide
+free-RAM checks. When that happens, Auto treats the PC as stressed and
+downshifts to a lighter engine exactly as it already does for a busy
+processor — see `docs/algorithms.md` for the full `decide()` policy.
+
+**Downshift hysteresis.** `EngineSelector` (`engines/registry.py`) now
+remembers the tier of its *last* downshift and, for 60 seconds after it,
+caps any new "Auto" decision back down to that tier even if the hardware
+snapshot would otherwise qualify for something better. This only guards
+against reload thrashing when a hardware reading is noisy right around a
+threshold (e.g. CPU load bouncing just above and below the stress line
+between two back-to-back readings); it has no effect once 60 seconds have
+passed since the last downshift, and it never applies to a user-forced
+engine choice (Qwen3-TTS/Kokoro/Piper picked explicitly in Settings) —
+`EngineSelector.plan()` returns a forced chain before `decide()` or the
+hysteresis check ever runs. See `docs/algorithms.md` for the mechanics.
+
+**`systemd` scheduling priority.** `packaging/systemd/vocalis.service`'s
+`[Service]` section gained `Nice=10`, lowering Vocalis's CPU scheduling
+priority so it competes less aggressively for processor time with other
+running programs.
+
+**Model unload now forces a garbage collection.**
+`ModelManager._unload_current_locked()` calls `gc.collect()` after the
+engine's own `unload()` (which already calls `torch.cuda.empty_cache()`
+where relevant), to force the release of any model or tensor memory that a
+reference cycle would otherwise keep alive until Python's own cyclic
+collector happened to run on its own schedule.

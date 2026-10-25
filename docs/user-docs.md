@@ -317,7 +317,11 @@ start a reading, based on how your PC is doing at that moment:
 
 Vocalis does not count its own voice against you: if Qwen3-TTS is already
 loaded, the memory it holds is not treated as "busy", so Automatic does
-not keep flipping between voices.
+not keep flipping between voices. If Automatic does have to switch down to
+a lighter voice because your PC was briefly busy, it also waits a full
+minute before trying to switch back up to a better voice, even if your PC
+quickly looks free again — this stops it from switching back and forth
+too quickly if your PC's load is jumping around near the edge.
 
 You can choose a voice yourself instead. In Settings there is a **Quick
 Reader voice engine** drop-down and a **Document Reader voice engine**
@@ -356,6 +360,29 @@ Open the Settings window from the tray menu (**Settings…**). It has:
   - *Dictation (hold)*: **NUMLOCK**, **SCROLLLOCK** or **PAUSE**.
   - *Quick Reader*, *Document Reader*, *OCR Reader*: **Ctrl+Alt+** plus any
     letter A–Z or digit 0–9.
+- **Max CPU threads (0 = no limit)** — how many processor "workers" the
+  voices are allowed to use at the same time. Turning this down can leave
+  more of your processor free for other programs while Vocalis is reading
+  or dictating, at the cost of Vocalis itself working a little slower.
+  Leave it at **0** to let Vocalis use as many as it wants. Qwen3-TTS and
+  Kokoro always respect this number. Piper (the lightest voice) does its
+  best to respect it too, but cannot always guarantee it — the Piper
+  program itself has no proper setting for this, so Vocalis can only ask
+  it nicely, and Piper may not always listen.
+- **Max RAM, MB (0 = no limit)** — how much memory (RAM), in megabytes,
+  Vocalis is allowed to use before it decides your PC is "busy" and
+  quietly switches to a lighter voice, the same way it already does when
+  your processor is working hard (see above). This is a gentle guideline,
+  not a hard wall: Vocalis will never crash, and it will never forcibly
+  free memory to stay under this number — going over it just makes
+  Automatic pick a lighter voice next time. Leave it at **0** to turn this
+  check off completely.
+- **GPU VRAM ceiling, MB** — the most graphics-card memory, in megabytes,
+  Vocalis's best voices (Qwen3-TTS and Kokoro) are allowed to use. Turn
+  this down if Vocalis is fighting over graphics-card memory with another
+  program, such as a game. Unlike the two settings above, there is no "0
+  means no limit" option here — this number is always a real limit, and
+  it defaults to 6144 MB (6 GB).
 
 Click **Save** to keep your changes. Saving rewrites the whole config file,
 so any manual edits made to `config.toml` while Vocalis is running are
@@ -458,6 +485,11 @@ Relevant settings:
   (default), `"qwen3_tts"`, `"kokoro"` or `"piper"` (see "Voice engines").
 - `[engines] kokoro_voice` — which Kokoro voice to use (default:
   `"af_heart"`).
+- `max_cpu_threads`, `max_ram_mb` and `gpu_vram_ceiling_mb` — see "Max CPU
+  threads", "Max RAM" and "GPU VRAM ceiling" under "Settings" above.
+  `max_cpu_threads` and `max_ram_mb` default to `0` ("no limit");
+  `gpu_vram_ceiling_mb` defaults to `6144` (6 GB) and is always a real
+  limit.
 - `audio_output_device` — `"auto"` (default) or the exact name of one of
   your sound outputs. Blank is rejected.
 - `speaking_speed` — a number from `0.7` to `1.6` (default `1.15`).

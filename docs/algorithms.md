@@ -62,6 +62,56 @@ unnecessary unload and reload. Since Stage 6b the reader's `EngineChain` also
 checks `ModelManager.current_engine` (object identity) before releasing, so a
 late `close()` from an old reading cannot lower a newer reading's count.
 
+## Auto-selection policy and downshift hysteresis (`auto_select.py`, `EngineSelector._apply_hysteresis`)
+
+**The policy (`decide()`).** For "Auto", `engines/auto_select.py`'s
+`decide(hardware, policy, held_vram_mb, max_own_ram_mb)` is a pure function
+of a `HardwareInfo` snapshot and a frozen `AutoPolicy` of named thresholds —
+no GPU is needed to unit-test it. In order: no graphics card, or system RAM
+below 1024 MB free -> Piper first; a graphics card of 4096 MB or less ->
+Kokoro first; `is_stressed()` (CPU load per core above 0.85, or free RAM
+below `max(2048 MB, 15% of total)`, or — since Stage 6d — Vocalis's own
+current memory use at or above the user's advisory `max_ram_mb` ceiling) ->
+Kokoro first; otherwise, if the GPU has at least 4096 MB free (after adding
+back `held_vram_mb`, the memory Vocalis's own already-loaded model holds,
+so it never counts against itself) -> Qwen3-TTS first. Each branch returns
+an ordered chain plus a plain-English reason string for the log.
+
+**Problem the hysteresis solves.** `EngineSelector.plan()` calls `decide()`
+fresh for every reading. Hardware readings are noisy right around a
+threshold — CPU load that bounces just above and just below the stress
+line between two readings a few seconds apart would otherwise make Auto
+flip back and forth between, say, Qwen3-TTS and Kokoro, reloading the
+model chain on every flip.
+
+**The rule (`EngineSelector._apply_hysteresis`).** Engine ids are ranked
+into tiers (`_TIER_RANK`: Qwen3-TTS = 0 (best), Kokoro = 1, Piper = 2).
+After every `decide()` call, `_apply_hysteresis()` compares the new
+decision's tier against the tier and wall-clock time (`time.monotonic()`,
+injectable) of the *last* downshift (a move to a numerically higher,
+i.e. worse, tier):
+
+- If a downshift happened within the last `downshift_hold_seconds`
+  (default 60s) and the new decision would climb back to a *better* tier
+  than the one it was held at, the better tier is discarded and the held
+  tier's forced chain is returned instead, with the reason string extended
+  by "(holding the lighter voice a little longer after a recent
+  slowdown.)".
+- A decision that stays at or below the held tier passes through
+  unchanged, and updates the remembered downshift time if it is itself a
+  new downshift.
+- Once `downshift_hold_seconds` has elapsed, Auto is free to climb back to
+  a better tier again on the next reading that qualifies for one.
+
+**Scope.** This only applies to the "Auto" engine choice. A user-forced
+engine (Qwen3-TTS, Kokoro or Piper picked explicitly in Settings) maps
+straight to its fixed `FORCED_CHAINS` entry in `EngineSelector.plan()`,
+before `decide()` or `_apply_hysteresis()` ever run, so a forced choice is
+never held back or delayed.
+
+**Complexity:** O(1) per `plan()` call — a couple of dict lookups and one
+monotonic clock read.
+
 ## Sentence-bounded chunking (`text/chunker.py`)
 
 **Problem:** speaking a whole document as one block delays the first word
