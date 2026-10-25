@@ -5,6 +5,7 @@ notification/widget toggles, GPU idle policy) live in one pydantic model so
 invalid config is rejected loudly at load time instead of causing confusing
 failures deep inside a feature.
 """
+import logging
 import os
 import tempfile
 import tomllib
@@ -12,9 +13,13 @@ from pathlib import Path
 from typing import Annotated, Literal
 
 import tomli_w
-from pydantic import BaseModel, Field, StringConstraints, ValidationError
+from pydantic import BaseModel, Field, StringConstraints, ValidationError, model_validator
 
 from vocalis.audio.pace import MAX_SPEED, MIN_SPEED
+
+logger = logging.getLogger("vocalis")
+
+ENGLISH_NATIVE_QWEN_SPEAKERS = frozenset({"ryan", "aiden"})
 
 
 class ConfigError(Exception):
@@ -86,6 +91,24 @@ class EnginesConfig(BaseModel):
     kokoro_model_path: str = Field(default_factory=_default_kokoro_model_path)
     kokoro_voices_path: str = Field(default_factory=_default_kokoro_voices_path)
     kokoro_voice: str = "af_heart"
+
+    @model_validator(mode="after")
+    def _warn_if_speaker_is_not_english_native(self) -> "EnginesConfig":
+        """Log a warning when the Qwen3-TTS speaker is not English-native.
+
+        Qwen3-TTS always speaks as English (its spoken language is not
+        yet separately configurable), but most of its nine preset voices
+        are native to Chinese, Japanese or Korean and sound noticeably
+        worse when forced to speak English. This never blocks the
+        config -- it only logs, so a deliberate choice still works.
+        """
+        if self.qwen3_tts_speaker.strip().lower() not in ENGLISH_NATIVE_QWEN_SPEAKERS:
+            logger.warning(
+                "Qwen3-TTS speaker %r is not English-native (English-native choices: Ryan, Aiden); "
+                "it will still be asked to speak English, which may sound worse than its own language.",
+                self.qwen3_tts_speaker,
+            )
+        return self
 
 
 class VocalisConfig(BaseModel):

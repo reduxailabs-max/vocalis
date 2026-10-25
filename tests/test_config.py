@@ -1,4 +1,5 @@
 """Tests for vocalis.config: pydantic models and TOML load/save."""
+import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -202,3 +203,29 @@ def test_kokoro_defaults_live_under_the_vocalis_models_folder() -> None:
     assert engines.kokoro_model_path.endswith("/.local/share/vocalis/models/kokoro/kokoro-v1.0.onnx")
     assert engines.kokoro_voices_path.endswith("/.local/share/vocalis/models/kokoro/voices-v1.0.bin")
     assert engines.kokoro_voice == "af_heart"
+
+
+def test_default_speaker_is_english_native() -> None:
+    """Ryan (English) is the configured default; this pins that choice."""
+    assert EnginesConfig().qwen3_tts_speaker == "Ryan"
+
+
+def test_a_non_english_native_speaker_logs_a_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """A non-English-native Qwen3-TTS speaker is logged, not rejected."""
+    with caplog.at_level(logging.WARNING, logger="vocalis"):
+        EnginesConfig(qwen3_tts_speaker="Serena")
+    assert any("Serena" in record.message for record in caplog.records)
+
+
+def test_english_native_speakers_log_no_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Aiden is English-native, so constructing with it logs nothing."""
+    with caplog.at_level(logging.WARNING, logger="vocalis"):
+        EnginesConfig(qwen3_tts_speaker="Aiden")
+    assert not caplog.records
+
+
+def test_speaker_check_is_case_insensitive(caplog: pytest.LogCaptureFixture) -> None:
+    """The English-native check ignores letter case, so 'ryan' logs nothing."""
+    with caplog.at_level(logging.WARNING, logger="vocalis"):
+        EnginesConfig(qwen3_tts_speaker="ryan")
+    assert not caplog.records
