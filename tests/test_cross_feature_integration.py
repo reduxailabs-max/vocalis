@@ -10,7 +10,7 @@ GPU model, or the real network.
 """
 import subprocess
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import MethodType
 from typing import cast
@@ -385,15 +385,28 @@ def test_a_settings_change_is_picked_up_by_an_already_built_readers_next_reading
 
     fixed_audio_length = 24000  # 1 second at 24kHz, long enough to stretch measurably
     qwen_engine = _FakeEngine("qwen")
+    captured_speed: "dict[str, float | Callable[[], float]]" = {}
 
     def fixed_length_synthesize(text: str) -> "tuple[npt.NDArray[np.float32], int]":
-        return np.full(fixed_audio_length, 0.5, dtype=np.float32), 24000
+        """Simulate a real engine's own pacing (Stage 6c): stretch the
+        fixed-length audio by whatever speed the factory most recently
+        constructed this engine with, read live -- exactly as Qwen3TTS,
+        KokoroTTS and PiperTTS now do internally, instead of relying on
+        the old (removed) shared ChunkedSpeaker stretch."""
+        speed = captured_speed.get("speed", 1.0)
+        current = speed() if callable(speed) else speed
+        return np.full(int(fixed_audio_length / current), 0.5, dtype=np.float32), 24000
 
     qwen_engine.synthesize = fixed_length_synthesize  # type: ignore[method-assign]
 
+    def fake_qwen_tts(**kwargs: object) -> _FakeEngine:
+        """Stand in for the Qwen3TTS constructor, capturing the live `speed` the factory passed."""
+        captured_speed["speed"] = cast("float | Callable[[], float]", kwargs.get("speed", 1.0))
+        return qwen_engine
+
     threads_before = set(threading.enumerate())
     with (
-        patch("vocalis.cli.Qwen3TTS", return_value=qwen_engine),
+        patch("vocalis.cli.Qwen3TTS", side_effect=fake_qwen_tts),
         patch("vocalis.cli.PiperTTS", _FakePiper),
         patch("vocalis.cli.AudioPlayer") as mock_player_cls,
         patch("vocalis.cli.Notifier.notify", _quiet_notify),
