@@ -8,6 +8,7 @@ from unittest.mock import Mock, call, patch
 
 import numpy as np
 import pytest
+import torch
 
 import vocalis.engines.qwen3_tts as qwen3_tts_module
 from vocalis.engines.qwen3_tts import Qwen3TTS, Qwen3TTSLoadError, _max_new_tokens_for
@@ -229,40 +230,48 @@ def test_load_applies_the_cpu_thread_cap() -> None:
     mock_set_threads.assert_called_once_with(4)
 
 
-def test_load_applies_torch_default_threads_when_no_cap(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_load_applies_torch_default_threads_when_no_cap() -> None:
     """With no cap, load() restores torch's own default thread count
-    rather than leaving torch.set_num_threads() untouched."""
-    monkeypatch.setattr(qwen3_tts_module, "_default_num_threads", None)
+    (captured at module import time) rather than leaving
+    torch.set_num_threads() untouched."""
     engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=False)
     with (
         patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
         patch("vocalis.engines.qwen3_tts.torch.set_num_threads") as mock_set_threads,
-        patch("vocalis.engines.qwen3_tts.torch.get_num_threads", return_value=8),
     ):
         mock_model_cls.from_pretrained.return_value = object()
         engine.load()
-    mock_set_threads.assert_called_once_with(8)
+    mock_set_threads.assert_called_once_with(qwen3_tts_module._DEFAULT_NUM_THREADS)
 
 
-def test_cpu_thread_cap_resets_to_torch_default_when_turned_back_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Setting a cap, then turning it back off, must restore torch's own
-    default thread count -- not silently leave the old cap in place."""
-    monkeypatch.setattr(qwen3_tts_module, "_default_num_threads", None)
+def test_cpu_thread_cap_resets_to_torch_default_when_turned_back_off() -> None:
+    """Simulates a cap persisted across a restart: the very FIRST load() call
+    already has a non-None cap (a no-cap load never happens first in this
+    test). Turning the cap back off on a later load() must restore torch's
+    real, pristine default -- not whatever the earlier capped call left
+    behind.
+
+    torch.get_num_threads()/set_num_threads() are pure CPU-threading calls
+    with no GPU/hardware dependency, so they are exercised for real here
+    (not mocked): a mock of get_num_threads() returning a fixed constant
+    can't detect this ordering bug, since real torch's thread count is
+    stateful and reflects whatever set_num_threads() was last called with.
+    """
+    original_threads = torch.get_num_threads()
     cap: dict[str, "int | None"] = {"value": 4}
     engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=False, max_cpu_threads=lambda: cap["value"])
-    with (
-        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
-        patch("vocalis.engines.qwen3_tts.torch.set_num_threads") as mock_set_threads,
-        patch("vocalis.engines.qwen3_tts.torch.get_num_threads", return_value=8),
-    ):
-        mock_model_cls.from_pretrained.return_value = object()
+    try:
+        with patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls:
+            mock_model_cls.from_pretrained.return_value = object()
 
-        engine.load()
-        mock_set_threads.assert_called_once_with(4)
+            engine.load()
+            assert torch.get_num_threads() == 4
 
-        cap["value"] = None
-        engine.load()
-        mock_set_threads.assert_called_with(8)
+            cap["value"] = None
+            engine.load()
+            assert torch.get_num_threads() == qwen3_tts_module._DEFAULT_NUM_THREADS
+    finally:
+        torch.set_num_threads(original_threads)
 
 
 def test_cpu_thread_cap_can_be_a_live_callable() -> None:

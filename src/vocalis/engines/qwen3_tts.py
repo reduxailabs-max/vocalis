@@ -46,24 +46,18 @@ _STRETCH_MAX_SPEED = 1.2
 _BYTES_PER_MB = 1024 * 1024
 
 
-_default_num_threads: "int | None" = None
-
-
-def _torch_default_num_threads() -> int:
-    """torch's own default CPU thread count, captured once on first use.
-
-    torch.set_num_threads() is a process-global setting with no per-call
-    "unset" -- the only way back to torch's own default, once a cap has
-    been applied, is to set it explicitly. Caching the value returned by
-    torch.get_num_threads() the first time it is needed (before any
-    Qwen3TTS instance has had a chance to apply a cap of its own) lets
-    load() restore it precisely whenever the live cap later resolves back
-    to None, instead of leaving whatever cap was last applied in place.
-    """
-    global _default_num_threads
-    if _default_num_threads is None:
-        _default_num_threads = torch.get_num_threads()
-    return _default_num_threads
+# torch's own default CPU thread count, captured once at import time --
+# i.e. before this module (or anything in it) ever has a chance to call
+# torch.set_num_threads() with a cap. torch.set_num_threads() is a
+# process-global setting with no per-call "unset", so this is the only way
+# to reliably recover the pristine default later: max_cpu_threads is a
+# persisted config setting, so the very first load() in a process can
+# already see a non-None cap (e.g. the user set a cap, then restarted
+# Vocalis) -- capturing lazily on first "no cap" use would then capture
+# the already-capped value instead of the true default. Capturing here,
+# at module import time, is unconditional and always runs before any cap
+# could possibly have been applied.
+_DEFAULT_NUM_THREADS: int = torch.get_num_threads()
 
 
 def _max_new_tokens_for(text: str) -> int:
@@ -115,7 +109,10 @@ class Qwen3TTS:
                 audibly hurts this voice, so anything outside that range
                 is simply played at the nearest end of it instead.
             max_cpu_threads: Cap for torch.set_num_threads(), or a function
-                returning it, re-read at load time. None means no cap.
+                returning it, re-read at load time. None means no cap --
+                load() then restores torch's own default thread count
+                (captured at module import time), so a cap applied by an
+                earlier load() does not linger once it's turned back off.
             gpu_vram_ceiling_mb: Cap for torch.cuda.set_per_process_memory_fraction(),
                 or a function returning it, re-read at load time. None means
                 no cap; ignored when use_gpu is False. Best-effort: a failed
@@ -163,7 +160,10 @@ class Qwen3TTS:
                 files, CUDA unavailable, out-of-memory, etc.).
         """
         max_threads = self._current_max_cpu_threads()
-        torch.set_num_threads(max_threads if max_threads is not None else _torch_default_num_threads())
+        if max_threads is not None:
+            torch.set_num_threads(max_threads)
+        else:
+            torch.set_num_threads(_DEFAULT_NUM_THREADS)
         if self._use_gpu:
             self._apply_vram_ceiling()
         try:
