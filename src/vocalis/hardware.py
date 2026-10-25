@@ -44,11 +44,17 @@ def query_gpu_with_torch() -> GpuInfo | None:
     return GpuInfo(torch.cuda.get_device_name(0), total_bytes // _BYTES_PER_MB, free_bytes // _BYTES_PER_MB)
 
 
-def query_own_process_ram_mb() -> "int | None":
-    """Return Vocalis's own peak resident memory in MB, or None if unreadable."""
-    import resource  # slow-ish, POSIX-only import, kept local
-
-    return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss // _KB_PER_MB
+def query_own_process_ram_mb(status_path: Path = Path("/proc/self/status")) -> "int | None":
+    """Return Vocalis's own current resident memory in MB (the VmRSS line), or None if unreadable."""
+    try:
+        for line in status_path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("VmRSS:"):
+                parts = line.split()
+                if len(parts) >= 2 and parts[1].isdigit():
+                    return int(parts[1]) // _KB_PER_MB
+    except OSError:
+        return None
+    return None
 
 
 def _read_meminfo(path: Path) -> tuple[int | None, int | None]:

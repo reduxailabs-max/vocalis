@@ -47,11 +47,33 @@ def test_a_raising_own_ram_query_means_unknown(tmp_path: Path) -> None:
     assert info.own_process_ram_mb is None
 
 
-def test_query_own_process_ram_mb_returns_a_positive_number() -> None:
+def test_query_own_process_ram_mb_reads_current_vmrss_in_mb(tmp_path: Path) -> None:
+    from vocalis.hardware import query_own_process_ram_mb
+
+    status = tmp_path / "status"
+    status.write_text("Name:\tpython\nVmPeak:\t  999999 kB\nVmRSS:\t  204800 kB\nThreads:\t4\n")
+    assert query_own_process_ram_mb(status) == 200
+
+
+def test_query_own_process_ram_mb_without_vmrss_line_is_unknown(tmp_path: Path) -> None:
+    from vocalis.hardware import query_own_process_ram_mb
+
+    status = tmp_path / "status"
+    status.write_text("Name:\tpython\nVmPeak:\t  999999 kB\n")
+    assert query_own_process_ram_mb(status) is None
+
+
+def test_query_own_process_ram_mb_missing_file_is_unknown(tmp_path: Path) -> None:
+    from vocalis.hardware import query_own_process_ram_mb
+
+    assert query_own_process_ram_mb(tmp_path / "nope") is None
+
+
+def test_query_own_process_ram_mb_reads_this_process_on_this_machine() -> None:
     from vocalis.hardware import query_own_process_ram_mb
 
     value = query_own_process_ram_mb()
-    assert value is None or value > 0
+    assert value is not None and value > 0
 
 
 def test_garbage_proc_content_gives_none(tmp_path: Path) -> None:
