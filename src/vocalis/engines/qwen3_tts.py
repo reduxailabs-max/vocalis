@@ -42,6 +42,7 @@ _MIN_NEW_TOKENS = 200
 _MAX_NEW_TOKENS = 2048
 _STRETCH_MIN_SPEED = 1.0
 _STRETCH_MAX_SPEED = 1.2
+_BYTES_PER_MB = 1024 * 1024
 
 
 def _max_new_tokens_for(text: str) -> int:
@@ -70,6 +71,8 @@ class Qwen3TTS:
         language: str = "English",
         use_gpu: bool = True,
         speed: float | Callable[[], float] = 1.0,
+        max_cpu_threads: "int | None | Callable[[], int | None]" = None,
+        gpu_vram_ceiling_mb: "int | None | Callable[[], int | None]" = None,
     ) -> None:
         """Create a Qwen3TTS engine (does not load the model yet).
 
@@ -90,18 +93,46 @@ class Qwen3TTS:
                 _capped_speed(): a bigger stretch, in either direction,
                 audibly hurts this voice, so anything outside that range
                 is simply played at the nearest end of it instead.
+            max_cpu_threads: Cap for torch.set_num_threads(), or a function
+                returning it, re-read at load time. None means no cap.
+            gpu_vram_ceiling_mb: Cap for torch.cuda.set_per_process_memory_fraction(),
+                or a function returning it, re-read at load time. None means
+                no cap; ignored when use_gpu is False. Best-effort: a failed
+                GPU query never blocks loading.
         """
         self._model_dir = model_dir
         self._speaker = speaker
         self._language = language
         self._use_gpu = use_gpu
         self._speed = speed
+        self._max_cpu_threads = max_cpu_threads
+        self._gpu_vram_ceiling_mb = gpu_vram_ceiling_mb
         self._model: Qwen3TTSModel | None = None
 
     @property
     def is_loaded(self) -> bool:
         """Whether the model is currently loaded."""
         return self._model is not None
+
+    def _current_max_cpu_threads(self) -> "int | None":
+        """The CPU thread cap to apply right now (re-read at every load)."""
+        return self._max_cpu_threads() if callable(self._max_cpu_threads) else self._max_cpu_threads
+
+    def _current_gpu_vram_ceiling_mb(self) -> "int | None":
+        """The GPU VRAM ceiling to apply right now (re-read at every load)."""
+        return self._gpu_vram_ceiling_mb() if callable(self._gpu_vram_ceiling_mb) else self._gpu_vram_ceiling_mb
+
+    def _apply_vram_ceiling(self) -> None:
+        """Cap this process's GPU memory fraction. Best-effort: never raises."""
+        ceiling_mb = self._current_gpu_vram_ceiling_mb()
+        if ceiling_mb is None:
+            return
+        try:
+            _, total_bytes = torch.cuda.mem_get_info(0)
+            fraction = min(1.0, (ceiling_mb * _BYTES_PER_MB) / total_bytes)
+            torch.cuda.set_per_process_memory_fraction(fraction)
+        except Exception:
+            logger.warning("Could not apply the GPU VRAM ceiling", exc_info=True)
 
     def load(self) -> None:
         """Load the model onto the GPU.
@@ -110,6 +141,11 @@ class Qwen3TTS:
             Qwen3TTSLoadError: If loading fails for any reason (missing
                 files, CUDA unavailable, out-of-memory, etc.).
         """
+        max_threads = self._current_max_cpu_threads()
+        if max_threads is not None:
+            torch.set_num_threads(max_threads)
+        if self._use_gpu:
+            self._apply_vram_ceiling()
         try:
             self._model = Qwen3TTSModel.from_pretrained(
                 str(self._model_dir),

@@ -194,3 +194,86 @@ def test_speed_can_be_a_live_callable() -> None:
 
     assert abs(len(first) - len(audio) / 1.1) < 0.03 * len(audio)
     assert abs(len(second) - len(audio) / 1.2) < 0.03 * len(audio)
+
+
+def test_load_applies_the_cpu_thread_cap() -> None:
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=False, max_cpu_threads=4)
+    with (
+        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
+        patch("vocalis.engines.qwen3_tts.torch.set_num_threads") as mock_set_threads,
+    ):
+        mock_model_cls.from_pretrained.return_value = object()
+        engine.load()
+    mock_set_threads.assert_called_once_with(4)
+
+
+def test_load_does_not_touch_threads_when_no_cap() -> None:
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=False)
+    with (
+        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
+        patch("vocalis.engines.qwen3_tts.torch.set_num_threads") as mock_set_threads,
+    ):
+        mock_model_cls.from_pretrained.return_value = object()
+        engine.load()
+    mock_set_threads.assert_not_called()
+
+
+def test_cpu_thread_cap_can_be_a_live_callable() -> None:
+    cap = {"value": 2}
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=False, max_cpu_threads=lambda: cap["value"])
+    with (
+        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
+        patch("vocalis.engines.qwen3_tts.torch.set_num_threads") as mock_set_threads,
+    ):
+        mock_model_cls.from_pretrained.return_value = object()
+        cap["value"] = 6
+        engine.load()
+    mock_set_threads.assert_called_once_with(6)
+
+
+def test_load_applies_the_gpu_vram_ceiling_when_using_gpu() -> None:
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=True, gpu_vram_ceiling_mb=4096)
+    with (
+        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
+        patch("vocalis.engines.qwen3_tts.torch.cuda.mem_get_info", return_value=(2_000_000_000, 8 * 1024 * 1024 * 1024)),
+        patch("vocalis.engines.qwen3_tts.torch.cuda.set_per_process_memory_fraction") as mock_set_fraction,
+    ):
+        mock_model_cls.from_pretrained.return_value = object()
+        engine.load()
+    mock_set_fraction.assert_called_once()
+    assert abs(mock_set_fraction.call_args[0][0] - 0.5) < 0.001
+
+
+def test_gpu_vram_ceiling_is_clamped_to_one_when_above_total_memory() -> None:
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=True, gpu_vram_ceiling_mb=999999)
+    with (
+        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
+        patch("vocalis.engines.qwen3_tts.torch.cuda.mem_get_info", return_value=(2_000_000_000, 8 * 1024 * 1024 * 1024)),
+        patch("vocalis.engines.qwen3_tts.torch.cuda.set_per_process_memory_fraction") as mock_set_fraction,
+    ):
+        mock_model_cls.from_pretrained.return_value = object()
+        engine.load()
+    assert mock_set_fraction.call_args[0][0] == 1.0
+
+
+def test_gpu_vram_ceiling_is_skipped_when_use_gpu_is_false() -> None:
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=False, gpu_vram_ceiling_mb=4096)
+    with (
+        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
+        patch("vocalis.engines.qwen3_tts.torch.cuda.set_per_process_memory_fraction") as mock_set_fraction,
+    ):
+        mock_model_cls.from_pretrained.return_value = object()
+        engine.load()
+    mock_set_fraction.assert_not_called()
+
+
+def test_a_failing_vram_ceiling_query_does_not_block_loading() -> None:
+    fake_model = FakeQwenModel(wavs=[np.zeros(1, dtype=np.float32)], sample_rate=24000)
+    engine = Qwen3TTS(model_dir=Path("/fake/model/dir"), use_gpu=True, gpu_vram_ceiling_mb=4096)
+    with (
+        patch("vocalis.engines.qwen3_tts.Qwen3TTSModel") as mock_model_cls,
+        patch("vocalis.engines.qwen3_tts.torch.cuda.mem_get_info", side_effect=RuntimeError("no CUDA")),
+    ):
+        mock_model_cls.from_pretrained.return_value = fake_model
+        engine.load()
+    assert engine.is_loaded is True
