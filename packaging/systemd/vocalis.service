@@ -11,6 +11,7 @@ ExecStart=__VOCALIS_EXEC__
 WorkingDirectory=__VOCALIS_WORKDIR__
 Restart=on-failure
 RestartSec=3
+Nice=10
 
 [Install]
 WantedBy=xdg-desktop-autostart.target

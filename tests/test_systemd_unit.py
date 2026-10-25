@@ -21,6 +21,11 @@ def test_restart_policy_matches_the_design() -> None:
     assert "StartLimitIntervalSec=60" in lines
 
 
+def test_nice_level_lowers_scheduling_priority() -> None:
+    lines = _lines()
+    assert "Nice=10" in lines
+
+
 def test_wants_the_xdg_autostart_target_not_default_target() -> None:
     lines = _lines()
     assert any(line.startswith("WantedBy=") and "xdg-desktop-autostart.target" in line for line in lines)
