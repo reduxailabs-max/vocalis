@@ -1,10 +1,11 @@
 """Changes the speaking pace of finished speech audio.
 
-The voice engines have no speed control, so the pace is applied to the
-finished audio with a pitch-preserving time stretch (librosa's phase
-vocoder). librosa is imported inside the function so merely importing
-Vocalis does not pay its start-up cost, and nothing here touches the
-network.
+Qwen3-TTS has no native speed control of its own, so the pace is applied
+to its finished audio with a pitch-preserving time stretch (librosa's
+phase vocoder). (Kokoro and Piper gained their own native speed controls
+in Tasks 2-3 of Stage 6c and no longer need this module.) librosa is
+imported inside the function so merely importing Vocalis does not pay its
+start-up cost, and nothing here touches the network.
 """
 import logging
 from typing import Callable
@@ -58,9 +59,10 @@ def paced_audio(
 ) -> npt.NDArray[np.float32]:
     """Apply the caller's current speaking pace to finished audio.
 
-    Shared by Quick Reader and Document Reader so neither duplicates the
-    try/except: a pace failure must never break a reading. Returns
-    `audio` unchanged when `provider` is None. Otherwise calls
+    Since Stage 6c this has exactly one caller, `Qwen3TTS.synthesize()`
+    (Kokoro and Piper now use their own native speed controls instead).
+    The try/except below still guards against a pace failure breaking a
+    reading. Returns `audio` unchanged when `provider` is None. Otherwise calls
     `provider()` to get the desired speed and applies it with
     `apply_speed()`; if either call raises, the exception is logged as a
     warning (with traceback) and the original `audio` is returned

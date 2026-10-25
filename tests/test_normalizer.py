@@ -83,6 +83,22 @@ def test_normalize_text_speaks_currency() -> None:
     assert normalize_text("It costs $42") == "It costs 42 dollars"
 
 
+def test_normalize_text_speaks_currency_with_thousands_commas() -> None:
+    assert normalize_text("It costs $1,000 today") == "It costs 1000 dollars today"
+
+
+def test_normalize_text_speaks_currency_with_decimal_and_commas() -> None:
+    assert normalize_text("Priced at $1,234.50") == "Priced at 1234.50 dollars"
+
+
+def test_normalize_text_uses_singular_dollar_for_one() -> None:
+    assert normalize_text("It costs $1") == "It costs 1 dollar"
+
+
+def test_normalize_text_keeps_a_sentence_ending_period_after_a_url() -> None:
+    assert normalize_text("Visit https://example.com. Then stop.") == "Visit example dot com. Then stop."
+
+
 def test_normalize_text_speaks_percent() -> None:
     assert normalize_text("Up 50% today") == "Up 50 percent today"
 

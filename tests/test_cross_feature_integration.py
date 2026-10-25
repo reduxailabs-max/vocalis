@@ -388,11 +388,11 @@ def test_a_settings_change_is_picked_up_by_an_already_built_readers_next_reading
     captured_speed: "dict[str, float | Callable[[], float]]" = {}
 
     def fixed_length_synthesize(text: str) -> "tuple[npt.NDArray[np.float32], int]":
-        """Simulate a real engine's own pacing (Stage 6c): stretch the
-        fixed-length audio by whatever speed the factory most recently
-        constructed this engine with, read live -- exactly as Qwen3TTS,
-        KokoroTTS and PiperTTS now do internally, instead of relying on
-        the old (removed) shared ChunkedSpeaker stretch."""
+        """Simulate a generic engine honoring a live speed callable
+        (uncapped, unlike the real Qwen3TTS's 1.0-1.2x limit) -- this test
+        only needs to prove the live speed value reaches whatever engine
+        the factory builds, not reproduce any one real engine's exact
+        pacing curve."""
         speed = captured_speed.get("speed", 1.0)
         current = speed() if callable(speed) else speed
         return np.full(int(fixed_audio_length / current), 0.5, dtype=np.float32), 24000

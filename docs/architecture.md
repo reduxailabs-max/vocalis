@@ -955,10 +955,11 @@ of the library's own `0.9` default), a lower `top_k` (`20` instead of
 `50`), and a `max_new_tokens` scaled to the text's length (`6` tokens per
 character, floored at `200`, capped at the library's own default of
 `2048`) instead of always requesting the full default budget. A typical
-~300-character chunk now asks for roughly half the token budget it used
-to, which is both faster and less prone to the model wandering or
-repeating near the end of a long generation; an occasional very long
-chunk is still capped at the library's tuned default rather than cut off.
+~300-character chunk now asks for about 1800 tokens (roughly 88% of the
+library's own 2048 default) instead of always requesting the full 2048
+regardless of length; the real benefit of this scaling is mainly at the
+floor (very short chunks ask for far less than 2048) and the ceiling (an
+unusually long chunk is still capped at the library's own tuned default).
 
 ### English-native speaker, with a warning on a mismatch
 

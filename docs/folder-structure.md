@@ -52,7 +52,7 @@ src/vocalis/
 ├── text/
 │   ├── chunker.py          # chunk_spans/chunk_text: sentence-aware chunks with exact spans (Stage 6b)
 │   ├── extractors.py       # extract_text: txt/md/pdf/docx/html readers + typed errors
-│   └── normalizer.py       # normalize_markdown + normalize_text: markdown/plain text -> speakable text (numbers, URLs, symbols; Stage 6c)
+│   └── normalizer.py       # normalize_markdown + normalize_text: markdown/plain text -> speakable text (URLs, currency, percentages, symbols; Stage 6c)
 ├── ui/
 │   ├── doc_popup.py        # DocumentReaderPopup: PySide6 Document Reader window
 │   ├── floating_widget.py  # FloatingWidget: small always-on-top reading box

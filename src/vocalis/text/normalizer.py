@@ -40,16 +40,30 @@ _ITALIC_UNDERSCORE_RE = re.compile(r"(?<!\w)_(?!\s)(.+?)(?<!\s)_(?!\w)")
 _INLINE_WHITESPACE_RE = re.compile(r"[ \t]+")
 _EXCESS_BLANK_LINES_RE = re.compile(r"\n{3,}")
 _URL_RE = re.compile(r"\bhttps?://[^\s,;:!?)]+|\bwww\.[^\s,;:!?)]+", re.IGNORECASE)
-_CURRENCY_RE = re.compile(r"\$(\d+(?:\.\d+)?)")
+_CURRENCY_RE = re.compile(r"\$(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)")
 _PERCENT_RE = re.compile(r"(\d)%")
 
 
 def _speak_url(match: "re.Match[str]") -> str:
-    """Turn one matched URL into a short, spoken-friendly phrase."""
-    url = re.sub(r"^https?://", "", match.group(0), flags=re.IGNORECASE)
+    """Turn one matched URL into a short, spoken-friendly phrase, keeping a
+    trailing sentence-ending period out of the spoken result."""
+    raw = match.group(0)
+    trailing_period = raw.endswith(".") and not raw.endswith("..")
+    if trailing_period:
+        raw = raw[:-1]
+    url = re.sub(r"^https?://", "", raw, flags=re.IGNORECASE)
     url = url.replace(".", " dot ").replace("/", " slash ")
     url = re.sub(r"\s+", " ", url).strip()
-    return re.sub(r"\s*slash$", "", url)
+    url = re.sub(r"\s*slash$", "", url)
+    return url + "." if trailing_period else url
+
+
+def _speak_currency(match: "re.Match[str]") -> str:
+    """Turn one matched dollar amount into its spoken form, using the
+    singular "dollar" only when the amount is exactly 1."""
+    digits = match.group(1).replace(",", "")
+    unit = "dollar" if digits == "1" else "dollars"
+    return f"{digits} {unit}"
 
 
 def normalize_text(text: str) -> str:
@@ -71,7 +85,7 @@ def normalize_text(text: str) -> str:
         The same text with the substitutions above applied. Never raises.
     """
     result = _URL_RE.sub(_speak_url, text)
-    result = _CURRENCY_RE.sub(r"\1 dollars", result)
+    result = _CURRENCY_RE.sub(_speak_currency, result)
     result = _PERCENT_RE.sub(r"\1 percent", result)
     result = result.replace("&", " and ").replace("@", " at ")
     return re.sub(r"[ \t]+", " ", result).strip()

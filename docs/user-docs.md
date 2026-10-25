@@ -266,8 +266,9 @@ preview your voice before you commit to it.
   old speed and the new speed takes over from the next piece onward.
   Kokoro and Piper follow the slider across its whole range. Qwen3-TTS has
   no speed control of its own, so it only ever speeds up, and only up to
-  **1.2x** — asking for slower than natural, or faster than 1.2x, still
-  sounds like Qwen3-TTS's normal pace, to protect its voice quality.
+  **1.2x** — asking for slower than 1.0x still plays at Qwen3-TTS's normal
+  pace (the floor), and asking for faster than 1.2x still only reaches
+  1.2x (the ceiling), to protect its voice quality.
   **Note:** if you change the speed while a Document Reader reading is
   *paused*, the new speed takes effect from the next chunk once you
   resume — the paused chunk itself resumes at the speed it was already
