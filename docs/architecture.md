@@ -299,8 +299,9 @@ How each feature reports:
   the popup is not opened for OCR; if it is off, the popup opens as in
   Phase 5.
 
-**Tray icon (`ui/tray.py`)** draws a 22x22 coloured circle in code (grey,
-red, blue) and keeps its menu in step with the hub. `close()` tears down
+**Tray icon (`ui/tray.py`)** draws a 22x22 icon in code (a dot for idle and
+listening, a ring with a centre dot for reading; colours from `ui/theme.py`)
+and keeps its menu in step with the hub. `close()` tears down
 the tray safely and is idempotent. **Floating widget
 (`ui/floating_widget.py`)** is a frameless, always-on-top tool window that
 never accepts keyboard focus and sits bottom-right on the primary screen.
@@ -1099,7 +1100,7 @@ DocumentReaderFeature (worker thread)
   the positions it reports match the text the box shows.
 - `span_started` carries Python character positions. Qt counts text in
   UTF-16 units, so the popup converts each position with `_qt_position()`
-  (see "Highlight position conversion" in `docs/algorithms.md`).
+  (see "Contrast ratio and highlight position conversion" in `docs/algorithms.md`).
 - The highlight is a `QTextEdit.ExtraSelection` coloured `HIGHLIGHT_BG`. It
   does not change the text or take keyboard focus, it scrolls the piece
   into view, and it is cleared when the span is empty. The box is read-only

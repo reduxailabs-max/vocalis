@@ -228,9 +228,10 @@ notification and never crash the daemon.
 
 ## Tray, widget and Settings flow (Phase 6)
 
-User perspective: a coloured dot sits in the tray (grey idle, red while you
-hold the dictation key, blue while reading). When something is read aloud a
-small box appears bottom-right with Pause/Resume and Stop (Quick Reader:
+User perspective: an icon sits in the tray (grey dot idle, bright red dot
+while you hold the dictation key, red ring with a white centre while
+reading). When something is read aloud a dark card with a thin red progress
+bar appears bottom-right (you can drag it elsewhere) with Pause/Resume and Stop (Quick Reader:
 Stop only) and disappears at the end. **Settings…** in the tray menu opens
 the Settings window; the two switches and the voice apply at once,
 shortcuts after a restart. **Quit** in the tray menu is the same as Ctrl+C.

@@ -259,7 +259,7 @@ flag (reset when a reading finishes or a new one starts) so the button
 alternates Pause/Resume correctly; a Pause click while nothing is being
 read is ignored.
 
-## Highlight position conversion (`ui/theme.py`, `ui/doc_popup.py`)
+## Contrast ratio and highlight position conversion (`ui/theme.py`, `ui/doc_popup.py`)
 
 **Contrast ratio (WCAG).** The palette test checks that text colours are
 readable. For each colour channel `c` (0 to 1) the linear value is

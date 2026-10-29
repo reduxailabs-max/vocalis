@@ -357,7 +357,6 @@ Automatic.
 
 Open the Settings window from the tray menu (**Settings…**). It has five tabs:
 
-
 **General tab**
 
 - **Show desktop notifications** — applies immediately.
