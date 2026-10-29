@@ -213,6 +213,7 @@ def test_build_doc_reader_wires_engines_popup_and_listener(qtbot) -> None:  # ty
 
     # The highlight hooks must reach the popup too.
     assert feature._on_document is not None and feature._on_chunk_span is not None  # noqa: SLF001
+    popup.reading_started.emit()  # a reading must be on before text is shown
     feature._on_document("Hello there.")  # noqa: SLF001
     assert popup._text_box.toPlainText() == "Hello there."  # noqa: SLF001
     assert popup._text_box.isReadOnly()  # noqa: SLF001
