@@ -1459,3 +1459,157 @@ without real audio.
 3. The Kokoro model download is added to the Stage 1-era installer scripts
    now (6a), not deferred to Stage 8, since 6a's Settings engine picker is
    useless to the user if the model it names is never fetched.
+
+
+## Stage 7 amendment — Red-and-black UI and reading highlight (confirmed via superpowers:brainstorming, 2026-10-29)
+
+### Goal
+
+Give every Vocalis window one consistent, modern red-and-black look, make
+the Settings window easy to navigate now that it holds many settings, and
+highlight the sentence being spoken in the Document Reader window.
+
+### Decisions (user-confirmed)
+
+- Scope: theme for tray, floating widget, Document Reader window and
+  Settings window; Settings reorganized into tabs; highlighting in the
+  Document Reader window only (Quick Reader has no text view, so it gets
+  no highlighting).
+- Colour feel: "Matte Crimson" — the palette already named in the roadmap.
+- Settings layout: tabs across the top (chosen over a left sidebar:
+  simpler, and works when the window is resized narrow).
+
+### Palette (`ui/theme.py`, named constants)
+
+| Name | Value | Use |
+|------|-------|-----|
+| `BACKGROUND` | `#0d0d0f` | window backgrounds |
+| `SURFACE` | `#16161a` | panels, inputs, tab bar, widget card |
+| `BORDER` | `#2a2a2e` | 1 px borders, separators |
+| `TEXT` | `#f5f5f5` | normal text |
+| `TEXT_MUTED` | `#9e9e9e` | secondary labels, inactive tabs |
+| `ACCENT` | `#e53935` | selected tab underline, focus ring, progress bar, slider |
+| `ACCENT_BRIGHT` | `#ff1744` | "listening" tray state, hover on accent items |
+| `BUTTON_PRIMARY` | `#c62828` | background of primary buttons (Save, Read) |
+| `HIGHLIGHT_BG` | `#5c1a1d` | background of the sentence being read |
+
+Contrast rule: white text on `#e53935` is only about 4.2:1, below the
+WCAG AA minimum of 4.5:1 for normal-size text, so text never sits on
+`ACCENT`; buttons with text use `BUTTON_PRIMARY` (white on `#c62828` is
+about 5.6:1). `TEXT` on `HIGHLIGHT_BG` and `TEXT_MUTED` on `BACKGROUND`
+also pass 4.5:1. A unit test computes these ratios from the constants so a
+later palette edit cannot quietly break readability.
+
+### Components
+
+1. **`ui/theme.py` (new).** The constants above, one Qt stylesheet string
+   built from them, and `apply_theme(app: QApplication) -> None`, which sets
+   the Fusion style, a dark `QPalette` (so widgets the stylesheet does not
+   cover — menus, file dialogs drawn by Qt, tooltips — are also dark) and
+   the stylesheet. `cli.main()` calls it once, right after the
+   `QApplication` is created. No window styles itself with literal colours;
+   everything comes from `theme.py`.
+2. **Tray icon (`ui/tray.py`).** Idle: grey filled circle (`TEXT_MUTED`).
+   Listening: bright red filled circle (`ACCENT_BRIGHT`). Reading: red ring
+   (`ACCENT`) with a white centre dot. The three states differ in shape as
+   well as colour, so they are told apart without relying on colour alone.
+   The tray menu is styled by the theme. Menu text and tooltips stay as
+   they are (tests assert them).
+3. **Floating widget (`ui/floating_widget.py`).** A rounded card (8 px
+   radius, `SURFACE`, 1 px `BORDER`) drawn in `paintEvent` on a translucent
+   window; source name in bold, status in `TEXT_MUTED`, a thin red
+   `QProgressBar` (current piece / total pieces) above the existing
+   "piece N of M" label, then Pause/Stop. It can be dragged with the mouse;
+   a dragged position is kept until Vocalis quits (it is not saved), and
+   until the first drag each reading still opens bottom-right. The existing
+   window flags (tool, frameless, stay-on-top, never takes focus) are kept.
+4. **Settings window (`ui/settings_window.py`).** A `QTabWidget` with five
+   tabs; Save, Close and the message line stay below the tabs and apply to
+   all tabs at once:
+   - *General:* desktop notifications, floating widget, sound output +
+     Test sound.
+   - *Voice & Engine:* Qwen3-TTS voice, Quick Reader engine, Document
+     Reader engine, Kokoro voice, speaking speed, Preview voice.
+   - *Performance:* max CPU threads, max RAM, GPU VRAM ceiling, and NEW:
+     "Unload the voice after N seconds idle" (`model_idle_timeout_seconds`,
+     1-3600).
+   - *Shortcuts:* the four shortcut drop-downs.
+   - *Model files (NEW):* the five model locations
+     (`parakeet_model_dir`, `piper_binary_path`, `piper_voice_model_path`,
+     `kokoro_model_path`, `kokoro_voices_path`), each a text field with a
+     Browse… button. A path that does not exist is refused on Save with a
+     plain message naming the field ("Not saved: the Kokoro model file was
+     not found at …"); nothing is written.
+   `engines.stt` is not shown: it has exactly one possible value.
+   The idle timer and model files are read when Vocalis starts, so a new
+   `LiveSettings.engines_need_restart()` (same pattern as
+   `shortcuts_need_restart()`) adds "Restart Vocalis to use the new model
+   settings." to the Saved message when either changed.
+5. **Document Reader window (`ui/doc_popup.py`).** Same controls, restyled:
+   the text area on `SURFACE`, Read as the primary button, a thin red
+   progress bar next to the status line. Plus highlighting (below).
+
+### Highlight data flow
+
+- `DocumentReaderFeature` switches from `chunk_text()` to the existing
+  `chunk_spans()` and gains two optional callbacks (defaults `None`, so all
+  existing callers and tests keep working):
+  - `on_document(text: str)` — called once per reading, after
+    normalization and before the first sound, with the normalized text
+    the spans refer to.
+  - `on_chunk_span(start: int, end: int)` — called at the same moment as
+    `on_progress`, with the character span of the piece now being heard.
+  Both are guarded by the same "still the current reading" check as
+  `on_progress`, and a callback that raises is logged and ignored, like
+  `on_started`.
+- `cli.build_doc_reader()` wires them to two new popup signals,
+  `document_loaded = Signal(str)` and `span_started = Signal(int, int)`;
+  the signals carry the call from the reader's background thread to the
+  window's own thread (the same safe pattern every other popup signal uses).
+- The popup, on `document_loaded`: shows the normalized text, makes the
+  box read-only. On `span_started`: sets one `QTextEdit.ExtraSelection`
+  (background `HIGHLIGHT_BG`) over the span and scrolls it into view
+  (`ensureCursorVisible()` after moving the cursor to the span's start),
+  without taking focus. Pause keeps the highlight. On `reading_finished`:
+  clears the highlight and makes the box editable again; the text stays.
+- Plain-English consequence the user should know: when you paste text or
+  open a file, the box shows the cleaned-up text Vocalis actually reads
+  (e.g. markdown symbols removed), because the highlight positions belong
+  to that cleaned text.
+- Highlight is per piece (one or a few sentences). The voice engines give
+  no word timings, so word-by-word highlighting is not possible.
+
+### Error handling
+
+- A failing highlight callback never stops a reading (logged, ignored).
+- A span outside the shown text (cannot happen by construction, but a
+  stale signal could arrive after a new document loaded) is clamped to the
+  text length; an empty span clears the highlight.
+- Theme failure: `apply_theme()` only calls Qt setters; there is nothing
+  that can fail at runtime beyond Qt itself, so no extra handling.
+
+### Performance impact
+
+Negligible. The stylesheet is parsed once at start-up. Highlighting does one
+small selection update per piece (every few seconds). The widget repaints
+only when its labels change. `setPlainText()` runs once per reading on text
+already capped by the extractor's size limit. No new dependencies.
+
+### Testing
+
+All headless (offscreen Qt + qtbot), no real audio or hardware:
+theme constants' contrast ratios; `apply_theme` sets style, palette and
+stylesheet; tray icon pixels per state; floating widget keeps its flags,
+shows the progress bar value, drags; Settings tab names and which control
+is on which tab, every config field round-trips through the window, a
+missing model path is refused, restart note for engine settings; feature
+fires `on_document` with the normalized text and `on_chunk_span` with each
+chunk's span in order, never for a stale reading, survives a raising
+callback; popup highlight covers exactly the span, scrolls, clears on
+finish, read-only while reading. Existing asserted strings are kept.
+
+### Out of scope
+
+Word-level highlighting (engines give no timings); saving the widget
+position; light theme or theme choice; text view for Quick Reader;
+installer wizard and its styling (Stage 8 reuses `ui/theme.py`).
