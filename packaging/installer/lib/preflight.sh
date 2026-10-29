@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Hard-gate checks run before anything else: is this a supported distro,
-# a supported CPU architecture, and does the machine have a working
-# NVIDIA GPU driver? Vocalis never tries to install a GPU driver itself
-# (too risky/variable to automate safely) -- it only checks and refuses
-# with a plain message if one isn't already working.
+# Checks run before anything else: is this a supported distro and a
+# supported CPU architecture (both hard requirements)? A working NVIDIA
+# GPU driver is optional: without one the install continues with a NOTE
+# and Vocalis uses its lighter voices on the processor. Vocalis never
+# tries to install a GPU driver itself (too risky/variable to automate).
 set -uo pipefail
 
 # Whether /etc/os-release (or the given file) identifies a Debian- or
@@ -43,9 +43,8 @@ preflight_check_gpu() {
   preflight_run_nvidia_smi
 }
 
-# Run every preflight check in order; stop and report at the first
-# failure (each is a hard requirement, unlike vocalis's own runtime
-# startup_checks, which are all independent and non-fatal).
+# Run the preflight checks in order; distro and arch failures stop with
+# a message, a missing NVIDIA driver only prints a NOTE line.
 preflight_run() {
   if ! preflight_check_distro; then
     echo "Vocalis only supports Debian- or Ubuntu-based Linux systems. This machine's /etc/os-release doesn't look like either." >&2
@@ -56,8 +55,7 @@ preflight_run() {
     return 1
   fi
   if ! preflight_check_gpu; then
-    echo "Vocalis needs a working NVIDIA graphics card driver. Please install your GPU driver first (running 'nvidia-smi' should work without an error), then run this installer again." >&2
-    return 1
+    echo "NOTE No NVIDIA graphics card driver was found. Vocalis will use its lighter voices on your processor."
   fi
   return 0
 }

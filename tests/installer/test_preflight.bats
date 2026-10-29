@@ -67,11 +67,29 @@ setup() {
   [[ "$output" == *"64-bit"* ]]
 }
 
-@test "preflight_run reports the GPU driver message when only the GPU check fails" {
+@test "preflight_run succeeds without an NVIDIA driver and prints the NOTE line" {
   preflight_check_distro() { return 0; }
   preflight_check_arch() { return 0; }
-  preflight_check_gpu() { return 1; }
+  preflight_run_nvidia_smi() { return 1; }
+  run preflight_run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NOTE No NVIDIA graphics card driver was found"* ]]
+}
+
+@test "preflight_run prints no NOTE when the GPU driver works" {
+  preflight_check_distro() { return 0; }
+  preflight_check_arch() { return 0; }
+  preflight_run_nvidia_smi() { return 0; }
+  run preflight_run
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"NOTE"* ]]
+}
+
+@test "preflight_run fails on a wrong distro" {
+  preflight_check_distro() { return 1; }
+  preflight_check_arch() { return 0; }
+  preflight_run_nvidia_smi() { return 0; }
   run preflight_run
   [ "$status" -eq 1 ]
-  [[ "$output" == *"NVIDIA"* ]]
+  [[ "$output" == *"Debian"* ]]
 }
