@@ -1534,12 +1534,15 @@ later palette edit cannot quietly break readability.
      "Unload the voice after N seconds idle" (`model_idle_timeout_seconds`,
      1-3600).
    - *Shortcuts:* the four shortcut drop-downs.
-   - *Model files (NEW):* the five model locations
-     (`parakeet_model_dir`, `piper_binary_path`, `piper_voice_model_path`,
-     `kokoro_model_path`, `kokoro_voices_path`), each a text field with a
-     Browse… button. A path that does not exist is refused on Save with a
-     plain message naming the field ("Not saved: the Kokoro model file was
-     not found at …"); nothing is written.
+   - *Model files (NEW):* the six model locations
+     (`parakeet_model_dir`, `qwen3_tts_model_dir`, `piper_binary_path`,
+     `piper_voice_model_path`, `kokoro_model_path`, `kokoro_voices_path`),
+     each a text field with a Browse… button. A location the user CHANGED
+     that does not exist (including an emptied field) is refused on Save
+     with a plain message naming it ("Not saved: the Kokoro model file was
+     not found at …"); nothing is written. Unchanged locations are not
+     checked, so a PC where a model was never installed can still save
+     other settings.
    `engines.stt` is not shown: it has exactly one possible value.
    The idle timer and model files are read when Vocalis starts, so a new
    `LiveSettings.engines_need_restart()` (same pattern as
@@ -1576,6 +1579,10 @@ later palette edit cannot quietly break readability.
   open a file, the box shows the cleaned-up text Vocalis actually reads
   (e.g. markdown symbols removed), because the highlight positions belong
   to that cleaned text.
+- Qt counts text positions in UTF-16 units, Python in characters, so an
+  emoji or other character outside the Basic Multilingual Plane would shift
+  the highlight. The popup converts each span from Python positions to Qt
+  positions using the shown text before highlighting.
 - Highlight is per piece (one or a few sentences). The voice engines give
   no word timings, so word-by-word highlighting is not possible.
 
