@@ -1,8 +1,9 @@
 """Tests for vocalis.ui.settings_window.SettingsWindow."""
 from pathlib import Path
+from unittest.mock import patch
 
 from vocalis.config import ConfigError, VocalisConfig, load_config
-from vocalis.settings import LiveSettings
+from vocalis.settings import MODEL_PATH_FIELDS, LiveSettings
 from vocalis.ui.settings_window import SettingsWindow
 
 
@@ -320,3 +321,156 @@ def test_an_unlisted_stored_kokoro_voice_stays_selectable(qtbot, tmp_path) -> No
     config = VocalisConfig(engines=EnginesConfig(kokoro_voice="af_river"))
     _settings, window, _applied, _path = make(qtbot, tmp_path, config=config)
     assert window._kokoro_voice_combo.currentText() == "af_river"  # noqa: SLF001
+
+
+_TAB_NAMES = ["General", "Voice & Engine", "Performance", "Shortcuts", "Model files"]
+
+
+def _tab_of(window: SettingsWindow, widget: object) -> str:
+    """The name of the tab that holds a widget."""
+    tabs = window._tabs  # noqa: SLF001
+    for index in range(tabs.count()):
+        if tabs.widget(index).isAncestorOf(widget):  # type: ignore[arg-type,union-attr]
+            return tabs.tabText(index).replace("&&", "&")
+    raise AssertionError("widget is on no tab")
+
+
+def test_model_path_fields_are_pinned() -> None:
+    assert set(MODEL_PATH_FIELDS) == {
+        "parakeet_model_dir",
+        "qwen3_tts_model_dir",
+        "piper_binary_path",
+        "piper_voice_model_path",
+        "kokoro_model_path",
+        "kokoro_voices_path",
+    }
+
+
+def test_settings_are_grouped_into_five_tabs(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, window, _applied, _path = make(qtbot, tmp_path)
+    tabs = window._tabs  # noqa: SLF001
+    assert [tabs.tabText(i).replace("&&", "&") for i in range(tabs.count())] == _TAB_NAMES
+
+
+def test_each_control_is_on_its_tab(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, _path = make(qtbot, tmp_path)
+    expected = {
+        "General": [w._notifications_box, w._widget_box, w._output_combo, w._test_sound_button],  # noqa: SLF001
+        "Voice & Engine": [w._voice_combo, w._quick_engine_combo, w._doc_engine_combo,  # noqa: SLF001
+                           w._kokoro_voice_combo, w._speed_slider, w._preview_button],  # noqa: SLF001
+        "Performance": [w._cpu_threads_spin, w._max_ram_spin, w._vram_ceiling_spin,  # noqa: SLF001
+                        w._idle_timeout_spin],  # noqa: SLF001
+        "Shortcuts": [w._ptt_combo, w._quick_combo, w._doc_combo, w._ocr_combo],  # noqa: SLF001
+        "Model files": [*w._path_edits.values(), *w._browse_buttons.values()],  # noqa: SLF001
+    }
+    for tab, widgets in expected.items():
+        for widget in widgets:
+            assert _tab_of(w, widget) == tab
+
+
+def test_save_close_and_message_are_outside_the_tabs(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, _path = make(qtbot, tmp_path)
+    for widget in (w._save_button, w._close_button, w._message_label):  # noqa: SLF001
+        assert not w._tabs.isAncestorOf(widget)  # noqa: SLF001
+    assert w._save_button.property("role") == "primary"  # noqa: SLF001
+
+
+def test_idle_timeout_is_shown_and_saved(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    config = VocalisConfig(model_idle_timeout_seconds=45.0)
+    settings, w, _applied, path = make(qtbot, tmp_path, config=config)
+    assert w._idle_timeout_spin.value() == 45  # noqa: SLF001
+    assert w._idle_timeout_spin.minimum() == 1 and w._idle_timeout_spin.maximum() == 3600  # noqa: SLF001
+    w._idle_timeout_spin.setValue(120)  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert load_config(path).model_idle_timeout_seconds == 120.0
+    assert w._message_label.text() == "Saved. Restart Vocalis to use the new model settings."  # noqa: SLF001
+
+
+def test_model_locations_are_shown(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    config = VocalisConfig()
+    _settings, w, _applied, _path = make(qtbot, tmp_path, config=config)
+    assert set(w._path_edits) == set(MODEL_PATH_FIELDS)  # noqa: SLF001
+    for field in MODEL_PATH_FIELDS:
+        assert w._path_edits[field].text() == getattr(config.engines, field)  # noqa: SLF001
+
+
+def test_an_existing_new_model_file_is_saved_with_a_restart_note(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    model = tmp_path / "kokoro.onnx"
+    model.write_bytes(b"fake model for test")
+    _settings, w, applied, path = make(qtbot, tmp_path)
+    w._path_edits["kokoro_model_path"].setText(str(model))  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert load_config(path).engines.kokoro_model_path == str(model)
+    assert w._message_label.text() == "Saved. Restart Vocalis to use the new model settings."  # noqa: SLF001
+    assert applied == [1]
+
+
+def test_an_existing_new_model_folder_is_saved(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    folder = tmp_path / "parakeet"
+    folder.mkdir()
+    _settings, w, _applied, path = make(qtbot, tmp_path)
+    w._path_edits["parakeet_model_dir"].setText(str(folder))  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert load_config(path).engines.parakeet_model_dir == str(folder)
+
+
+def test_a_changed_model_location_that_does_not_exist_is_refused(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    missing = tmp_path / "nope.onnx"
+    _settings, w, applied, path = make(qtbot, tmp_path)
+    w._path_edits["kokoro_model_path"].setText(str(missing))  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert w._message_label.text() == f"Not saved: the Kokoro model file was not found at {missing}."  # noqa: SLF001
+    assert not path.exists()
+    assert applied == []
+
+
+def test_a_file_where_a_folder_is_needed_is_refused(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    a_file = tmp_path / "not-a-folder.txt"
+    a_file.write_text("x")
+    _settings, w, _applied, path = make(qtbot, tmp_path)
+    w._path_edits["qwen3_tts_model_dir"].setText(str(a_file))  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert w._message_label.text().startswith("Not saved: the Qwen3-TTS model folder was not found at")  # noqa: SLF001
+    assert not path.exists()
+
+
+def test_an_emptied_model_location_is_refused(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, applied, path = make(qtbot, tmp_path)
+    w._path_edits["piper_binary_path"].setText("   ")  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert w._message_label.text() == "Not saved: the Piper program was not found at (empty)."  # noqa: SLF001
+    assert not path.exists()
+    assert applied == []
+
+
+def test_unchanged_missing_model_locations_do_not_block_saving(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    """The default locations do not exist on a test machine; saving other settings still works."""
+    _settings, w, _applied, path = make(qtbot, tmp_path)
+    w._notifications_box.setChecked(False)  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert w._message_label.text() == "Saved."  # noqa: SLF001
+    assert load_config(path).notifications_enabled is False
+
+
+def test_browse_fills_a_file_location(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, _path = make(qtbot, tmp_path)
+    with patch(
+        "vocalis.ui.settings_window.QFileDialog.getOpenFileName", return_value=("/picked/voices.bin", "")
+    ):
+        w._browse_buttons["kokoro_voices_path"].click()  # noqa: SLF001
+    assert w._path_edits["kokoro_voices_path"].text() == "/picked/voices.bin"  # noqa: SLF001
+
+
+def test_browse_fills_a_folder_location(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, _path = make(qtbot, tmp_path)
+    with patch("vocalis.ui.settings_window.QFileDialog.getExistingDirectory", return_value="/picked/dir"):
+        w._browse_buttons["parakeet_model_dir"].click()  # noqa: SLF001
+    assert w._path_edits["parakeet_model_dir"].text() == "/picked/dir"  # noqa: SLF001
+
+
+def test_cancelling_browse_keeps_the_old_location(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, _path = make(qtbot, tmp_path)
+    before = w._path_edits["piper_voice_model_path"].text()  # noqa: SLF001
+    with patch("vocalis.ui.settings_window.QFileDialog.getOpenFileName", return_value=("", "")):
+        w._browse_buttons["piper_voice_model_path"].click()  # noqa: SLF001
+    assert w._path_edits["piper_voice_model_path"].text() == before  # noqa: SLF001
