@@ -150,7 +150,11 @@ unexplained freeze.
 
 User perspective: press Ctrl+Alt+D → popup → Open file (or paste text and
 press Read) → hear it read → Pause/Resume, Stop. Ctrl+Alt+D while reading
-stops it. See `docs/user-docs.md` for the error messages.
+stops it. See `docs/user-docs.md` for the error messages. While it reads,
+the popup shows the cleaned-up text and highlights the piece being heard:
+the feature calls `on_document(text)` once, then `on_chunk_span(start, end)`
+per piece; `build_doc_reader()` turns these into the popup's
+`document_loaded` and `span_started` signals.
 
 ```
 Ctrl+Alt+D pressed (evdev thread, CtrlAltKeyListener)

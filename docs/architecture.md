@@ -1060,3 +1060,74 @@ engine's own `unload()` (which already calls `torch.cuda.empty_cache()`
 where relevant), to force the release of any model or tensor memory that a
 reference cycle would otherwise keep alive until Python's own cyclic
 collector happened to run on its own schedule.
+
+## Stage 7 addition: red-and-black UI and reading highlight
+
+Stage 7 gives Vocalis one look and lets the Document Reader show which part
+of the text is being read.
+
+### One place for colours: `ui/theme.py`
+
+`ui/theme.py` owns every colour (`BACKGROUND`, `SURFACE`, `BORDER`, `TEXT`,
+`TEXT_MUTED`, `ACCENT`, `ACCENT_BRIGHT`, `BUTTON_PRIMARY`, `HIGHLIGHT_BG`,
+`WHITE`) and the one Qt stylesheet (`STYLESHEET`) built from them. `main()`
+in `cli.py` calls `apply_theme(app)` once, right after the `QApplication` is
+created. It sets the Fusion style, a dark `QPalette` and the stylesheet, so
+every window (Settings, Document Reader, floating card, tray menu) looks the
+same without writing a colour of its own. Other modules read colours from
+`theme` (for example `tray.py` draws the icons with `theme.ACCENT_BRIGHT`).
+
+White text never sits on `ACCENT`: white on that bright red is only about
+4.2:1, below the 4.5:1 readability minimum. Buttons that carry text use the
+darker `BUTTON_PRIMARY` (marked with `mark_primary(button)`), and `ACCENT`
+is used only for lines, rings, the progress bar and the slider.
+`contrast_ratio()` in the same file is what the palette test uses to prove
+this.
+
+### The reading highlight path
+
+```
+DocumentReaderFeature (worker thread)
+  on_document(text)            once per reading, before the first sound
+  on_chunk_span(start, end)    each time a piece starts being heard
+    -> cli.build_doc_reader: popup.document_loaded.emit(text)
+                             popup.span_started.emit(start, end)
+    -> (GUI thread) popup._on_document_loaded / _on_span_started
+```
+
+- The reader first unifies line endings (`\r\n` and `\r` become `\n`), so
+  the positions it reports match the text the box shows.
+- `span_started` carries Python character positions. Qt counts text in
+  UTF-16 units, so the popup converts each position with `_qt_position()`
+  (see "Highlight position conversion" in `docs/algorithms.md`).
+- The highlight is a `QTextEdit.ExtraSelection` coloured `HIGHLIGHT_BG`. It
+  does not change the text or take keyboard focus, it scrolls the piece
+  into view, and it is cleared when the span is empty. The box is read-only
+  while a reading runs.
+- A callback that raises is logged and ignored; it never stops a reading.
+- The highlight covers one piece (one or a few sentences). The voices give
+  no word timings, so word-by-word highlighting is not possible.
+
+### Settings tabs and restart detection
+
+`SettingsWindow` now uses a `QTabWidget` with five tabs: General, Voice &
+Engine, Performance, Shortcuts, Model files. Save first calls
+`_missing_model_location()`, which checks only the model locations the user
+changed; a missing or emptied one is refused with a "Not saved:" message and
+nothing is written. After a successful save,
+`LiveSettings.engines_need_restart()` (true when the idle-unload time or any
+model location differs from what the running Vocalis started with) adds
+"Restart Vocalis to use the new model settings." to the Saved message.
+
+### Tray icon and floating card
+
+`tray.py` draws three icons: a grey dot (idle), a bright red dot
+(listening) and a red ring with a white centre (reading). `FloatingWidget`
+is now a rounded card with a progress bar. Dragging it stores
+`_user_position` in memory only; it is reused for later readings until
+Vocalis quits and is not saved to disk.
+
+### Performance impact
+
+Negligible: the stylesheet is parsed once; the highlight does one selection
+update per piece; no new dependencies.

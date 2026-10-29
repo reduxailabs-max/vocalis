@@ -235,3 +235,23 @@
 | `src/vocalis/config.py` | `EnginesConfig` gained a `model_validator` that warns (never blocks) when `qwen3_tts_speaker` is not English-native (`Ryan`/`Aiden`). |
 | `src/vocalis/text/normalizer.py` | Gained `normalize_text()` (URLs, `$`/`%`/`&`/`@`); `normalize_markdown()` now calls it as its last step. |
 | `tests/test_qwen3_tts.py`, `tests/test_kokoro_tts.py`, `tests/test_piper_tts.py`, `tests/test_chunked_speaker.py`, `tests/test_quick_reader.py`, `tests/test_doc_reader.py`, `tests/test_cli.py`, `tests/test_config.py`, `tests/test_normalizer.py` | Extended or ported for the above. |
+
+## Stage 7: red-and-black UI and reading highlight
+
+**New files**
+
+| File | Purpose |
+|---|---|
+| `src/vocalis/ui/theme.py` | The colour palette, the one Qt stylesheet, `apply_theme()`, `mark_primary()` and the contrast-ratio helper. |
+
+**Changed files**
+
+| File | Change |
+|---|---|
+| `src/vocalis/ui/tray.py` | Icons redrawn from theme colours: grey dot, bright red dot, red ring with white centre. |
+| `src/vocalis/ui/floating_widget.py` | Now a draggable rounded card with a progress bar; remembers where you dropped it until Vocalis quits. |
+| `src/vocalis/ui/settings_window.py` | Five tabs; idle-unload time and model-location controls; changed model locations are checked on Save. |
+| `src/vocalis/ui/doc_popup.py` | Shows the text being read and highlights the current piece (`document_loaded`, `span_started` signals). |
+| `src/vocalis/features/doc_reader.py` | Unifies line endings; reports the text (`on_document`) and each piece's span (`on_chunk_span`). |
+| `src/vocalis/settings.py` | New `engines_need_restart()`. |
+| `src/vocalis/cli.py` | Calls `apply_theme()`; `build_doc_reader()` connects the two new callbacks to the popup signals. |

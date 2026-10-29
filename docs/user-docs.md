@@ -128,7 +128,12 @@ same `~/.asoundrc` advice as before).
    like. Resuming replays the sentence group that was playing from its
    start. The window shows the status and "piece N of M" progress.
    Pause does nothing when nothing is being read.
-4. Pressing **Ctrl+Alt+D** again while something is being read stops it;
+4. While it reads, the box shows the cleaned-up text that is actually being
+   read (markdown symbols removed, line breaks unified) and highlights the
+   piece you are hearing, which is one or a few sentences. Highlighting
+   word by word is not possible, because the voices do not say when each
+   word is spoken. The box cannot be edited while a reading is running.
+5. Pressing **Ctrl+Alt+D** again while something is being read stops it;
    pressing it when nothing is being read just brings the window forward.
 
 Quick Reader and Document Reader never talk at the same time: starting one
@@ -188,11 +193,12 @@ fails, the text is still read aloud.
 ## The tray icon
 
 Vocalis puts a small round icon in your system tray (the XFCE panel). Its
-colour tells you what Vocalis is doing:
+look tells you what Vocalis is doing:
 
-- **Grey** — idle.
-- **Red** — listening (you are holding the push-to-talk key).
-- **Blue** — reading aloud (Quick Reader, Document Reader or OCR Reader).
+- **Grey dot** — idle.
+- **Bright red dot** — listening (you are holding the push-to-talk key).
+- **Red ring with a white centre** — reading aloud (Quick Reader, Document
+  Reader or OCR Reader).
 
 Hover over the icon to read the tooltip ("Vocalis — idle", "Vocalis —
 listening", or "Vocalis — reading: Document"). Right-click it for the menu:
@@ -212,7 +218,7 @@ and keeps working without the icon (use Ctrl+C to quit).
 
 ## The floating widget
 
-A small box that sits in the bottom-right corner of your main screen,
+A small dark card with a thin red progress bar that sits in the bottom-right corner of your main screen,
 above other windows, **only while something is being read aloud**. It
 appears when the reading starts and disappears when it ends. It shows
 where the text came from ("Document", "Screen text" or "Quick read"),
@@ -221,6 +227,10 @@ the status, and the progress ("piece N of M"), plus two buttons:
 - **Pause** (which becomes **Resume**) and **Stop** for Document Reader and
   OCR readings.
 - **Stop** only for Quick Reader (it cannot be paused).
+
+You can drag the card anywhere with the mouse. Vocalis remembers the spot
+for later readings until you quit Vocalis (it is not saved to disk, so after
+a restart the card is back in the corner).
 
 The widget never takes keyboard focus, so it will not steal what you are
 typing into. If you switch it off in Settings, the OCR Reader opens the
@@ -345,21 +355,34 @@ Automatic.
 
 ## Settings
 
-Open the Settings window from the tray menu (**Settings…**). It has:
+Open the Settings window from the tray menu (**Settings…**). It has five tabs:
+
+
+**General tab**
 
 - **Show desktop notifications** — applies immediately.
 - **Show the floating widget while reading** — applies immediately.
+- **Sound output** and **Test sound** — see "Sound and speaking pace" above.
+
+**Voice & Engine tab**
+
 - **Voice** — pick one of nine voices: Serena, Vivian, Uncle_Fu, Ryan,
   Aiden, Ono_Anna, Sohee, Eric, Dylan. It applies from the **next**
   reading; a reading that is already in progress finishes in its old voice.
 - **Quick Reader voice engine**, **Document Reader voice engine** and
   **Kokoro voice** — see "Voice engines" above.
-- **Sound output**, **Test sound**, **Speaking speed** and **Preview
-  voice** — see "Sound and speaking pace" above.
+- **Speaking speed** and **Preview voice** — see "Sound and speaking pace"
+  above.
+
+**Shortcuts tab**
+
 - **Shortcuts** — drop-down lists, so typing mistakes are impossible:
   - *Dictation (hold)*: **NUMLOCK**, **SCROLLLOCK** or **PAUSE**.
   - *Quick Reader*, *Document Reader*, *OCR Reader*: **Ctrl+Alt+** plus any
     letter A–Z or digit 0–9.
+
+**Performance tab**
+
 - **Max CPU threads (0 = no limit)** — how many processor "workers" the
   voices are allowed to use at the same time. Turning this down can leave
   more of your processor free for other programs while Vocalis is reading
@@ -383,6 +406,17 @@ Open the Settings window from the tray menu (**Settings…**). It has:
   program, such as a game. Unlike the two settings above, there is no "0
   means no limit" option here — this number is always a real limit, and
   it defaults to 6144 MB (6 GB).
+- **Unload the voice after (seconds idle)** — how long the voice stays in
+  memory after the last reading before it is freed. Needs a restart.
+
+**Model files tab**
+
+Where each model lives on your disk: the speech recognition model folder,
+the Qwen3-TTS model folder, the Piper program, the Piper voice file, and the
+Kokoro model and voices files. Use **Browse...** to pick one. When you click
+Save, only locations you **changed** are checked. If a changed location does
+not exist (or you emptied it), Vocalis refuses with a "Not saved:" message
+and saves nothing. Changing a model location needs a restart.
 
 Click **Save** to keep your changes. Saving rewrites the whole config file,
 so any manual edits made to `config.toml` while Vocalis is running are
@@ -391,6 +425,8 @@ overwritten. The message under the settings says what happened:
 - **Saved.** — everything is saved. If you changed a shortcut it adds
   **Restart Vocalis to use the new shortcuts.** Shortcuts only apply after
   a restart (the switches and the voice do not need one).
+  If you changed the idle-unload time or a model location it adds **Restart
+  Vocalis to use the new model settings.**
 - **Not saved: …** — nothing was changed (neither the file nor the running
   settings), and the reason follows. For example, two features cannot use
   the same shortcut ("quick_reader and document_reader both use the same

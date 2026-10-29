@@ -258,3 +258,26 @@ raises is logged without ending the thread.
 flag (reset when a reading finishes or a new one starts) so the button
 alternates Pause/Resume correctly; a Pause click while nothing is being
 read is ignored.
+
+## Highlight position conversion (`ui/theme.py`, `ui/doc_popup.py`)
+
+**Contrast ratio (WCAG).** The palette test checks that text colours are
+readable. For each colour channel `c` (0 to 1) the linear value is
+`c / 12.92` if `c <= 0.03928`, otherwise `((c + 0.055) / 1.055) ** 2.4`.
+The relative luminance is `L = 0.2126 R + 0.7152 G + 0.0722 B`. For two
+colours with luminance `L1 >= L2` the contrast ratio is
+`(L1 + 0.05) / (L2 + 0.05)`; 4.5 or more is readable. This is
+`theme.contrast_ratio(first, second)`.
+
+**Python index to Qt position.** The reader reports highlight spans as
+Python string positions, but Qt counts UTF-16 units, where a character
+outside the Basic Multilingual Plane (such as an emoji) takes two units.
+The popup converts a Python position `i` with:
+
+```python
+qt_position = len(text[:i].encode("utf-16-le")) // 2
+```
+
+Complexity: O(i) per conversion, done twice (start and end) once per piece,
+so a few small conversions every few seconds. Chosen because it is exact
+and needs no lookup table.
