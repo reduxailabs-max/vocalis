@@ -178,7 +178,9 @@ def test_transcription_failure_notifies_and_does_not_crash() -> None:
     feature.on_release()  # must not raise
     assert text_output.delivered == []
     assert any("Transcription failed" in message for _, message in notifier.messages)
-    time.sleep(0.2)  # let the real idle-timeout unload after release()
+    deadline = time.monotonic() + 3.0  # poll: the idle-timeout unload runs on a timer thread
+    while manager.current_engine_id is not None and time.monotonic() < deadline:
+        time.sleep(0.05)
     assert manager.current_engine_id is None  # still released despite failure
 
 
