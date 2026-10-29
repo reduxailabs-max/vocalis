@@ -17,13 +17,15 @@ reading plays on one continuous stream with no gaps. pause() silences the
 stream at once and resume() replays the chunk being heard from its start;
 stop() (or a ReadingCoordinator preemption) ends the reading at any point,
 including before the first sound exists. The voice stays loaded for the
-whole reading and is released when playback has ended.
+whole reading and is released when playback has ended. Two optional display
+hooks report the text being read and the span of each piece as it starts,
+which the window uses to highlight it.
 """
 import logging
 import queue
 import threading
 from pathlib import Path
-from typing import Callable, Mapping
+from typing import Callable, Mapping, Sequence
 
 from vocalis.audio.playback import AudioPlayer
 from vocalis.engines.base import Synthesizer
@@ -33,7 +35,7 @@ from vocalis.features.chunked_speaker import ChunkedSpeaker, SpeakOutcome
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import ModelEngine, ModelManager
 from vocalis.notify import Notifier
-from vocalis.text.chunker import chunk_text
+from vocalis.text.chunker import Chunk, chunk_spans
 from vocalis.text.extractors import (
     DocumentOpenError,
     DocumentTooLargeError,
@@ -55,6 +57,15 @@ _EXTRACTION_ERRORS = (
 )
 
 
+def _unify_line_endings(text: str) -> str:
+    """Turn Windows (\\r\\n) and old-Mac (\\r) line breaks into \\n.
+
+    The Document Reader window shows each as a single break, so the
+    highlight positions only match text that has no \\r in it.
+    """
+    return text.replace("\r\n", "\n").replace("\r", "\n")
+
+
 class DocumentReaderFeature:
     """Wires Ctrl+Alt+D / the popup's controls to extract -> chunk ->
     speak (with fallback) -> play, chunk by chunk, with pause/resume/stop."""
@@ -74,6 +85,8 @@ class DocumentReaderFeature:
         on_started: Callable[[], None] | None = None,
         engine_selector: EngineSelector | None = None,
         engine_factories: Mapping[str, Callable[[], ModelEngine]] | None = None,
+        on_document: Callable[[str], None] | None = None,
+        on_chunk_span: Callable[[int, int], None] | None = None,
     ) -> None:
         """Create a DocumentReaderFeature.
 
@@ -104,6 +117,13 @@ class DocumentReaderFeature:
             on_started: Called with no arguments when a reading starts;
                 the app uses it to show the widget. A callback that
                 raises is logged and ignored. None means no hook.
+            on_document: Called once per reading, before the first sound,
+                with the exact text the spans refer to (markdown removed,
+                line breaks unified). The popup shows it. A callback that
+                raises is logged and ignored. None means no hook.
+            on_chunk_span: Called with (start, end) character positions in
+                that text each time a piece starts to be heard, right after
+                on_progress. Same failure rule.
         """
         self._model_manager = model_manager
         self._primary_engine_factory = primary_engine_factory
@@ -116,6 +136,8 @@ class DocumentReaderFeature:
         self._on_finished = on_finished
         self._language = language
         self._on_started = on_started
+        self._on_document = on_document
+        self._on_chunk_span = on_chunk_span
         self._engine_selector = engine_selector
         self._engine_factories = engine_factories
 
@@ -193,6 +215,16 @@ class DocumentReaderFeature:
             self._on_started()
         except Exception:
             logger.exception("on_started hook failed")
+
+    @staticmethod
+    def _call_hook(name: str, hook: "Callable[..., None] | None", *args: object) -> None:
+        """Call an optional display hook; a failing hook is logged and never breaks the reading."""
+        if hook is None:
+            return
+        try:
+            hook(*args)
+        except Exception:
+            logger.exception("%s hook failed", name)
 
     def pause(self) -> None:
         """Pause the current reading immediately. No-op if not reading
@@ -322,8 +354,8 @@ class DocumentReaderFeature:
                 self._notifier.notify(_TITLE, str(exc))
             return
 
-        normalized = normalize_markdown(raw_text)
-        chunks = chunk_text(normalized)
+        normalized = _unify_line_endings(normalize_markdown(raw_text))
+        chunks = chunk_spans(normalized)
         if not chunks:
             if self._deactivate(generation):
                 self._on_status("Nothing to read")
@@ -335,11 +367,12 @@ class DocumentReaderFeature:
         if not self._is_current(generation):
             return  # stopped while extracting/chunking
 
+        self._call_hook("on_document", self._on_document, normalized)
         self._notifier.notify(_TITLE, "Reading...")
         self._on_status("Reading...")
         self._read_worker(generation, chunks)
 
-    def _read_worker(self, generation: int, chunks: "list[str]") -> None:
+    def _read_worker(self, generation: int, chunks: "list[Chunk]") -> None:
         """Hand the chunks to a ChunkedSpeaker and turn its outcome into the
         usual status / notification / finished reports.
 
@@ -350,7 +383,7 @@ class DocumentReaderFeature:
         speaker = ChunkedSpeaker(
             player=self._player,
             source_factory=self._new_source,
-            on_chunk_started=lambda current, total: self._report_progress(generation, current, total),
+            on_chunk_started=lambda current, total: self._report_progress(generation, current, total, chunks),
         )
         with self._lock:
             if not (self._active and self._generation == generation):
@@ -362,20 +395,26 @@ class DocumentReaderFeature:
             if self._paused:
                 speaker.pause()
             self._speaker = speaker
-        outcome = speaker.run(chunks)
+        outcome = speaker.run([chunk.text for chunk in chunks])
         with self._lock:
             if self._speaker is speaker:
                 self._speaker = None
         self._finish_reading(generation, outcome)
 
-    def _report_progress(self, generation: int, current: int, total: int) -> None:
-        """Forward 'piece N of M' while this reading is still the current one.
+    def _report_progress(
+        self, generation: int, current: int, total: int, chunks: "Sequence[Chunk]"
+    ) -> None:
+        """Forward 'piece N of M' and the piece's span while this reading is
+        still the current one.
 
-        A stop landing between the check and the call can let one report
+        A stop landing between the check and the calls can let one report
         arrive just after on_finished.
         """
-        if self._is_current(generation):
-            self._on_progress(current, total)
+        if not self._is_current(generation):
+            return
+        self._on_progress(current, total)
+        chunk = chunks[current - 1]
+        self._call_hook("on_chunk_span", self._on_chunk_span, chunk.start, chunk.end)
 
     def _finish_reading(self, generation: int, outcome: SpeakOutcome) -> None:
         """Report how the reading ended (a stop() has already reported its own end)."""

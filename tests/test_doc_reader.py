@@ -20,7 +20,8 @@ from vocalis.engines.chain import make_downshift_handler
 from vocalis.features.doc_reader import DocumentReaderFeature
 from vocalis.features.reading_coordinator import ReadingCoordinator
 from vocalis.model_manager import TTS_ENGINE_ID, ModelManager
-from vocalis.text.chunker import chunk_text
+from vocalis.text.chunker import Chunk, chunk_spans, chunk_text
+from vocalis.text.normalizer import normalize_markdown
 from vocalis.text.extractors import (
     DocumentOpenError,
     DocumentTooLargeError,
@@ -133,6 +134,8 @@ def _make_feature(
     coordinator: ReadingCoordinator | None = None,
     stream_factory: "Callable[..., Any] | None" = None,
     on_started: "Callable[[], None] | None" = None,
+    on_document: "Callable[[str], None] | None" = None,
+    on_chunk_span: "Callable[[int, int], None] | None" = None,
 ) -> "tuple[DocumentReaderFeature, list[str], list[tuple[int, int]], list[None]]":
     statuses: "list[str]" = []
     progresses: "list[tuple[int, int]]" = []
@@ -150,6 +153,8 @@ def _make_feature(
         on_progress=lambda current, total: progresses.append((current, total)),
         on_finished=lambda: finishes.append(None),
         on_started=on_started,
+        on_document=on_document,
+        on_chunk_span=on_chunk_span,
     )
     return feature, statuses, progresses, finishes
 
@@ -996,15 +1001,15 @@ def _gate_chunking(monkeypatch: pytest.MonkeyPatch) -> "tuple[threading.Event, t
     """Hold the reading worker inside the chunking step; returns (in_chunking, let_go) events."""
     in_chunking = threading.Event()
     let_go = threading.Event()
-    real_chunk_text = chunk_text
+    real_chunk_spans = chunk_spans
 
-    def gated(text: str) -> "list[str]":
+    def gated(text: str) -> "list[Chunk]":
         """Wait for the test, then chunk normally."""
         in_chunking.set()
         assert let_go.wait(timeout=5.0), "the chunking gate was never opened"
-        return real_chunk_text(text)
+        return real_chunk_spans(text)
 
-    monkeypatch.setattr("vocalis.features.doc_reader.chunk_text", gated)
+    monkeypatch.setattr("vocalis.features.doc_reader.chunk_spans", gated)
     return in_chunking, let_go
 
 
@@ -1107,3 +1112,102 @@ def test_a_repeat_read_stops_the_reading_in_progress_properly() -> None:
     wait_until(lambda: "Done" in statuses)
     assert len(finishes) == 2 and statuses.count("Stopped") == 1
     assert failed == []  # the working sound device was never blamed
+
+
+def test_reports_the_normalized_text_once_and_each_pieces_span_in_order() -> None:
+    documents: "list[str]" = []
+    spans: "list[tuple[int, int]]" = []
+    text = "# Title\n\n" + _several_chunk_text()
+    feature, _statuses, progresses, finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=FakeSynthesizer(), notifier=RecordingNotifier(),
+        on_document=documents.append, on_chunk_span=lambda start, end: spans.append((start, end)),
+    )
+
+    feature.read_text(text)
+    wait_until(lambda: bool(finishes))
+
+    shown = normalize_markdown(text)
+    expected = [(chunk.start, chunk.end) for chunk in chunk_spans(shown)]
+    assert documents == [shown]
+    assert "#" not in shown  # the box will show what is actually read
+    wait_until(lambda: len(spans) == len(expected))
+    assert spans == expected
+    assert len(progresses) == len(expected)
+    for start, end in spans:
+        assert shown[start:end].strip()
+
+
+def test_windows_and_old_mac_line_endings_become_plain_line_breaks() -> None:
+    """Qt shows \\r\\n and \\r as one break each, so spans must refer to text without \\r."""
+    documents: "list[str]" = []
+    spans: "list[tuple[int, int]]" = []
+    feature, _statuses, _progresses, finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=FakeSynthesizer(), notifier=RecordingNotifier(),
+        on_document=documents.append, on_chunk_span=lambda start, end: spans.append((start, end)),
+    )
+
+    feature.read_text("First line.\r\nSecond line.\rThird line.")
+    wait_until(lambda: bool(finishes))
+
+    assert len(documents) == 1
+    assert "\r" not in documents[0]
+    wait_until(lambda: len(spans) == len(chunk_spans(documents[0])))
+    assert spans == [(c.start, c.end) for c in chunk_spans(documents[0])]
+
+
+def test_a_raising_document_hook_does_not_stop_the_reading() -> None:
+    def boom(_text: str) -> None:
+        """Fail like a broken window."""
+        raise RuntimeError("window gone")
+
+    feature, statuses, _progresses, finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=FakeSynthesizer(), notifier=RecordingNotifier(),
+        on_document=boom,
+    )
+    feature.read_text("Hello there.")
+    wait_until(lambda: bool(finishes))
+    assert "Done" in statuses
+
+
+def test_a_raising_span_hook_does_not_stop_the_reading_or_progress() -> None:
+    def boom(_start: int, _end: int) -> None:
+        """Fail like a broken window."""
+        raise RuntimeError("window gone")
+
+    feature, statuses, progresses, finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=FakeSynthesizer(), notifier=RecordingNotifier(),
+        on_chunk_span=boom,
+    )
+    feature.read_text(_several_chunk_text())
+    wait_until(lambda: bool(finishes))
+    assert "Done" in statuses
+    wait_until(lambda: len(progresses) == len(chunk_text(_several_chunk_text())))
+
+
+def test_no_document_report_when_there_is_nothing_to_read() -> None:
+    documents: "list[str]" = []
+    feature, statuses, _progresses, finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=FakeSynthesizer(), notifier=RecordingNotifier(),
+        on_document=documents.append,
+    )
+    feature.read_text("   ")
+    wait_until(lambda: bool(finishes))
+    assert documents == []
+    assert "Nothing to read" in statuses
+
+
+def test_a_stale_reading_reports_no_span() -> None:
+    """After a reading has ended, a late report from it must change nothing."""
+    spans: "list[tuple[int, int]]" = []
+    feature, _statuses, progresses, finishes = _make_feature(
+        fallback=FakeSynthesizer(), primary=FakeSynthesizer(), notifier=RecordingNotifier(),
+        on_chunk_span=lambda start, end: spans.append((start, end)),
+    )
+    feature.read_text("Hello there.")
+    wait_until(lambda: bool(finishes))
+    wait_until(lambda: len(spans) == 1)
+    assert feature.is_reading is False
+    progress_before = list(progresses)
+    feature._report_progress(feature.generation, 1, 1, [Chunk("Hello there.", 0, 12)])  # noqa: SLF001
+    assert spans == [(0, 12)]  # no second span from the ended reading
+    assert progresses == progress_before
