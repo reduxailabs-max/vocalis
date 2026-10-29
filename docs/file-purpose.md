@@ -107,7 +107,7 @@
 
 | File | Purpose |
 |---|---|
-| `packaging/installer/lib/preflight.sh` | Hard-gate checks run first: `preflight_check_distro` (Debian/Ubuntu via `/etc/os-release`'s `ID`/`ID_LIKE`), `preflight_check_arch` (`x86_64`), `preflight_check_gpu` (`nvidia-smi` succeeds); `preflight_run()` runs all three and stops at the first failure with a plain message. |
+| `packaging/installer/lib/preflight.sh` | Checks run first: `preflight_check_distro` (Debian/Ubuntu via `/etc/os-release`'s `ID`/`ID_LIKE`), `preflight_check_arch` (`x86_64`), `preflight_check_gpu` (`nvidia-smi` succeeds); `preflight_run()` runs all three; a distro or arch failure stops with a plain message, while a missing GPU driver (Stage 8) only prints a `NOTE`. |
 | `packaging/installer/lib/apt.sh` | `APT_REQUIRED_PACKAGES` (`tesseract-ocr`, `xclip`, `ydotool`); `apt_is_installed`/`apt_missing_packages`/`apt_install_missing` (one `sudo apt-get install` call for everything missing); `apt_enable_ydotoold` (best-effort `systemctl --user enable --now ydotool.service`, never fails the install). |
 | `packaging/installer/lib/pyenv.sh` | `pyenv_ensure_uv` (installs `uv` via a version-pinned script only if missing); `pyenv_find_or_build_wheel` (a bundled `dist/*.whl`, else `uv build`s one from the repo); `pyenv_create_venv`/`pyenv_install_vocalis` (provisions Python 3.13 and installs the wheel via `uv`). |
 | `packaging/installer/lib/fetch_models.py` | Reuse-or-download the three Hugging-Face-hosted assets (Parakeet, Qwen3-TTS, the Piper voice) at `VocalisConfig()`'s own default paths, importing `vocalis.startup_checks.PARAKEET_MODEL_FILES`/`QWEN3_TTS_MODEL_FILES` as the single source of truth for "which files make a model complete". |
@@ -255,3 +255,31 @@
 | `src/vocalis/features/doc_reader.py` | Unifies line endings; reports the text (`on_document`) and each piece's span (`on_chunk_span`). |
 | `src/vocalis/settings.py` | New `engines_need_restart()`. |
 | `src/vocalis/cli.py` | Calls `apply_theme()`; `build_doc_reader()` connects the two new callbacks to the popup signals. |
+
+## Stage 8: installer wizard
+
+**New files**
+
+| File | Purpose |
+|---|---|
+| `src/vocalis/installer/__init__.py` | Marks the installer package. |
+| `src/vocalis/installer/plan.py` | Reads `nvidia-smi` and decides the GPU runtime and whether to fetch Qwen3-TTS (needs `AutoPolicy.qwen3_min_gpu_total_mb`, 4096 MB); command line `python -m vocalis.installer.plan gpu-runtime|fetch-flags` used by `install.sh`. |
+| `src/vocalis/installer/progress.py` | `parse_line()` turns `STEP i/n text` and `NOTE text` lines into `ProgressEvent`s. |
+| `src/vocalis/installer/runner.py` | `PhaseRunner`: runs `install.sh --phase <name>` in its own process group, relays output lines, `terminate()` stops the whole group. |
+| `src/vocalis/installer/mic_test.py` | Records about 2 seconds and returns a `MicResult` (`heard`, `quiet`, `no_device`); never raises. |
+| `src/vocalis/installer/wizard.py` | `SetupWizard`: five pages, exit code, stop/cancel, opens Settings after Finish. |
+| `src/vocalis/installer/wizard_pages.py` | The page classes, worker threads and the install log writer. |
+| `src/vocalis/installer/app.py` | `vocalis-setup` entry point (`--installer-dir DIR`, internal); exit codes 0 / 1 / 3. |
+| `tests/test_installer_plan.py`, `test_installer_progress.py`, `test_installer_runner.py`, `test_installer_mic_test.py`, `test_installer_wizard.py` | `pytest` tests for the new modules (offscreen Qt, faked runner, mic and Settings opener). |
+
+**Changed files**
+
+| File | Change |
+|---|---|
+| `packaging/installer/install.sh` | Split into `prepare` / `models` / `finish` phases; `--phase` and `--no-wizard`; prints `STEP`/`NOTE` lines; launches the wizard and falls back to the terminal; CPU-only path. |
+| `packaging/installer/lib/preflight.sh` | A missing NVIDIA driver is a `NOTE`, not a failure. |
+| `packaging/installer/lib/pyenv.sh` | New `pyenv_use_cpu_onnxruntime()` swaps the GPU `onnxruntime` for the CPU one. |
+| `packaging/installer/lib/fetch_models.py` | New `--skip-qwen3` flag. |
+| `packaging/installer/README.md` | Documents phases, flags, exit codes and the CPU-only behaviour. |
+| `pyproject.toml` | New `vocalis-setup` script entry. |
+| `tests/installer/test_install.bats`, `test_preflight.bats`, `test_pyenv.bats` | Cover phases, flags, fallback and the CPU path. |

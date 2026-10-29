@@ -516,3 +516,41 @@ Qwen3-TTS model, Kokoro voice files, `ydotoold`, OCR tools, the
 onnxruntime graphics-card check (the installer fixes it: it re-installs the GPU onnxruntime last), stale `~/.asoundrc`. At install time,
 `fetch_models.py` also downloads the two Kokoro files with a 60-second
 timeout per connection, so a stalled download cannot hang the installer.
+
+## Installing with the setup window (Stage 8)
+
+**User perspective.** Run `bash install.sh`. The first part (checking the
+computer, system packages, Python tools) runs in the terminal; the one
+password prompt is here. If you have a screen, a **Vocalis setup** window
+then opens: Welcome -> What we found -> Installing (progress bar) -> Check
+your microphone (optional, only warns) -> Finishing up. Press **Finish**
+and Vocalis Settings opens. If a step fails, press **Try again**; if you
+stop it, run `bash install.sh` again (nothing is undone). With no screen,
+or with `bash install.sh --no-wizard`, everything happens in the terminal.
+
+**Installer perspective.**
+
+```
+install.sh main()
+  -> --phase X given            -> run just that phase (prepare | models | finish | all)
+  -> --no-wizard (no --phase)   -> same as --phase all
+  -> no flags                   -> install_run_default:
+       install_phase_prepare               # STEP 1/5 .. 5/5
+         no NVIDIA driver -> NOTE, CPU onnxruntime
+       DISPLAY or WAYLAND_DISPLAY set, and vocalis-setup exists?
+         yes -> vocalis-setup --installer-dir DIR      (child process)
+                  exit 0        -> done
+                  exit 3/126/127/>=128 -> NOTE, then models + finish in the terminal
+                  any other (1) -> returned as the installer's exit code
+         no  -> models + finish in the terminal
+
+vocalis-setup (SetupWizard)
+  Welcome -> Found: InstallPlan from nvidia-smi
+          -> Installing: PhaseRunner("models")   # STEP 1/2 .. 2/2; Qwen3-TTS skipped if GPU < 4096 MB
+          -> Microphone: run_mic_test()          # warns only
+          -> Finishing: PhaseRunner("finish")    # STEP 1/2 .. 2/2
+          -> Finish: open Settings (3 tries); window closes
+  every output line -> ~/.local/share/vocalis/install.log
+  Cancel / close -> PhaseRunner.terminate() kills the whole process group, exit 1
+  phase failed   -> message + Try again (fresh runner); nothing rolled back
+```

@@ -529,9 +529,9 @@ people who would rather double-click a file than run a shell command.
 **Flow (`install.sh`'s `main()`), in order:**
 
 ```
-preflight_run()                         # lib/preflight.sh — hard gate
+preflight_run()                         # lib/preflight.sh — distro and CPU type are hard gates; a missing GPU driver only prints a NOTE
   -> distro (Debian/Ubuntu via /etc/os-release) -> arch (x86_64)
-     -> GPU driver (nvidia-smi succeeds); first failure stops everything
+     -> GPU driver (nvidia-smi succeeds) — optional since Stage 8: failure = NOTE, CPU path
 apt_install_missing(...)                # lib/apt.sh — the ONE sudo prompt
 apt_enable_ydotoold()                   # best-effort, never fails the install
 pyenv_ensure_uv() -> pyenv_find_or_build_wheel() -> pyenv_create_venv()
@@ -1132,3 +1132,74 @@ Vocalis quits and is not saved to disk.
 
 Negligible: the stylesheet is parsed once; the highlight does one selection
 update per piece; no new dependencies.
+
+## Stage 8: installer wizard
+
+Stage 8 turns the installer into three phases and adds a small Qt setup
+window. Linux only. The window never installs anything itself: it runs
+`install.sh --phase <name>` as a child process and reads its output.
+
+**Phases (`packaging/installer/install.sh`).** `install_phase_prepare`
+(preflight, apt, uv and the wheel, the venv, Vocalis, Kokoro, the right
+`onnxruntime`, the `vocalis` symlink), `install_phase_models`
+(`fetch_models.py` and the Piper binary) and `install_phase_finish`
+(systemd unit, menu entry, closing message). `main()` takes
+`--phase prepare|models|finish|all` and `--no-wizard` (= `--phase all`).
+With no flags `install_run_default` runs `prepare`, then
+`install_launch_wizard` when `DISPLAY` or `WAYLAND_DISPLAY` is set and
+`vocalis-setup` exists; otherwise (or when the wizard cannot open) it runs
+`install_run_terminal_rest` (models, then finish) in the terminal.
+
+**Exit codes of `vocalis-setup`.** `0` finished, `1` stopped or a step
+failed (the wizard already showed its own message), `3` no window could be
+opened. `install.sh` treats `3`, `126`, `127` and anything `>= 128` (could
+not start, crashed, killed by a signal) as "no window" and falls back to
+the terminal; any other non-zero status is returned unchanged.
+
+**Progress protocol.** Each phase prints `STEP i/n text` and `NOTE text`
+lines. `installer/progress.py::parse_line` turns them into `ProgressEvent`
+objects and ignores everything else. `installer/runner.py::PhaseRunner`
+starts the phase in its own process group (`start_new_session=True`), relays
+each output line, and `terminate()` stops the whole group (SIGTERM, then
+SIGKILL after a 3-second grace period), so a running `apt` or download dies
+too. A runner is single-use.
+
+**Hardware plan.** `installer/plan.py` reads `nvidia-smi` (10-second
+timeout) and builds an `InstallPlan`: use the GPU `onnxruntime` only if a
+card was found; fetch Qwen3-TTS only if the card has at least
+`AutoPolicy.qwen3_min_gpu_total_mb` (4096 MB) of memory.
+`python -m vocalis.installer.plan gpu-runtime|fetch-flags` lets the shell
+ask; any error or odd answer means the safe choice (CPU runtime,
+`--skip-qwen3`) plus a `NOTE`. With no NVIDIA driver, `preflight_run`
+prints a `NOTE` and continues, and `pyenv_use_cpu_onnxruntime` swaps in the
+plain CPU build.
+
+**The window (`installer/wizard.py`, `wizard_pages.py`, `app.py`).**
+`SetupWizard` has five pages: Welcome, What we found, Installing (`models`
+phase), Check your microphone, Finishing up (`finish` phase). Phases run
+on `QThread`s; Try again builds a fresh runner. Closing or Cancel calls
+`terminate()` and exits with `1`. After Finish, Settings is opened through
+the running daemon's socket (`vocalis.remote.open_settings`) on a helper
+thread with up to 3 tries, one second apart; if it still fails a message
+explains how to open Vocalis. `app.py` exits with `os._exit` if a worker
+thread is still running, so Qt cannot abort. The mic test
+(`installer/mic_test.py`) records about 2 seconds and returns
+`heard`, `quiet` or `no_device`; it never raises and only warns.
+
+**Install log.** Every output line of each phase run in the window is
+appended to `~/.local/share/vocalis/install.log`, with a header line per
+phase. Writing the log can never stop the install. A terminal install
+prints to the terminal only.
+
+**Failure handling.** Nothing is rolled back. After a failed or stopped
+install the person runs the installer again; every step only acts on what
+is missing, so it resumes.
+
+**Not yet checked on real PCs** (to do by the user, never on the NTFS
+development drive): a fresh user account, a PC with no NVIDIA card, the
+network unplugged during the download, and a muted microphone.
+
+### Performance impact
+
+None at run time: the installer and `vocalis-setup` are not part of the
+daemon. The window adds PySide6 imports only when `vocalis-setup` runs.

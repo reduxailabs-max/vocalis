@@ -30,8 +30,9 @@ Two messages you might see are worth knowing about:
 
 ## Installing Vocalis (Phase 8)
 
-On a Debian/Ubuntu-family 64-bit machine with a working NVIDIA graphics
-card driver, run the installer from the `packaging/installer/` folder:
+On a Debian/Ubuntu-family 64-bit machine, run the installer from the
+`packaging/installer/` folder. An NVIDIA graphics card is **optional**:
+without one Vocalis simply uses lighter voices on your processor.
 
 ```bash
 bash install.sh
@@ -42,9 +43,9 @@ bash install.sh
 
 What it does, in order:
 
-1. Checks your machine qualifies (Debian/Ubuntu-based, 64-bit, NVIDIA
-   driver already working). If any of these fail, it stops immediately
-   with a plain explanation and changes nothing.
+1. Checks your machine qualifies (Debian/Ubuntu-based, 64-bit). If it
+   doesn't, it stops immediately with a plain explanation and changes
+   nothing. If no NVIDIA driver is found, it just prints a note and goes on.
 2. Installs a few small system packages if they're missing — this is the
    **one and only password prompt** you'll see, right at the start.
 3. Sets up a private copy of Python for Vocalis (it never touches your
@@ -55,6 +56,38 @@ What it does, in order:
    present, it's left alone and nothing is re-downloaded.
 5. Sets Vocalis up to start automatically every time you log in, and
    starts it right now.
+
+### The setup window
+
+If your computer has a screen, a friendly **Vocalis setup** window opens
+after the first part of the installation. It has five pages:
+
+1. **Welcome** — press **Start**.
+2. **What we found** — shows your graphics card (or that there is none) and
+   which voices will be installed.
+3. **Installing** — downloads the voices and the dictation model, with a
+   progress bar. This can take a while.
+4. **Check your microphone** — press the button and say a few words. This
+   is only a check: if it can't hear you it shows a gentle warning, and you
+   can still continue.
+5. **Finishing up** — starts Vocalis. Press **Finish** and the Vocalis
+   Settings window opens (this can take up to a minute).
+
+If something goes wrong on page 3 or 5, press **Try again**. If you close
+the window or press Cancel, setup stops; nothing is undone, so just run
+`bash install.sh` again to finish. A record of what happened is kept in
+`~/.local/share/vocalis/install.log`.
+
+No screen, or the window can't open? The installer finishes by itself in
+the terminal. You can also ask for that on purpose:
+
+```bash
+bash install.sh --no-wizard
+```
+
+Without an NVIDIA graphics card (or with less than 4 GB of graphics
+memory) the installer skips the largest voice, Qwen3-TTS. Piper and Kokoro
+are still installed, so Vocalis can speak.
 
 When it finishes you'll see a plain "Vocalis is installed and running"
 message. It's safe to run `install.sh` again any time — anything already

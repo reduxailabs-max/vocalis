@@ -76,6 +76,8 @@ tests/                    # pytest suite mirroring src/vocalis/ (≥85% coverage
 ├── test_remote.py         # vocalis --settings client, against a real socket in tmp_path
 ├── test_entry.py          # vocalis.entry.entrypoint(): --settings vs. the lazy main() import (Stage 5 fix)
 ├── test_package_metadata.py  # LICENSE + pyproject.toml license metadata
+├── test_installer_plan.py, test_installer_progress.py, test_installer_runner.py,
+│   test_installer_mic_test.py, test_installer_wizard.py   # Stage 8 installer wizard
 └── installer/            # bats suite mirroring packaging/installer/
     ├── test_preflight.bats
     ├── test_apt.bats
@@ -97,12 +99,12 @@ packaging/
 ├── desktop/
 │   └── vocalis.desktop    # application-menu launcher template (Stage 5); __VOCALIS_EXEC__ filled in by the installer
 └── installer/
-    ├── install.sh          # end-to-end, idempotent installer (preflight -> apt -> python env -> models -> service -> menu launcher)
+    ├── install.sh          # end-to-end, idempotent installer in three phases (prepare / models / finish); --phase, --no-wizard; opens the setup window when there is a screen (Stage 8)
     ├── uninstall.sh        # reverses install.sh; --purge also removes config/models/Piper/Kokoro
     ├── build-run.sh        # wraps install.sh/uninstall.sh into install.run/uninstall.run via makeself
     ├── README.md           # how to run/rebuild everything in this folder
     └── lib/
-        ├── preflight.sh    # distro/arch/GPU-driver hard-gate checks
+        ├── preflight.sh    # distro/arch checks stop the install; a missing GPU driver is only a NOTE (Stage 8)
         ├── apt.sh          # missing-package detection/install, best-effort ydotoold enable
         ├── pyenv.sh        # uv install, wheel find-or-build, venv creation, wheel install
         ├── fetch_models.py # Parakeet/Qwen3-TTS/Piper-voice reuse-or-download via huggingface_hub; Kokoro files from a GitHub release
@@ -183,3 +185,11 @@ Stage 6b (gapless long reading) added `audio/speech_stream.py` and
 `tests/fake_output.py`), and extended `text/chunker.py`, `audio/playback.py`,
 `engines/chain.py`, `model_manager.py`, `features/quick_reader.py` and
 `features/doc_reader.py` in place.
+
+Stage 8 (installer wizard) added the `src/vocalis/installer/` package
+(`plan.py`, `progress.py`, `runner.py`, `mic_test.py`, `wizard.py`,
+`wizard_pages.py`, `app.py`) with five `tests/test_installer_*.py` files, the
+`vocalis-setup` script entry in `pyproject.toml`, and `--skip-qwen3` in
+`fetch_models.py`. It reshaped `install.sh` into three phases and extended
+`preflight.sh`, `pyenv.sh` and their `bats` tests in place. At run time the
+wizard writes `~/.local/share/vocalis/install.log` (outside the repo).
