@@ -22,6 +22,15 @@ KOKORO_VOICES: tuple[str, ...] = (
     "am_adam", "am_michael", "bf_emma", "bf_isabella", "bm_george", "bm_lewis",
 )
 
+MODEL_PATH_FIELDS: tuple[str, ...] = (
+    "parakeet_model_dir",
+    "qwen3_tts_model_dir",
+    "piper_binary_path",
+    "piper_voice_model_path",
+    "kokoro_model_path",
+    "kokoro_voices_path",
+)
+
 
 class LiveSettings:
     """Thread-safe holder of the current VocalisConfig."""
@@ -43,6 +52,7 @@ class LiveSettings:
         self._lock = threading.Lock()
         self._config = config
         self._started_with = config.shortcuts
+        self._started_config = config
         self._path = path
         self._saver = saver
 
@@ -114,6 +124,18 @@ class LiveSettings:
         except ShortcutError:
             return True
         return saved != running
+
+    def engines_need_restart(self) -> bool:
+        """Whether a saved setting that is only read at start-up differs from
+        the one in use: the voice idle-unload time or a model location."""
+        current = self.config
+        started = self._started_config
+        if current.model_idle_timeout_seconds != started.model_idle_timeout_seconds:
+            return True
+        return any(
+            getattr(current.engines, field) != getattr(started.engines, field)
+            for field in MODEL_PATH_FIELDS
+        )
 
     def update(self, new_config: VocalisConfig) -> None:
         """Validate, save and then adopt a new config.

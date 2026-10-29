@@ -6,7 +6,7 @@ import pytest
 
 from vocalis.config import ConfigError, ShortcutsConfig, VocalisConfig, load_config
 from vocalis.hotkeys.shortcut_parser import ShortcutError
-from vocalis.settings import VOICES, LiveSettings
+from vocalis.settings import MODEL_PATH_FIELDS, VOICES, LiveSettings
 
 
 def make(tmp_path: Path, config: VocalisConfig | None = None) -> LiveSettings:
@@ -57,6 +57,44 @@ def test_shortcut_change_needs_a_restart_and_only_then(tmp_path: Path) -> None:
     assert settings.shortcuts_need_restart() is False
     settings.update(settings.config.model_copy(update={"shortcuts": ShortcutsConfig(ocr_reader="Ctrl+Alt+P")}))
     assert settings.shortcuts_need_restart() is True
+
+
+def _settings_with_recorded_saves(tmp_path) -> LiveSettings:  # type: ignore[no-untyped-def]
+    """LiveSettings over the defaults whose saver writes nothing."""
+    return LiveSettings(VocalisConfig(), tmp_path / "config.toml", saver=lambda _config, _path: None)
+
+
+def test_engines_need_no_restart_before_any_change(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    assert _settings_with_recorded_saves(tmp_path).engines_need_restart() is False
+
+
+def test_a_new_idle_timeout_needs_a_restart(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _settings_with_recorded_saves(tmp_path)
+    settings.update(settings.config.model_copy(update={"model_idle_timeout_seconds": 120.0}))
+    assert settings.engines_need_restart() is True
+
+
+@pytest.mark.parametrize("field", MODEL_PATH_FIELDS)
+def test_a_new_model_location_needs_a_restart(tmp_path, field: str) -> None:  # type: ignore[no-untyped-def]
+    settings = _settings_with_recorded_saves(tmp_path)
+    engines = settings.config.engines.model_copy(update={field: "/somewhere/else"})
+    settings.update(settings.config.model_copy(update={"engines": engines}))
+    assert settings.engines_need_restart() is True
+
+
+def test_changing_back_to_the_start_value_needs_no_restart(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _settings_with_recorded_saves(tmp_path)
+    started = settings.config
+    settings.update(started.model_copy(update={"model_idle_timeout_seconds": 120.0}))
+    settings.update(started)
+    assert settings.engines_need_restart() is False
+
+
+def test_live_settings_like_voice_need_no_restart(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    settings = _settings_with_recorded_saves(tmp_path)
+    engines = settings.config.engines.model_copy(update={"kokoro_voice": "af_bella"})
+    settings.update(settings.config.model_copy(update={"engines": engines, "speaking_speed": 1.3}))
+    assert settings.engines_need_restart() is False
 
 
 def test_readers_on_other_threads_never_see_a_half_updated_config(tmp_path: Path) -> None:
