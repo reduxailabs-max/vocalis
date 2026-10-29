@@ -353,6 +353,23 @@ def test_main_attempts_every_stop_in_order_even_if_a_listener_stop_raises(qapp) 
     assert stops == ["ocr.stop", "doc.stop", "quick.stop", "dictation.stop", "daemon.stop"]
 
 
+def test_main_applies_the_theme_once_to_the_app(qapp) -> None:  # type: ignore[no-untyped-def]
+    calls = MagicMock()
+    with (
+        patch("vocalis.cli.load_config", return_value=VocalisConfig()),
+        patch("vocalis.cli.VocalisDaemon", return_value=calls.daemon),
+        patch("vocalis.cli.build_dictation", return_value=(MagicMock(), calls.dictation)),
+        patch("vocalis.cli.build_quick_reader", return_value=(MagicMock(), calls.quick)),
+        patch("vocalis.cli.build_doc_reader", return_value=(MagicMock(), MagicMock(), calls.doc)),
+        patch("vocalis.cli.build_ocr_reader", return_value=(MagicMock(), calls.ocr)),
+        patch("vocalis.cli.apply_theme") as mock_theme,
+        patch("vocalis.cli.QApplication.exec", side_effect=KeyboardInterrupt),
+    ):
+        main()
+
+    mock_theme.assert_called_once_with(qapp)
+
+
 def test_build_ocr_reader_shares_the_document_reader_and_listens_for_ctrl_alt_o(qtbot) -> None:  # type: ignore[no-untyped-def]
     config = VocalisConfig()
     manager = ModelManager()

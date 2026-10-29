@@ -60,6 +60,7 @@ from vocalis.settings import LiveSettings
 from vocalis.ui.floating_widget import FloatingWidget
 from vocalis.ui.settings_window import SettingsWindow
 from vocalis.ui.status_hub import ReadingControls, StatusHub
+from vocalis.ui.theme import apply_theme
 from vocalis.ui.tray import TrayIcon
 
 logger = logging.getLogger("vocalis")
@@ -892,6 +893,7 @@ def main() -> None:
     codes = resolve_shortcuts(config)
     app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))
     app.setQuitOnLastWindowClosed(False)
+    apply_theme(app)
     hub = StatusHub()
     bridge = _SettingsBridge()
     model_manager = ModelManager(idle_timeout_seconds=config.model_idle_timeout_seconds)
