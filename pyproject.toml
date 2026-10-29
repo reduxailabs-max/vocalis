@@ -44,6 +44,7 @@ dev = [
 
 [project.scripts]
 vocalis = "vocalis.entry:entrypoint"
+vocalis-setup = "vocalis.installer.app:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/vocalis"]
