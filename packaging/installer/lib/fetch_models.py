@@ -8,6 +8,7 @@ a second copy of these paths/filenames and risk drifting out of sync.
 The Piper BINARY (not hosted on Hugging Face) is handled separately,
 in models.sh, via a plain curl+tar download.
 """
+import argparse
 import sys
 import urllib.request
 from pathlib import Path
@@ -125,11 +126,22 @@ def ensure_kokoro(
             _download(KOKORO_BASE_URL + path.name, path, expected_sizes[path.name], opener)
 
 
-def main() -> int:
-    """Ensure all four downloadable assets are present, at vocalis's own default paths."""
+def main(argv: list[str] | None = None) -> int:
+    """Ensure the downloadable assets are present, at vocalis's own default paths.
+
+    Pass --skip-qwen3 to leave out the Qwen3-TTS voice (for PCs without a suitable GPU).
+    """
+    parser = argparse.ArgumentParser(description="Download the Vocalis voice and dictation models.")
+    parser.add_argument(
+        "--skip-qwen3", action="store_true", help="do not download the Qwen3-TTS voice (needs a 4 GB+ GPU)"
+    )
+    args = parser.parse_args(argv)
     config = VocalisConfig()
     ensure_parakeet(Path(config.engines.parakeet_model_dir))
-    ensure_qwen3_tts(Path(config.engines.qwen3_tts_model_dir))
+    if args.skip_qwen3:
+        print("NOTE Skipping the Qwen3-TTS voice (needs a graphics card with 4 GB or more).")
+    else:
+        ensure_qwen3_tts(Path(config.engines.qwen3_tts_model_dir))
     ensure_piper_voice(Path(config.engines.piper_voice_model_path))
     ensure_kokoro(Path(config.engines.kokoro_model_path), Path(config.engines.kokoro_voices_path))
     return 0

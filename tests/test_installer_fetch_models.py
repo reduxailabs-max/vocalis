@@ -107,8 +107,41 @@ def test_main_runs_all_four_ensures_in_order(fetch_models, tmp_path: Path) -> No
         patch.object(fetch_models, "ensure_piper_voice", side_effect=lambda p: calls.append(("piper_voice", p))),
         patch.object(fetch_models, "ensure_kokoro", side_effect=lambda m, v: calls.append(("kokoro", m))),
     ):
-        assert fetch_models.main() == 0
+        assert fetch_models.main([]) == 0
     assert [name for name, _ in calls] == ["parakeet", "qwen3_tts", "piper_voice", "kokoro"]
+
+
+def _run_main_with_fakes(fetch_models, tmp_path: Path, argv: list[str]) -> list[str]:  # type: ignore[no-untyped-def]
+    """Run main(argv) with all four ensure_* patched; return the names called."""
+    calls: list[str] = []
+    fake_config = MagicMock()
+    fake_config.engines.parakeet_model_dir = str(tmp_path / "parakeet")
+    fake_config.engines.qwen3_tts_model_dir = str(tmp_path / "qwen")
+    fake_config.engines.piper_voice_model_path = str(tmp_path / "piper.onnx")
+    fake_config.engines.kokoro_model_path = str(tmp_path / "kokoro.onnx")
+    fake_config.engines.kokoro_voices_path = str(tmp_path / "voices.bin")
+    with (
+        patch.object(fetch_models, "VocalisConfig", return_value=fake_config),
+        patch.object(fetch_models, "ensure_parakeet", side_effect=lambda p: calls.append("parakeet")),
+        patch.object(fetch_models, "ensure_qwen3_tts", side_effect=lambda p: calls.append("qwen3_tts")),
+        patch.object(fetch_models, "ensure_piper_voice", side_effect=lambda p: calls.append("piper_voice")),
+        patch.object(fetch_models, "ensure_kokoro", side_effect=lambda m, v: calls.append("kokoro")),
+    ):
+        assert fetch_models.main(argv) == 0
+    return calls
+
+
+def test_main_fetches_all_four_by_default(fetch_models, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    assert _run_main_with_fakes(fetch_models, tmp_path, []) == ["parakeet", "qwen3_tts", "piper_voice", "kokoro"]
+
+
+def test_main_skip_qwen3_does_not_call_ensure_qwen3_tts_but_fetches_the_rest(fetch_models, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    assert _run_main_with_fakes(fetch_models, tmp_path, ["--skip-qwen3"]) == ["parakeet", "piper_voice", "kokoro"]
+
+
+def test_main_skip_qwen3_prints_the_note(fetch_models, tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    _run_main_with_fakes(fetch_models, tmp_path, ["--skip-qwen3"])
+    assert "NOTE Skipping the Qwen3-TTS voice" in capsys.readouterr().out
 
 
 class _FakeResponse:
