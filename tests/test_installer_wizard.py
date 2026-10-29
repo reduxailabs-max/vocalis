@@ -9,7 +9,6 @@ from PySide6.QtWidgets import QPushButton, QWizard
 import vocalis.installer.app as app_module
 import vocalis.installer.wizard as wizard_module
 import vocalis.installer.wizard_pages as pages_module
-import vocalis.installer.wizard_pages as pages_module
 from vocalis.installer.mic_test import MicResult
 from vocalis.installer.plan import InstalledGpu, make_plan
 from vocalis.installer.wizard import SetupWizard
@@ -27,6 +26,7 @@ class FakeRunner:
         self.gate = threading.Event()
         self.block = block
         self.terminated = False
+        self.stubborn = False
 
     def run(self) -> int:
         for line in self.lines:
@@ -38,7 +38,8 @@ class FakeRunner:
 
     def terminate(self) -> None:
         self.terminated = True
-        self.gate.set()
+        if not self.stubborn:
+            self.gate.set()
 
 
 class Factory:
@@ -165,7 +166,7 @@ def test_lines_are_appended_to_the_log_file(qtbot, log_path, messages) -> None:
     wizard = build(qtbot, Factory({"models": [ok(["STEP 1/1 Go", "hello"])]}))
     to_installing(wizard)
     wait_next(qtbot, wizard)
-    assert log_path.read_text(encoding="utf-8").splitlines() == ["STEP 1/1 Go", "hello"]
+    assert log_path.read_text(encoding="utf-8").splitlines()[1:] == ["STEP 1/1 Go", "hello"]
 
 
 def test_unwritable_log_never_crashes(qtbot, tmp_path, monkeypatch, messages) -> None:
@@ -268,7 +269,7 @@ def test_finish_survives_an_opener_that_raises(qtbot, log_path, messages) -> Non
     assert messages["hint"] == 1
 
 
-def test_wizard_uses_the_theme_in_app_main(monkeypatch, capsys, tmp_path) -> None:
+def test_wizard_uses_the_theme_in_app_main(monkeypatch, tmp_path) -> None:
     shown: list[Any] = []
     themed: list[Any] = []
 
@@ -344,3 +345,130 @@ def test_app_main_requires_installer_dir() -> None:
     with pytest.raises(SystemExit) as info:
         app_module.main([])
     assert info.value.code == 2
+
+
+def test_failure_text_and_stopped_text_show_the_log_path(qtbot, log_path, messages) -> None:
+    factory = Factory({"models": [(["boom"], 1, False)]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    page = wizard.installing_page
+    qtbot.waitUntil(lambda: not page.retry.isHidden(), timeout=5000)
+    assert "Details are saved in" in page.error.text()
+    assert str(log_path) in page.error.text() or "~" in page.error.text()
+    assert "Setup did not finish. Run the installer again to finish." in wizard.final_message
+    assert "press Try again" not in wizard.final_message
+    assert "Details are saved in" in wizard.final_message
+
+
+def test_stopped_final_message_has_the_log_path(qtbot, log_path, messages) -> None:
+    wizard = build(qtbot, Factory({"models": [ok()]}))
+    assert "Setup was stopped." in wizard.final_message
+    assert "Details are saved in" in wizard.final_message
+
+
+def test_log_hint_uses_a_tilde_for_the_home_folder(monkeypatch) -> None:
+    monkeypatch.setattr(pages_module, "INSTALL_LOG_PATH", Path.home() / "x" / "install.log")
+    assert pages_module.log_hint() == "Details are saved in ~/x/install.log"
+
+
+def test_a_successful_retry_clears_the_failure_message(qtbot, log_path, messages) -> None:
+    factory = Factory({"models": [(["boom"], 1, False), ok()]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    page = wizard.installing_page
+    qtbot.waitUntil(lambda: not page.retry.isHidden(), timeout=5000)
+    page.retry.click()
+    wait_next(qtbot, wizard)
+    assert "did not finish" not in wizard.final_message
+
+
+def test_failure_and_try_again_on_the_finish_page(qtbot, log_path, messages) -> None:
+    factory = Factory({"models": [ok()], "finish": [(["bad"], 2, False), ok()]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    wait_next(qtbot, wizard)
+    wizard.next()
+    wizard.next()
+    page = wizard.done_page
+    qtbot.waitUntil(lambda: not page.retry.isHidden(), timeout=5000)
+    assert not wizard.button(FINISH).isEnabled()
+    page.retry.click()
+    qtbot.waitUntil(lambda: wizard.button(FINISH).isEnabled(), timeout=5000)
+    assert [p for p, _ in factory.built] == ["models", "finish", "finish"]
+    assert wizard.exit_code == 0
+
+
+def test_each_attempt_writes_a_header_line_to_the_log(qtbot, log_path, messages) -> None:
+    wizard = build(qtbot, Factory({"models": [ok(["hi"])]}))
+    to_installing(wizard)
+    wait_next(qtbot, wizard)
+    lines = log_path.read_text(encoding="utf-8").splitlines()
+    assert lines[0].startswith("--- models phase ") and lines[0].endswith(" ---")
+    assert lines[1] == "hi"
+
+
+def test_the_bar_is_busy_until_the_first_step(qtbot, log_path, messages) -> None:
+    factory = Factory({"models": [(["plain"], 0, True)]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    page = wizard.installing_page
+    qtbot.waitUntil(lambda: "plain" in page.log_pane.toPlainText(), timeout=5000)
+    assert page.bar.maximum() == 0
+    factory.built[0][1].gate.set()
+    wait_next(qtbot, wizard)
+    assert page.bar.maximum() == 100
+
+
+def test_close_with_a_stubborn_runner_still_exits_one_without_aborting(
+        qtbot, log_path, messages, monkeypatch) -> None:
+    monkeypatch.setattr(pages_module, "_THREAD_WAIT_MS", 50)
+    factory = Factory({"models": [(["STEP 1/2 Working"], 0, True)]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    qtbot.waitUntil(lambda: bool(factory.built), timeout=5000)
+    runner = factory.built[0][1]
+    runner.stubborn = True
+    wizard.close()
+    assert runner.terminated
+    assert wizard.exit_code == 1
+    assert pages_module.running_threads()
+    exits: list[int] = []
+    monkeypatch.setattr(app_module.os, "_exit", exits.append)
+    assert app_module._leave(1) == 1 or exits == [1]
+    assert exits == [1]
+    runner.gate.set()
+    qtbot.waitUntil(lambda: not pages_module.running_threads(), timeout=5000)
+    assert app_module._leave(1) == 1
+
+
+def test_closing_after_a_clean_stop_leaves_no_running_thread(qtbot, log_path, messages) -> None:
+    factory = Factory({"models": [(["STEP 1/2 Working"], 0, True)]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    qtbot.waitUntil(lambda: bool(factory.built), timeout=5000)
+    wizard.close()
+    assert not pages_module.running_threads()
+
+
+def test_finish_shows_opening_text_and_can_be_closed_while_opening(
+        qtbot, log_path, messages) -> None:
+    gate = threading.Event()
+
+    def opener() -> int:
+        gate.wait(5)
+        return 0
+
+    wizard = build(qtbot, Factory({"models": [ok()], "finish": [ok()]}), opener=opener)
+    to_installing(wizard)
+    wait_next(qtbot, wizard)
+    wizard.next()
+    wizard.next()
+    qtbot.waitUntil(lambda: wizard.button(FINISH).isEnabled(), timeout=5000)
+    wizard.button(FINISH).click()
+    assert "Opening Settings" in wizard.done_page.status.text()
+    with qtbot.waitSignal(wizard.rejected, timeout=2000):
+        wizard.reject()
+    assert messages["stopped"] == 0
+    assert wizard.exit_code == 0
+    gate.set()
+    qtbot.waitUntil(lambda: not pages_module.running_threads(), timeout=5000)

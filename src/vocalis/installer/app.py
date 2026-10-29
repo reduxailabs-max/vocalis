@@ -14,6 +14,7 @@ from pathlib import Path
 from PySide6.QtWidgets import QApplication
 
 from vocalis.installer.wizard import SetupWizard
+from vocalis.installer.wizard_pages import running_threads
 from vocalis.ui.theme import apply_theme
 
 EXIT_OK = 0
@@ -39,6 +40,15 @@ def _make_app(argv: list[str]) -> QApplication:
     return QApplication(argv)
 
 
+def _leave(code: int) -> int:
+    """Return the exit code; if a worker is still running, exit hard so Qt cannot abort."""
+    if running_threads():
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+    return code
+
+
 def main(argv: list[str] | None = None) -> int:
     """Open the wizard and return the process exit code."""
     parser = argparse.ArgumentParser(prog="vocalis-setup")
@@ -58,5 +68,5 @@ def main(argv: list[str] | None = None) -> int:
     app.exec()
     if wizard.exit_code != EXIT_OK:
         print(wizard.final_message, file=sys.stderr)
-        return EXIT_STOPPED
-    return EXIT_OK
+        return _leave(EXIT_STOPPED)
+    return _leave(EXIT_OK)

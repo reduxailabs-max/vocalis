@@ -12,17 +12,20 @@ from vocalis.installer.mic_test import MicResult, run_mic_test
 from vocalis.installer.plan import InstallPlan, make_plan, read_gpu
 from vocalis.installer.runner import PhaseRunner
 from vocalis.installer.wizard_pages import (
-    FAILURE_MESSAGE as FAILURE_MESSAGE,
+    DID_NOT_FINISH_MESSAGE,
     RunnerFactory,
     _CallThread,
     _FoundPage,
     _MicrophonePage,
     _PhasePage,
     _TextPage,
+    log_hint,
+    track_thread,
 )
 
 STOPPED_MESSAGE = "Setup was stopped. Run the installer again to finish."
 SETTINGS_HINT = "Vocalis is running — open it from the tray icon or the applications menu."
+OPENING_TEXT = "Opening Settings… this can take up to a minute"
 SETTINGS_TRIES = 3
 SETTINGS_RETRY_SECONDS = 1.0
 
@@ -67,6 +70,7 @@ class SetupWizard(QWizard):
         self._settings_opener = settings_opener
         self._succeeded = False
         self._opening = False
+        self._closed = False
         self._failure_message = ""
         self._settings_thread: _CallThread | None = None
         self.installing_page = _PhasePage(
@@ -96,10 +100,11 @@ class SetupWizard(QWizard):
     @property
     def final_message(self) -> str:
         """What to tell the person when the exit code is not 0."""
-        return self._failure_message or STOPPED_MESSAGE
+        return f"{self._failure_message or STOPPED_MESSAGE}\n{log_hint()}"
 
     def phase_succeeded(self, phase: str) -> None:
         """Called by a page when its phase worked; the finish phase ends setup."""
+        self._failure_message = ""
         if phase == "finish":
             self._succeeded = True
 
@@ -113,7 +118,7 @@ class SetupWizard(QWizard):
 
     def _show_stopped_message(self) -> None:
         """Tell the person setup was stopped (tests replace this)."""
-        QMessageBox.information(self, "Vocalis setup", STOPPED_MESSAGE)
+        QMessageBox.information(self, "Vocalis setup", f"{STOPPED_MESSAGE}\n{log_hint()}")
 
     def _show_settings_hint(self) -> None:
         """Explain how to open Vocalis when Settings could not be opened (tests replace this)."""
@@ -121,8 +126,7 @@ class SetupWizard(QWizard):
 
     def reject(self) -> None:
         """Closing or Cancel: stop any running phase and say so."""
-        if self._opening:
-            return
+        self._closed = True
         if not self._succeeded:
             self.installing_page.stop()
             self.done_page.stop()
@@ -135,12 +139,14 @@ class SetupWizard(QWizard):
         if self._opening:
             return
         self._opening = True
+        self.done_page.status.setText(OPENING_TEXT)
         finish = self.button(QWizard.WizardButton.FinishButton)
         if finish is not None:
             finish.setEnabled(False)
         thread = _CallThread(self._open_settings_with_retries, False)
         thread.result.connect(self._on_settings_done)
         self._settings_thread = thread
+        track_thread(thread)
         thread.start()
 
     def _open_settings_with_retries(self) -> bool:
@@ -157,6 +163,8 @@ class SetupWizard(QWizard):
 
     def _on_settings_done(self, opened: bool) -> None:
         """Explain if Settings did not open, then close the wizard anyway."""
+        if self._closed:
+            return
         if not opened:
             self._show_settings_hint()
         super().accept()

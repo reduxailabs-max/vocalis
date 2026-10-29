@@ -160,7 +160,7 @@ install_phase_models() {
   fi
   echo "Checking Piper voice at ${piper_voice} ..."
   echo "Checking Kokoro voice at ${kokoro_model} ..."
-  "$venv_python" "${script_dir}/lib/fetch_models.py" ${INSTALL_FETCH_FLAGS[@]+"${INSTALL_FETCH_FLAGS[@]}"}
+  "$venv_python" -u "${script_dir}/lib/fetch_models.py" ${INSTALL_FETCH_FLAGS[@]+"${INSTALL_FETCH_FLAGS[@]}"}
 
   echo "STEP 2/2 Downloading the Piper speech program"
   echo "Checking Piper binary at ${piper_binary} ..."

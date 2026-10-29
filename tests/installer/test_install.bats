@@ -277,7 +277,7 @@ run_main() {
 @test "models phase passes --skip-qwen3 when the plan says so" {
   FAKE_FETCH_FLAGS=--skip-qwen3 run_main --phase models
   [ "$status" -eq 0 ]
-  grep -q "fetch_models: .*fetch_models.py --skip-qwen3" "$CALL_LOG"
+  grep -q "fetch_models: .*-u .*fetch_models.py --skip-qwen3" "$CALL_LOG"
 }
 
 @test "models phase passes no extra flag when the plan prints nothing" {

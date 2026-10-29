@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import datetime
 from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -27,10 +28,34 @@ if TYPE_CHECKING:
 
 INSTALL_LOG_PATH = Path.home() / ".local" / "share" / "vocalis" / "install.log"
 FAILURE_MESSAGE = "Something went wrong. Check your internet connection, then press Try again."
+DID_NOT_FINISH_MESSAGE = "Setup did not finish. Run the installer again to finish."
 _THREAD_WAIT_MS = 5000
 _ERROR_STYLE = "color: #ff6b6b;"
 
 RunnerFactory = Callable[[Path, str, Callable[[str], None]], PhaseRunner]
+
+
+_THREADS: list[QThread] = []
+
+
+def track_thread(thread: QThread) -> None:
+    """Keep every started worker referenced until it ends (Qt aborts if one is dropped)."""
+    _THREADS[:] = [old for old in _THREADS if old.isRunning()]
+    _THREADS.append(thread)
+
+
+def running_threads() -> list[QThread]:
+    """Workers that are still running."""
+    return [thread for thread in _THREADS if thread.isRunning()]
+
+
+def log_hint() -> str:
+    """One plain sentence telling where the install details are saved."""
+    path = str(INSTALL_LOG_PATH)
+    home = str(Path.home())
+    if path.startswith(home + "/"):
+        path = "~" + path[len(home):]
+    return f"Details are saved in {path}"
 
 
 def _append_log(line: str) -> None:
@@ -41,7 +66,6 @@ def _append_log(line: str) -> None:
             handle.write(line + "\n")
     except (OSError, ValueError):
         pass
-
 
 
 class _PhaseThread(QThread):
@@ -131,7 +155,7 @@ class _PhasePage(QWizardPage):
         self.bar.setRange(0, 100)
         self.log_pane = QPlainTextEdit()
         self.log_pane.setReadOnly(True)
-        self.error = QLabel(FAILURE_MESSAGE)
+        self.error = QLabel(f"{FAILURE_MESSAGE}\n{log_hint()}")
         self.error.setObjectName(f"{name}_error")
         self.error.setStyleSheet(_ERROR_STYLE)
         self.error.setWordWrap(True)
@@ -144,11 +168,6 @@ class _PhasePage(QWizardPage):
             layout.addWidget(widget)
         self.error.hide()
         self.retry.hide()
-
-    @property
-    def phase(self) -> str:
-        """The installer phase this page runs."""
-        return self._phase
 
     def initializePage(self) -> None:  # noqa: N802 - Qt name
         """Start the phase as soon as the page appears."""
@@ -167,12 +186,18 @@ class _PhasePage(QWizardPage):
         """Run the phase with a brand-new runner (runners are single-use)."""
         self.error.hide()
         self.retry.hide()
-        self.bar.setValue(0)
+        self.error.setText(f"{FAILURE_MESSAGE}\n{log_hint()}")
+        self.bar.setRange(0, 0)  # busy until the first STEP line
         self.status.setText("Starting…")
+        if self._thread is not None:
+            self._thread.wait()
+        stamp = datetime.datetime.now().isoformat(timespec="seconds")
+        _append_log(f"--- {self._phase} phase {stamp} ---")
         thread = _PhaseThread(self._factory, self._installer_dir, self._phase)
         thread.line.connect(self._on_line)
         thread.finished_with.connect(self._on_finished)
         self._thread, self._running = thread, True
+        track_thread(thread)
         thread.start()
 
     def _on_line(self, line: str) -> None:
@@ -181,6 +206,7 @@ class _PhasePage(QWizardPage):
         event = parse_line(line)
         if event is not None and event.kind == "step":
             self.status.setText(event.text)
+            self.bar.setRange(0, 100)
             self.bar.setValue((event.index - 1) * 100 // event.total)
             return
         self.log_pane.appendPlainText(event.text if event is not None else line)
@@ -192,13 +218,16 @@ class _PhasePage(QWizardPage):
             return
         if code == 0:
             self._succeeded = True
+            self.bar.setRange(0, 100)
             self.bar.setValue(100)
             self.status.setText(self._success_text)
             self._owner().phase_succeeded(self._phase)
         else:
+            self.bar.setRange(0, 100)
+            self.bar.setValue(0)
             self.error.show()
             self.retry.show()
-            self._owner().phase_failed(FAILURE_MESSAGE)
+            self._owner().phase_failed(DID_NOT_FINISH_MESSAGE)
         self.completeChanged.emit()
 
     def stop(self) -> None:
@@ -236,9 +265,12 @@ class _MicrophonePage(QWizardPage):
         self.button.setEnabled(False)
         self.result_label.setText("Listening…")
         fallback = MicResult("no_device", 0.0, "The microphone test could not run. You can continue.")
+        if self.thread_ is not None:
+            self.thread_.wait()
         thread = _CallThread(self._mic_tester, fallback)
         thread.result.connect(self._on_result)
         self.thread_ = thread
+        track_thread(thread)
         thread.start()
 
     def _on_result(self, result: MicResult) -> None:
