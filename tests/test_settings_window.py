@@ -474,3 +474,21 @@ def test_cancelling_browse_keeps_the_old_location(qtbot, tmp_path) -> None:  # t
     with patch("vocalis.ui.settings_window.QFileDialog.getOpenFileName", return_value=("", "")):
         w._browse_buttons["piper_voice_model_path"].click()  # noqa: SLF001
     assert w._path_edits["piper_voice_model_path"].text() == before  # noqa: SLF001
+
+
+def test_a_home_folder_model_location_is_saved_expanded(qtbot, tmp_path, monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    monkeypatch.setenv("HOME", str(tmp_path))
+    (tmp_path / "x").write_bytes(b"fake model for test")
+    _settings, w, _applied, path = make(qtbot, tmp_path)
+    w._path_edits["kokoro_model_path"].setText("~/x")  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert load_config(path).engines.kokoro_model_path == str(tmp_path / "x")
+
+
+def test_a_padded_model_location_is_saved_trimmed(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    model = tmp_path / "kokoro.onnx"
+    model.write_bytes(b"fake model for test")
+    _settings, w, _applied, path = make(qtbot, tmp_path)
+    w._path_edits["kokoro_model_path"].setText(f"  {model}  ")  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert load_config(path).engines.kokoro_model_path == str(model)

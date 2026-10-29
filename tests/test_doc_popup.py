@@ -222,6 +222,7 @@ def _highlighted(popup: DocumentReaderPopup) -> str:
 def _popup(qtbot) -> DocumentReaderPopup:  # type: ignore[no-untyped-def]
     popup = DocumentReaderPopup(FakeFeature())
     qtbot.addWidget(popup)
+    popup.reading_started.emit()
     return popup
 
 
@@ -312,3 +313,21 @@ def test_progress_bar_follows_progress(qtbot) -> None:  # type: ignore[no-untype
 def test_read_is_the_primary_button(qtbot) -> None:  # type: ignore[no-untyped-def]
     popup = _popup(qtbot)
     assert popup._read_button.property("role") == "primary"  # noqa: SLF001
+
+
+def test_late_text_and_spans_after_stop_are_ignored(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    popup.reading_finished.emit()
+    popup.document_loaded.emit("Late text.")
+    popup.span_started.emit(0, 4)
+    assert popup._text_box.toPlainText() == ""  # noqa: SLF001
+    assert not popup._text_box.isReadOnly()  # noqa: SLF001
+    assert _highlighted(popup) == ""
+
+
+def test_a_lone_surrogate_in_the_text_does_not_crash_the_highlight(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    text = "Bad \ud800 char. Next one."
+    popup.document_loaded.emit(text)
+    popup.span_started.emit(text.index("Next"), len(text))
+    assert _highlighted(popup) != ""

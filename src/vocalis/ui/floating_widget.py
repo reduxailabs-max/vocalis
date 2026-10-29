@@ -117,7 +117,7 @@ class FloatingWidget(QWidget):
         self._pause_button.setVisible(can_pause)
         if self._enabled():
             self.adjustSize()
-            if self._user_position is None:
+            if self._user_position is None or QGuiApplication.screenAt(self._user_position) is None:
                 self._place_bottom_right()
             else:
                 self.move(self._user_position)

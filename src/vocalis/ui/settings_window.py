@@ -68,6 +68,12 @@ _MODEL_PATHS: dict[str, tuple[str, str, bool]] = {
 assert tuple(_MODEL_PATHS) == MODEL_PATH_FIELDS  # keeps the two lists from drifting apart
 
 
+def _expanded(text: str) -> str:
+    """A typed model location trimmed, with a leading "~" turned into the home folder."""
+    text = text.strip()
+    return str(Path(text).expanduser()) if text else ""
+
+
 def _combo(items: tuple[str, ...]) -> QComboBox:
     """A drop-down list holding the given items."""
     box = QComboBox()
@@ -355,7 +361,7 @@ class SettingsWindow(QWidget):
         engines = self._settings.config.engines
         for field in MODEL_PATH_FIELDS:
             text = self._path_edits[field].text().strip()
-            if text == getattr(engines, field):
+            if _expanded(text) == _expanded(getattr(engines, field)):
                 continue
             _label, noun, is_folder = _MODEL_PATHS[field]
             path = Path(text).expanduser()
@@ -381,7 +387,7 @@ class SettingsWindow(QWidget):
                 "quick_reader_engine": self._quick_engine_combo.currentData(),
                 "document_reader_engine": self._doc_engine_combo.currentData(),
                 "kokoro_voice": self._kokoro_voice_combo.currentText(),
-                **{field: self._path_edits[field].text().strip() for field in MODEL_PATH_FIELDS},
+                **{field: _expanded(self._path_edits[field].text()) for field in MODEL_PATH_FIELDS},
             }
         )
         return config.model_copy(

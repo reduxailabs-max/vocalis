@@ -84,6 +84,7 @@ class DocumentReaderPopup(QWidget):
         self._feature = feature
         self._paused = False
         self._document_text = ""
+        self._reading = False
         self.setWindowTitle("Vocalis — Document Reader")
 
         self._text_box = QPlainTextEdit()
@@ -108,7 +109,7 @@ class DocumentReaderPopup(QWidget):
         self.status_changed.connect(self._status_label.setText)
         self.progress_changed.connect(self._update_progress_label)
         self.reading_finished.connect(self._on_reading_finished)
-        self.reading_started.connect(lambda: self._set_reading_controls_enabled(True))
+        self.reading_started.connect(self._on_reading_started)
         self.hotkey_pressed.connect(self.on_hotkey_trigger)
         self.external_reading_started.connect(self.on_external_reading_started)
         self.document_loaded.connect(self._on_document_loaded)
@@ -150,6 +151,7 @@ class DocumentReaderPopup(QWidget):
         the window the user is working in.
         """
         self._text_box.setPlainText(text)
+        self._reading = True
         self._reset_pause_state()
         self._set_reading_controls_enabled(True)
         self.show()
@@ -200,8 +202,14 @@ class DocumentReaderPopup(QWidget):
         """Handle Stop button: stop the current reading via the feature."""
         self._feature.stop()
 
+    def _on_reading_started(self) -> None:
+        """Handle reading_started signal: remember a reading is on and enable controls."""
+        self._reading = True
+        self._set_reading_controls_enabled(True)
+
     def _on_reading_finished(self) -> None:
         """Handle reading_finished signal: disable controls and reset pause button label."""
+        self._reading = False
         self._set_reading_controls_enabled(False)
         self._reset_pause_state()
         self._text_box.setExtraSelections([])
@@ -217,10 +225,15 @@ class DocumentReaderPopup(QWidget):
     @staticmethod
     def _qt_position(text: str, index: int) -> int:
         """Convert a Python character position in `text` to Qt's UTF-16 position."""
-        return len(text[:index].encode("utf-16-le")) // 2
+        return len(text[:index].encode("utf-16-le", "surrogatepass")) // 2
 
     def _on_document_loaded(self, text: str) -> None:
-        """Show the exact text being read, read-only, with nothing highlighted yet."""
+        """Show the exact text being read, read-only, with nothing highlighted yet.
+
+        Ignored when no reading is on (a late signal after Stop must not lock the box).
+        """
+        if not self._reading:
+            return
         self._document_text = text
         self._text_box.setPlainText(text)
         self._text_box.setReadOnly(True)
@@ -230,7 +243,10 @@ class DocumentReaderPopup(QWidget):
         """Highlight the piece being heard and scroll it into view (never takes focus).
 
         A span past the end is clamped; an empty one clears the highlight.
+        Ignored when no reading is on (a late signal after Stop).
         """
+        if not self._reading:
+            return
         text = self._document_text
         start = min(max(start, 0), len(text))
         end = min(max(end, start), len(text))

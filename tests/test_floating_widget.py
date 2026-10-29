@@ -2,7 +2,7 @@
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
-from PySide6.QtGui import QMouseEvent
+from PySide6.QtGui import QGuiApplication, QMouseEvent
 
 from vocalis.ui.floating_widget import FloatingWidget
 from vocalis.ui.status_hub import ReadingControls, StatusHub
@@ -143,6 +143,14 @@ def test_dragging_moves_the_widget_and_the_spot_is_kept_for_the_next_reading(qtb
     hub.end_reading()
     hub.begin_reading("Document", ReadingControls(stop=lambda: None))
     assert widget.pos() == QPoint(300, 200)
+
+
+def test_a_saved_spot_that_is_off_every_screen_falls_back_to_bottom_right(qtbot) -> None:  # type: ignore[no-untyped-def]
+    hub, widget = make(qtbot)
+    widget._user_position = QPoint(-50000, -50000)  # noqa: SLF001
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    assert widget.pos() != QPoint(-50000, -50000)
+    assert QGuiApplication.screenAt(widget.pos()) is not None
 
 
 def test_moving_the_mouse_without_pressing_does_not_drag(qtbot) -> None:  # type: ignore[no-untyped-def]
