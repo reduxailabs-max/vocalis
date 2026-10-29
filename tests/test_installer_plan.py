@@ -12,7 +12,7 @@ def test_parse_nvidia_smi_reads_name_and_memory() -> None:
     assert gpu == InstalledGpu("NVIDIA GeForce RTX 3060", 12288)
 
 
-@pytest.mark.parametrize("text", ["", "oops", "a, b", "x, -5"])
+@pytest.mark.parametrize("text", ["", "oops", "a, b", "x, -5", "GPU, \u00b2", "GPU, 0"])
 def test_parse_nvidia_smi_garbage_is_none(text: str) -> None:
     assert parse_nvidia_smi(text) is None
 
@@ -87,3 +87,20 @@ def test_main_fetch_flags_prints_skip_flag_only_when_needed(
     monkeypatch.setattr(plan, "read_gpu", lambda: None if mb is None else InstalledGpu("C", mb))
     assert plan.main(["fetch-flags"]) == 0
     assert capsys.readouterr().out.strip() == expected
+
+
+def test_read_gpu_undecodable_output_is_none() -> None:
+    err = UnicodeDecodeError("utf-8", b"\xff", 0, 1, "bad")
+    assert read_gpu(_raiser(err)) is None
+
+
+def test_parse_nvidia_smi_uses_first_gpu_of_several() -> None:
+    assert parse_nvidia_smi("First, 8192\nSecond, 4096\n") == InstalledGpu("First", 8192)
+
+
+def test_parse_nvidia_smi_handles_crlf() -> None:
+    assert parse_nvidia_smi("Card, 8192\r\n") == InstalledGpu("Card", 8192)
+
+
+def test_parse_nvidia_smi_keeps_comma_inside_name() -> None:
+    assert parse_nvidia_smi("Card, Pro, 8192\n") == InstalledGpu("Card, Pro", 8192)

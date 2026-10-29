@@ -34,9 +34,12 @@ def parse_nvidia_smi(output: str) -> "InstalledGpu | None":
             continue
         name, sep, memory = line.rpartition(",")
         name, memory = name.strip(), memory.strip()
-        if not sep or not name or not memory.isdigit():
+        if not sep or not name or not (memory.isascii() and memory.isdigit()):
             return None
-        return InstalledGpu(name=name, total_mb=int(memory))
+        total_mb = int(memory)
+        if total_mb <= 0:
+            return None
+        return InstalledGpu(name=name, total_mb=total_mb)
     return None
 
 
@@ -46,6 +49,7 @@ def _run_nvidia_smi(command: list[str]) -> str:
         command,
         capture_output=True,
         text=True,
+        errors="replace",
         check=True,
         timeout=_NVIDIA_SMI_TIMEOUT_SECONDS,
     )
@@ -56,7 +60,7 @@ def read_gpu(run: Callable[[list[str]], str] = _run_nvidia_smi) -> "InstalledGpu
     """Ask nvidia-smi about the graphics card; None if absent, broken, hung or unreadable."""
     try:
         output = run(_NVIDIA_SMI_COMMAND)
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError):
         return None
     return parse_nvidia_smi(output)
 
