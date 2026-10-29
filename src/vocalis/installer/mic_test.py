@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from typing import Callable, Literal
 
+import numpy as np
+
 from vocalis.audio.capture import MicRecorder, pick_input_device
 from vocalis.features.dictation import NO_AUDIO_MESSAGE
 
@@ -61,18 +63,29 @@ def run_mic_test(
         logger.exception("Microphone test could not start recording")
         return MicResult("no_device", 0.0, NO_DEVICE_MESSAGE)
 
+    audio: object = None
     try:
-        sleep(seconds)
-    except Exception:
-        logger.exception("Microphone test was interrupted while waiting")
+        try:
+            sleep(seconds)
+        except Exception:
+            logger.exception("Microphone test was interrupted while waiting")
+    finally:
+        try:
+            audio = recorder.stop()
+        except Exception:
+            logger.exception("Microphone test could not stop recording")
 
-    try:
-        audio = recorder.stop()
-    except Exception:
-        logger.exception("Microphone test could not stop recording")
-        return MicResult("no_device", 0.0, NO_DEVICE_MESSAGE)
-
-    peak = float(abs(audio).max()) if len(audio) else 0.0
+    peak = _peak_of(audio)
     if peak >= HEARD_PEAK:
         return MicResult("heard", peak, HEARD_MESSAGE)
     return MicResult("quiet", peak, NO_AUDIO_MESSAGE)
+
+
+def _peak_of(audio: object) -> float:
+    """Return the loudest sample, or 0.0 if the audio is missing or garbled."""
+    try:
+        samples = np.nan_to_num(np.asarray(audio, dtype=np.float64).reshape(-1))
+        return float(np.abs(samples).max()) if samples.size else 0.0
+    except Exception:
+        logger.exception("Microphone test could not read the recorded audio")
+        return 0.0

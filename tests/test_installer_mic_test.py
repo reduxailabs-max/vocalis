@@ -89,3 +89,69 @@ def test_waits_for_the_requested_seconds() -> None:
         sleep=waits.append,
     )
     assert waits == [2.0]
+
+
+class RaisingStopRecorder(FakeRecorder):
+    def stop(self) -> Any:
+        self.stopped = True
+        raise RuntimeError("stop failed")
+
+
+def test_stop_returning_none_is_quiet() -> None:
+    result = _run(FakeRecorder(audio=None))
+    recorder = FakeRecorder()
+    recorder.stop = lambda: None  # type: ignore[method-assign,assignment]
+    assert _run(recorder).verdict == "quiet"
+    assert result.verdict == "quiet"
+
+
+def test_stop_raising_is_quiet_and_does_not_escape() -> None:
+    result = _run(RaisingStopRecorder())
+    assert result.verdict == "quiet"
+    assert result.message == NO_AUDIO_MESSAGE
+
+
+def test_sleep_raising_still_stops_the_recorder() -> None:
+    recorder = FakeRecorder(np.ones(2, dtype=np.float32))
+
+    def bad_sleep(seconds: float) -> None:
+        raise RuntimeError("interrupted")
+
+    result = run_mic_test(
+        recorder_factory=lambda device: recorder,  # type: ignore[arg-type,return-value]
+        device_picker=lambda: None,
+        sleep=bad_sleep,
+    )
+    assert recorder.stopped
+    assert result.verdict == "heard"
+
+
+def test_keyboard_interrupt_in_sleep_still_stops_the_recorder() -> None:
+    recorder = FakeRecorder()
+
+    def bad_sleep(seconds: float) -> None:
+        raise KeyboardInterrupt
+
+    try:
+        run_mic_test(
+            recorder_factory=lambda device: recorder,  # type: ignore[arg-type,return-value]
+            device_picker=lambda: None,
+            sleep=bad_sleep,
+        )
+    except KeyboardInterrupt:
+        pass
+    assert recorder.stopped
+
+
+def test_peak_exactly_at_threshold_is_heard() -> None:
+    assert _run(FakeRecorder(np.array([0.02], dtype=np.float64))).verdict == "heard"
+
+
+def test_peak_just_below_threshold_is_quiet() -> None:
+    assert _run(FakeRecorder(np.array([0.019], dtype=np.float32))).verdict == "quiet"
+
+
+def test_nan_samples_are_quiet() -> None:
+    result = _run(FakeRecorder(np.array([np.nan, np.nan], dtype=np.float32)))
+    assert result.verdict == "quiet"
+    assert result.peak == 0.0
