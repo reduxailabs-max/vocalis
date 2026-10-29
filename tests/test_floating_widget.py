@@ -1,7 +1,8 @@
 """Tests for vocalis.ui.floating_widget.FloatingWidget."""
 from typing import Callable
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, QPoint, QPointF, Qt
+from PySide6.QtGui import QMouseEvent
 
 from vocalis.ui.floating_widget import FloatingWidget
 from vocalis.ui.status_hub import ReadingControls, StatusHub
@@ -92,3 +93,67 @@ def test_placed_in_the_bottom_right_corner_of_the_screen(qtbot) -> None:  # type
     area = QGuiApplication.primaryScreen().availableGeometry()
     assert widget.x() + widget.width() == area.right() + 1 - 16
     assert widget.y() + widget.height() == area.bottom() + 1 - 16
+
+
+def _mouse(kind: QEvent.Type, global_x: int, global_y: int, widget: FloatingWidget, held: bool) -> QMouseEvent:
+    """A left-button mouse event at a global screen position."""
+    local = QPointF(widget.mapFromGlobal(QPoint(global_x, global_y)))
+    buttons = Qt.MouseButton.LeftButton if held else Qt.MouseButton.NoButton
+    return QMouseEvent(
+        kind, local, local, QPointF(global_x, global_y), Qt.MouseButton.LeftButton, buttons,
+        Qt.KeyboardModifier.NoModifier,
+    )
+
+
+def test_is_a_translucent_card_window(qtbot) -> None:  # type: ignore[no-untyped-def]
+    _hub, widget = make(qtbot)
+    assert widget.testAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+    assert widget.objectName() == "floatingCard"
+
+
+def test_progress_bar_follows_the_reading(qtbot) -> None:  # type: ignore[no-untyped-def]
+    hub, widget = make(qtbot)
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    assert widget._progress_bar.value() == 0  # noqa: SLF001
+    hub.report_progress(2, 5)
+    assert widget._progress_bar.maximum() == 5  # noqa: SLF001
+    assert widget._progress_bar.value() == 2  # noqa: SLF001
+    assert widget._progress_label.text() == "piece 2 of 5"  # noqa: SLF001
+    assert not widget._progress_bar.isTextVisible()  # noqa: SLF001
+
+
+def test_a_new_reading_resets_the_progress_bar(qtbot) -> None:  # type: ignore[no-untyped-def]
+    hub, widget = make(qtbot)
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    hub.report_progress(3, 3)
+    hub.end_reading()
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    assert widget._progress_bar.value() == 0  # noqa: SLF001
+
+
+def test_dragging_moves_the_widget_and_the_spot_is_kept_for_the_next_reading(qtbot) -> None:  # type: ignore[no-untyped-def]
+    hub, widget = make(qtbot)
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    widget.move(100, 100)
+    widget.mousePressEvent(_mouse(QEvent.Type.MouseButtonPress, 110, 110, widget, held=True))
+    widget.mouseMoveEvent(_mouse(QEvent.Type.MouseMove, 310, 210, widget, held=True))
+    widget.mouseReleaseEvent(_mouse(QEvent.Type.MouseButtonRelease, 310, 210, widget, held=False))
+    assert widget.pos() == QPoint(300, 200)
+
+    hub.end_reading()
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    assert widget.pos() == QPoint(300, 200)
+
+
+def test_moving_the_mouse_without_pressing_does_not_drag(qtbot) -> None:  # type: ignore[no-untyped-def]
+    hub, widget = make(qtbot)
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    widget.move(100, 100)
+    widget.mouseMoveEvent(_mouse(QEvent.Type.MouseMove, 310, 210, widget, held=False))
+    assert widget.pos() == QPoint(100, 100)
+
+
+def test_paints_without_errors(qtbot) -> None:  # type: ignore[no-untyped-def]
+    hub, widget = make(qtbot)
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    widget.grab()  # runs paintEvent offscreen
