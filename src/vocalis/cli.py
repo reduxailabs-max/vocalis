@@ -644,6 +644,14 @@ def build_doc_reader(
         if hub is not None:
             hub.report_progress(current, total)
 
+    def on_document(text: str) -> None:
+        """Show the text being read in the popup."""
+        popup.document_loaded.emit(text)
+
+    def on_chunk_span(start: int, end: int) -> None:
+        """Highlight the piece being heard in the popup."""
+        popup.span_started.emit(start, end)
+
     def on_finished() -> None:
         """Tell the popup (and the hub) the reading ended."""
         popup.reading_finished.emit()
@@ -671,6 +679,8 @@ def build_doc_reader(
         on_progress=on_progress,
         on_finished=on_finished,
         on_started=on_started,
+        on_document=on_document,
+        on_chunk_span=on_chunk_span,
         engine_selector=selector,
         engine_factories=engine_factories,
     )

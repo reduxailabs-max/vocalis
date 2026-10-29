@@ -208,3 +208,107 @@ def test_external_reading_resets_a_leftover_resume_label(qtbot) -> None:  # type
     popup.external_reading_started.emit("x")
 
     assert popup._pause_button.text() == "Pause"  # noqa: SLF001
+
+
+def _highlighted(popup: DocumentReaderPopup) -> str:
+    """The text currently highlighted in the popup's box ("" when none)."""
+    selections = popup._text_box.extraSelections()  # noqa: SLF001
+    if not selections:
+        return ""
+    assert len(selections) == 1
+    return selections[0].cursor.selectedText()
+
+
+def _popup(qtbot) -> DocumentReaderPopup:  # type: ignore[no-untyped-def]
+    popup = DocumentReaderPopup(FakeFeature())
+    qtbot.addWidget(popup)
+    return popup
+
+
+def test_document_loaded_shows_the_text_read_only(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    popup.document_loaded.emit("Hello there. Bye now.")
+    assert popup._text_box.toPlainText() == "Hello there. Bye now."  # noqa: SLF001
+    assert popup._text_box.isReadOnly()  # noqa: SLF001
+    assert _highlighted(popup) == ""
+
+
+def test_span_started_highlights_exactly_that_piece(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    popup.document_loaded.emit("Hello there. Bye now.")
+    popup.span_started.emit(13, 21)
+    assert _highlighted(popup) == "Bye now."
+    popup.span_started.emit(0, 12)
+    assert _highlighted(popup) == "Hello there."
+
+
+def test_highlight_uses_the_theme_colour(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    popup.document_loaded.emit("Hello there.")
+    popup.span_started.emit(0, 12)
+    selection = popup._text_box.extraSelections()[0]  # noqa: SLF001
+    assert selection.format.background().color().name() == "#5c1a1d"
+
+
+def test_highlight_is_right_after_emoji(qtbot) -> None:  # type: ignore[no-untyped-def]
+    """Qt counts an emoji as two positions, Python as one."""
+    popup = _popup(qtbot)
+    text = "\U0001F600\U0001F600 Hi. There now."
+    popup.document_loaded.emit(text)
+    start = text.index("There")
+    popup.span_started.emit(start, len(text))
+    assert _highlighted(popup) == "There now."
+
+
+def test_highlight_spans_across_lines(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    text = "Line one.\nLine two."
+    popup.document_loaded.emit(text)
+    popup.span_started.emit(text.index("Line two"), len(text))
+    assert _highlighted(popup) == "Line two."
+
+
+def test_a_span_past_the_end_is_clamped_and_an_empty_span_clears(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    popup.document_loaded.emit("Short.")
+    popup.span_started.emit(0, 10_000)
+    assert _highlighted(popup) == "Short."
+    popup.span_started.emit(3, 3)
+    assert _highlighted(popup) == ""
+    popup.span_started.emit(50, 60)
+    assert _highlighted(popup) == ""
+
+
+def test_highlight_scrolls_into_view(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    popup.resize(400, 300)
+    popup.show()
+    lines = [f"Sentence number {n}." for n in range(300)]
+    text = "\n".join(lines)
+    popup.document_loaded.emit(text)
+    popup.span_started.emit(text.index(lines[-1]), len(text))
+    assert popup._text_box.verticalScrollBar().value() > 0  # noqa: SLF001
+
+
+def test_reading_finished_clears_the_highlight_and_allows_editing(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    popup.document_loaded.emit("Hello there.")
+    popup.span_started.emit(0, 12)
+    popup.reading_finished.emit()
+    assert _highlighted(popup) == ""
+    assert not popup._text_box.isReadOnly()  # noqa: SLF001
+    assert popup._text_box.toPlainText() == "Hello there."  # noqa: SLF001
+
+
+def test_progress_bar_follows_progress(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    popup.progress_changed.emit(2, 4)
+    assert popup._progress_bar.maximum() == 4 and popup._progress_bar.value() == 2  # noqa: SLF001
+    assert popup._progress_label.text() == "piece 2 of 4"  # noqa: SLF001
+    popup.reading_finished.emit()
+    assert popup._progress_bar.value() == 0  # noqa: SLF001
+
+
+def test_read_is_the_primary_button(qtbot) -> None:  # type: ignore[no-untyped-def]
+    popup = _popup(qtbot)
+    assert popup._read_button.property("role") == "primary"  # noqa: SLF001

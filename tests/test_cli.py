@@ -211,6 +211,14 @@ def test_build_doc_reader_wires_engines_popup_and_listener(qtbot) -> None:  # ty
     feature._on_status("Reading...")  # noqa: SLF001
     assert popup._status_label.text() == "Reading..."  # noqa: SLF001
 
+    # The highlight hooks must reach the popup too.
+    assert feature._on_document is not None and feature._on_chunk_span is not None  # noqa: SLF001
+    feature._on_document("Hello there.")  # noqa: SLF001
+    assert popup._text_box.toPlainText() == "Hello there."  # noqa: SLF001
+    assert popup._text_box.isReadOnly()  # noqa: SLF001
+    feature._on_chunk_span(0, 5)  # noqa: SLF001
+    assert popup._text_box.extraSelections()[0].cursor.selectedText() == "Hello"  # noqa: SLF001
+
 
 def test_main_installs_sigint_handler_that_quits_qt_and_restores_it(qapp) -> None:  # type: ignore[no-untyped-def]
     original_handler = signal.getsignal(signal.SIGINT)

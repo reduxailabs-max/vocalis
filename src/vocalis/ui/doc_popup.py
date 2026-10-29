@@ -18,20 +18,29 @@ threads, which is what makes this safe without any locking of our own.
 The Ctrl+Alt+D hotkey thread (CtrlAltKeyListener's evdev watcher) reaches
 the popup the same way: only through the `hotkey_pressed` signal, never by
 calling a widget method directly.
+
+While reading, the box shows the exact text being read (read-only) and
+highlights the piece being heard; the positions it receives are Python
+character positions, converted here to Qt's UTF-16 positions.
 """
 from pathlib import Path
 from typing import Protocol
 
 from PySide6.QtCore import Signal
+from PySide6.QtGui import QColor, QTextCharFormat, QTextCursor
 from PySide6.QtWidgets import (
     QFileDialog,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
+    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
+
+from vocalis.ui import theme
 
 _SUPPORTED_FILE_FILTER = "Documents (*.txt *.md *.pdf *.docx *.html *.htm);;All files (*)"
 
@@ -62,6 +71,8 @@ class DocumentReaderPopup(QWidget):
     reading_started = Signal()
     hotkey_pressed = Signal()
     external_reading_started = Signal(str)
+    document_loaded = Signal(str)
+    span_started = Signal(int, int)
 
     def __init__(self, feature: DocumentReaderLike) -> None:
         """Create the popup, wired to the given feature.
@@ -72,6 +83,7 @@ class DocumentReaderPopup(QWidget):
         super().__init__()
         self._feature = feature
         self._paused = False
+        self._document_text = ""
         self.setWindowTitle("Vocalis — Document Reader")
 
         self._text_box = QPlainTextEdit()
@@ -83,6 +95,10 @@ class DocumentReaderPopup(QWidget):
         self._stop_button = QPushButton("Stop")
         self._status_label = QLabel("Idle")
         self._progress_label = QLabel("")
+        theme.mark_primary(self._read_button)
+        self._progress_bar = QProgressBar()
+        self._progress_bar.setTextVisible(False)
+        self._reset_progress_bar()
 
         self._open_button.clicked.connect(self._on_open_clicked)
         self._read_button.clicked.connect(self._on_read_clicked)
@@ -95,6 +111,8 @@ class DocumentReaderPopup(QWidget):
         self.reading_started.connect(lambda: self._set_reading_controls_enabled(True))
         self.hotkey_pressed.connect(self.on_hotkey_trigger)
         self.external_reading_started.connect(self.on_external_reading_started)
+        self.document_loaded.connect(self._on_document_loaded)
+        self.span_started.connect(self._on_span_started)
 
         button_row = QHBoxLayout()
         button_row.addWidget(self._open_button)
@@ -106,6 +124,7 @@ class DocumentReaderPopup(QWidget):
         layout.addWidget(self._text_box)
         layout.addLayout(button_row)
         layout.addWidget(self._status_label)
+        layout.addWidget(self._progress_bar)
         layout.addWidget(self._progress_label)
         self.setLayout(layout)
 
@@ -185,10 +204,60 @@ class DocumentReaderPopup(QWidget):
         """Handle reading_finished signal: disable controls and reset pause button label."""
         self._set_reading_controls_enabled(False)
         self._reset_pause_state()
+        self._text_box.setExtraSelections([])
+        self._text_box.setReadOnly(False)
+        self._reset_progress_bar()
 
     def _update_progress_label(self, current: int, total: int) -> None:
         """Update progress label with current and total piece counts."""
         self._progress_label.setText(f"piece {current} of {total}")
+        self._progress_bar.setRange(0, max(total, 1))
+        self._progress_bar.setValue(min(max(current, 0), max(total, 1)))
+
+    @staticmethod
+    def _qt_position(text: str, index: int) -> int:
+        """Convert a Python character position in `text` to Qt's UTF-16 position."""
+        return len(text[:index].encode("utf-16-le")) // 2
+
+    def _on_document_loaded(self, text: str) -> None:
+        """Show the exact text being read, read-only, with nothing highlighted yet."""
+        self._document_text = text
+        self._text_box.setPlainText(text)
+        self._text_box.setReadOnly(True)
+        self._text_box.setExtraSelections([])
+
+    def _on_span_started(self, start: int, end: int) -> None:
+        """Highlight the piece being heard and scroll it into view (never takes focus).
+
+        A span past the end is clamped; an empty one clears the highlight.
+        """
+        text = self._document_text
+        start = min(max(start, 0), len(text))
+        end = min(max(end, start), len(text))
+        if start == end:
+            self._text_box.setExtraSelections([])
+            return
+        document = self._text_box.document()
+        qt_start = self._qt_position(text, start)
+        cursor = QTextCursor(document)
+        cursor.setPosition(qt_start)
+        cursor.setPosition(self._qt_position(text, end), QTextCursor.MoveMode.KeepAnchor)
+        char_format = QTextCharFormat()
+        char_format.setBackground(QColor(theme.HIGHLIGHT_BG))
+        char_format.setForeground(QColor(theme.TEXT))
+        selection = QTextEdit.ExtraSelection()
+        selection.cursor = cursor
+        selection.format = char_format
+        self._text_box.setExtraSelections([selection])
+        view = QTextCursor(document)
+        view.setPosition(qt_start)
+        self._text_box.setTextCursor(view)
+        self._text_box.ensureCursorVisible()
+
+    def _reset_progress_bar(self) -> None:
+        """Show an empty progress bar."""
+        self._progress_bar.setRange(0, 1)
+        self._progress_bar.setValue(0)
 
     def _set_reading_controls_enabled(self, reading: bool) -> None:
         """Enable/disable read and open buttons when idle; enable pause and stop when reading."""
