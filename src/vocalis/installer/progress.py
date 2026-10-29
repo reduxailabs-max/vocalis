@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
-_STEP_RE = re.compile(r"^STEP (\d+)/(\d+) (.+)$")
+_STEP_RE = re.compile(r"^STEP (\d{1,6})/(\d{1,6}) (.+)$")
 _NOTE_PREFIX = "NOTE "
 
 
