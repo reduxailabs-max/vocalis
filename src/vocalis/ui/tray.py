@@ -2,28 +2,42 @@
 import logging
 from typing import Callable
 
-from PySide6.QtCore import QObject, Qt
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+from PySide6.QtCore import QObject, QRectF, Qt
+from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QMenu, QSystemTrayIcon
 
-from vocalis.ui.status_hub import IDLE, LISTENING, READING, StatusHub
+from vocalis.ui import theme
+from vocalis.ui.status_hub import LISTENING, READING, StatusHub
 
 logger = logging.getLogger("vocalis")
 
 ICON_SIZE = 22
-COLOURS = {IDLE: "#9e9e9e", LISTENING: "#e53935", READING: "#1e88e5"}
 NO_TRAY_WARNING = "No system tray available; continuing without the tray icon"
+_DOT = QRectF(3, 3, 16, 16)
+_RING = QRectF(5.5, 5.5, 11, 11)
+_RING_WIDTH = 3.0
+_CENTRE_DOT = QRectF(8.5, 8.5, 5, 5)
 
 
-def _make_icon(colour: str) -> QIcon:
-    """Draw a 22x22 icon: a filled circle of the given colour on a transparent background."""
+def _make_icon(state: str) -> QIcon:
+    """Draw the 22x22 icon for a state: grey dot idle, bright red dot
+    listening, red ring with a white centre while reading."""
     pixmap = QPixmap(ICON_SIZE, ICON_SIZE)
     pixmap.fill(Qt.GlobalColor.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QColor(colour))
-    painter.setPen(Qt.PenStyle.NoPen)
-    painter.drawEllipse(3, 3, 16, 16)
+    if state == READING:
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(QPen(QColor(theme.ACCENT), _RING_WIDTH))
+        painter.drawEllipse(_RING)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(theme.WHITE))
+        painter.drawEllipse(_CENTRE_DOT)
+    else:
+        colour = theme.ACCENT_BRIGHT if state == LISTENING else theme.TEXT_MUTED
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor(colour))
+        painter.drawEllipse(_DOT)
     painter.end()
     return QIcon(pixmap)
 
@@ -125,7 +139,7 @@ class TrayIcon(QObject):
         self._stop_action.setEnabled(stop)
 
     def _refresh(self) -> None:
-        """Update the tooltip, status line and icon colour from the hub's current state."""
+        """Update the tooltip, status line and icon from the hub's current state."""
         state = self._hub.state
         if state == READING:
             text = f"Vocalis — reading: {self._hub.source}"
@@ -135,7 +149,7 @@ class TrayIcon(QObject):
             text = "Vocalis — idle"
         self._status_action.setText(text)
         self._tray.setToolTip(text)
-        self._tray.setIcon(_make_icon(COLOURS.get(state, COLOURS[IDLE])))
+        self._tray.setIcon(_make_icon(state))
 
     def _on_state_changed(self, _state: str) -> None:
         """The overall state changed."""

@@ -46,16 +46,30 @@ def test_stop_only_reading_leaves_pause_disabled(qtbot) -> None:  # type: ignore
     assert not tray._pause_action.isEnabled() and tray._stop_action.isEnabled()  # noqa: SLF001
 
 
+def _pixel(tray: TrayIcon, x: int, y: int) -> str:
+    """The colour of one pixel of the tray icon as "#rrggbb"."""
+    return tray._tray.icon().pixmap(22, 22).toImage().pixelColor(x, y).name()  # noqa: SLF001
+
+
 def test_listening_changes_the_text_and_the_icon_colour(qtbot) -> None:  # type: ignore[no-untyped-def]
-    """The icon dot is grey idle, red listening, blue reading."""
+    """Grey dot idle, bright red dot listening, red ring with a white centre reading."""
     hub, tray, _calls = make(qtbot)
-    idle_icon = tray._tray.icon().pixmap(22, 22).toImage().pixelColor(11, 11).name()  # noqa: SLF001
+    assert _pixel(tray, 11, 11) == "#9e9e9e"
     hub.set_listening(True)
     assert tray._tray.toolTip() == "Vocalis — listening"  # noqa: SLF001
-    listening = tray._tray.icon().pixmap(22, 22).toImage().pixelColor(11, 11).name()  # noqa: SLF001
-    assert listening == "#e53935" and idle_icon == "#9e9e9e"
+    assert _pixel(tray, 11, 11) == "#ff1744"
+    hub.set_listening(False)
     hub.begin_reading("Document", ReadingControls(stop=lambda: None))
-    assert tray._tray.icon().pixmap(22, 22).toImage().pixelColor(11, 11).name() == "#1e88e5"  # noqa: SLF001
+    assert _pixel(tray, 11, 11) == "#ffffff"  # white centre dot
+    assert _pixel(tray, 11, 5) == "#e53935"  # on the red ring
+
+
+def test_the_reading_icon_has_a_hollow_gap_between_ring_and_dot(qtbot) -> None:  # type: ignore[no-untyped-def]
+    """Shape, not just colour, tells reading apart from listening."""
+    hub, tray, _calls = make(qtbot)
+    hub.begin_reading("Document", ReadingControls(stop=lambda: None))
+    gap = tray._tray.icon().pixmap(22, 22).toImage().pixelColor(11, 7)  # noqa: SLF001
+    assert gap.alpha() < 64  # anti-aliasing from the ring's curve may bleed a little into this pixel
 
 
 def test_menu_actions_call_the_callbacks_and_controls(qtbot) -> None:  # type: ignore[no-untyped-def]
