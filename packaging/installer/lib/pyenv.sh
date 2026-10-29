@@ -130,5 +130,8 @@ pyenv_use_cpu_onnxruntime() {
     return 0
   fi
   pyenv_run_uv pip uninstall --python "${venv_dir}/bin/python" onnxruntime-gpu || return 1
-  pyenv_run_uv pip install --python "${venv_dir}/bin/python" --reinstall --no-deps "onnxruntime==${version}"
+  if ! pyenv_run_uv pip install --python "${venv_dir}/bin/python" --reinstall --no-deps "onnxruntime==${version}"; then
+    echo "Could not finish switching to the processor-only speech runtime. Please check your internet connection and run the installer again."
+    return 1
+  fi
 }

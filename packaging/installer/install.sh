@@ -40,37 +40,62 @@ install_venv_dir() {
 
 # Ask the hardware plan whether to use the graphics-card build of
 # onnxruntime. ANY failure (the command errors, or prints anything other
-# than exactly "yes") means "no graphics card": the safe CPU path.
+# than exactly "yes" or "no") means "no graphics card": the safe CPU path,
+# and a NOTE line says so. The plan's own error text is kept out of the way.
 install_plan_wants_gpu() {
   local venv_dir="$1"
   local answer
-  answer="$("${venv_dir}/bin/python" -m vocalis.installer.plan gpu-runtime 2>/dev/null)" || return 1
-  [[ "$answer" == "yes" ]]
+  if ! answer="$("${venv_dir}/bin/python" -m vocalis.installer.plan gpu-runtime 2>/dev/null)"; then
+    echo "NOTE The hardware check did not work, so I will use the processor-only speech runtime (the safe choice)."
+    return 1
+  fi
+  if [[ "$answer" == "yes" ]]; then
+    return 0
+  fi
+  if [[ "$answer" != "no" ]]; then
+    echo "NOTE The hardware check gave an unexpected answer, so I will use the processor-only speech runtime (the safe choice)."
+  fi
+  return 1
 }
 
-# Print the extra flags for fetch_models.py (one per line). Only the exact
-# output "--skip-qwen3" or an empty line is trusted; a failing or odd
-# answer means "--skip-qwen3", so a failure never causes the huge
-# Qwen3-TTS download.
+# Fill the global array INSTALL_FETCH_FLAGS with the extra flags for
+# fetch_models.py. Only empty output or exactly "--skip-qwen3" is trusted;
+# a failing or odd answer means "--skip-qwen3" (plus a NOTE), so a failure
+# never causes the huge Qwen3-TTS download. Runs in the caller's shell (not
+# a subshell) so the array survives.
 install_fetch_flags() {
   local venv_dir="$1"
   local flags
-  flags="$("${venv_dir}/bin/python" -m vocalis.installer.plan fetch-flags 2>/dev/null)" || flags="--skip-qwen3"
-  if [[ -n "$flags" && "$flags" != "--skip-qwen3" ]]; then
-    flags="--skip-qwen3"
+  INSTALL_FETCH_FLAGS=()
+  if ! flags="$("${venv_dir}/bin/python" -m vocalis.installer.plan fetch-flags 2>/dev/null)"; then
+    echo "NOTE The hardware check did not work, so I will skip the large Qwen3 voice (the safe choice)."
+    INSTALL_FETCH_FLAGS=("--skip-qwen3")
+    return 0
   fi
-  if [[ -n "$flags" ]]; then
-    echo "$flags"
+  if [[ -z "$flags" ]]; then
+    return 0
   fi
-  return 0
+  if [[ "$flags" != "--skip-qwen3" ]]; then
+    echo "NOTE The hardware check gave an unexpected answer, so I will skip the large Qwen3 voice (the safe choice)."
+  fi
+  INSTALL_FETCH_FLAGS=("--skip-qwen3")
 }
 
-# Hand the terminal over to the setup wizard. Kept as its own function so
-# tests can replace it (the real one never returns).
+# Run the setup wizard as a CHILD process (not exec) so the installer
+# regains control if the window cannot open. Returns the wizard's exit
+# status. Contract with vocalis-setup:
+#   0   finished, or the user closed it normally
+#   1   the user stopped it, or an install step failed (message already shown)
+#   3   could not open a window
+#   126, 127, >=128   could not start / crashed / killed by a signal;
+#       treated like 3 by the caller
+# Kept as its own function so tests can replace it.
 install_launch_wizard() {
   local venv_dir="$1"
   local script_dir="$2"
-  exec "${venv_dir}/bin/vocalis-setup" --installer-dir "$script_dir"
+  local wizard_status=0
+  "${venv_dir}/bin/vocalis-setup" --installer-dir "$script_dir" || wizard_status=$?
+  return "$wizard_status"
 }
 
 # Phase 1: system packages, Python environment, Vocalis itself.
@@ -126,20 +151,16 @@ install_phase_models() {
   piper_voice="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.piper_voice_model_path)')"
   kokoro_model="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.kokoro_model_path)')"
 
-  local fetch_flags=()
-  local flag
-  while IFS= read -r flag; do
-    if [[ -n "$flag" ]]; then
-      fetch_flags+=("$flag")
-    fi
-  done < <(install_fetch_flags "$venv_dir")
+  install_fetch_flags "$venv_dir"
 
   echo "STEP 1/2 Downloading voices and the dictation model (a few gigabytes – this can take a while)"
   echo "Checking Parakeet model at ${parakeet_dir} ..."
-  echo "Checking Qwen3-TTS model at ${qwen3_tts_dir} ..."
+  if [[ ${#INSTALL_FETCH_FLAGS[@]} -eq 0 ]]; then
+    echo "Checking Qwen3-TTS model at ${qwen3_tts_dir} ..."
+  fi
   echo "Checking Piper voice at ${piper_voice} ..."
   echo "Checking Kokoro voice at ${kokoro_model} ..."
-  "$venv_python" "${script_dir}/lib/fetch_models.py" ${fetch_flags[@]+"${fetch_flags[@]}"}
+  "$venv_python" "${script_dir}/lib/fetch_models.py" ${INSTALL_FETCH_FLAGS[@]+"${INSTALL_FETCH_FLAGS[@]}"}
 
   echo "STEP 2/2 Downloading the Piper speech program"
   echo "Checking Piper binary at ${piper_binary} ..."
@@ -228,30 +249,49 @@ main() {
   esac
 }
 
+# Run every phase in order, with a plain heading before each one
+# (used by --phase all, --no-wizard and the no-window fallback).
 install_run_all() {
+  echo "--- Step A: preparing your computer ---"
   install_phase_prepare "$1" "$2"
+  install_run_terminal_rest "$1" "$2"
+}
+
+# The second and third phases in the terminal, each with a plain heading.
+install_run_terminal_rest() {
+  echo "--- Step B: downloading voices and models ---"
   install_phase_models "$1"
+  echo "--- Step C: starting Vocalis ---"
   install_phase_finish "$1" "$2"
 }
 
-# No flags: prepare, then open the setup wizard when there is a screen;
-# otherwise (or if the wizard is missing) finish in the terminal.
+# No flags given: prepare, then open the setup wizard when there is a
+# screen. Without a screen, or when the wizard cannot open (missing, exit
+# 3, 126, 127 or >=128), finish here in the terminal. Exit 0 means the
+# wizard did everything; any other status (such as 1) is returned as is.
 install_run_default() {
   local script_dir="$1"
   local repo_root="$2"
+  echo "--- Step A: preparing your computer ---"
   install_phase_prepare "$script_dir" "$repo_root"
 
   local venv_dir
   venv_dir="$(install_venv_dir)"
   if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     if [[ -x "${venv_dir}/bin/vocalis-setup" ]]; then
-      install_launch_wizard "$venv_dir" "$script_dir"
-      return 0
+      echo "NOTE If no setup window opens, run: bash install.sh --no-wizard"
+      local wizard_status=0
+      install_launch_wizard "$venv_dir" "$script_dir" || wizard_status=$?
+      if [[ "$wizard_status" -eq 0 ]]; then
+        return 0
+      fi
+      if [[ "$wizard_status" -ne 3 && "$wizard_status" -ne 126 && "$wizard_status" -lt 128 && "$wizard_status" -ne 127 ]]; then
+        return "$wizard_status"
+      fi
     fi
-    echo "NOTE: the setup window could not be started, so the installer will finish here in the terminal."
+    echo "NOTE The setup window could not open, so I will finish the installation here in the terminal."
   fi
-  install_phase_models "$script_dir"
-  install_phase_finish "$script_dir" "$repo_root"
+  install_run_terminal_rest "$script_dir" "$repo_root"
 }
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then

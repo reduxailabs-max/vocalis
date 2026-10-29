@@ -6,7 +6,7 @@ make_fake_venv() {
   printf '#!/bin/sh\nexec "%s/fake_python" "$@"\n' "$WORKDIR" > "$1/bin/python"
   chmod +x "$1/bin/python"
   if [ -z "${FAKE_NO_SETUP:-}" ]; then
-    printf '#!/bin/sh\n' > "$1/bin/vocalis-setup"
+    printf '#!/bin/sh\necho "vocalis-setup: $*" >> "%s"\nexit ${FAKE_SETUP_EXIT:-0}\n' "$CALL_LOG" > "$1/bin/vocalis-setup"
     chmod +x "$1/bin/vocalis-setup"
   fi
 }
@@ -17,7 +17,7 @@ setup() {
   export CALL_LOG WORKDIR
   # No screen by default: main with no flags then runs every phase.
   export DISPLAY= WAYLAND_DISPLAY=
-  unset FAKE_GPU_ANSWER FAKE_GPU_FAIL FAKE_FETCH_FLAGS FAKE_FLAGS_FAIL FAKE_NO_SETUP
+  unset FAKE_GPU_ANSWER FAKE_GPU_FAIL FAKE_FETCH_FLAGS FAKE_FLAGS_FAIL FAKE_NO_SETUP FAKE_SETUP_EXIT
   source "${BATS_TEST_DIRNAME}/../../packaging/installer/install.sh"
 
   # Replace every real external effect with a call-logging stub.
@@ -334,7 +334,7 @@ run_main() {
   install_launch_wizard() { echo "install_launch_wizard: $*" >> "$CALL_LOG"; }
   FAKE_NO_SETUP=1 DISPLAY=:0 run_main
   [ "$status" -eq 0 ]
-  [[ "$output" == *"NOTE"* ]]
+  [[ "$output" == *"NOTE The setup window could not open"* ]]
   ! grep -q "install_launch_wizard" "$CALL_LOG"
   grep -q "fetch_models:" "$CALL_LOG"
   grep -q "service_enable_and_start" "$CALL_LOG"
@@ -352,4 +352,54 @@ run_main() {
   [ "$(grep -cE '^STEP [0-9]+/[0-9]+ ' <<<"$output")" -eq 2 ]
   [[ "$output" == *"STEP 1/2 Starting Vocalis"* ]]
   [[ "$output" == *"STEP 2/2 Adding Vocalis to your applications menu"* ]]
+}
+
+@test "the real launcher passes --installer-dir to vocalis-setup and runs nothing else when it exits 0" {
+  DISPLAY=:0 run_main
+  [ "$status" -eq 0 ]
+  grep -q "^vocalis-setup: --installer-dir $WORKDIR$" "$CALL_LOG"
+  ! grep -q "fetch_models" "$CALL_LOG"
+  ! grep -q "service_enable_and_start" "$CALL_LOG"
+  [[ "$output" == *"NOTE If no setup window opens, run: bash install.sh --no-wizard"* ]]
+}
+
+@test "wizard exit 1 is returned without any terminal fallback" {
+  FAKE_SETUP_EXIT=1 DISPLAY=:0 run_main
+  [ "$status" -eq 1 ]
+  ! grep -q "fetch_models" "$CALL_LOG"
+  ! grep -q "service_enable_and_start" "$CALL_LOG"
+  [[ "$output" != *"could not open"* ]]
+}
+
+@test "wizard exit 3, 127 or 134 falls back to models and finish in the terminal" {
+  local code
+  for code in 3 127 134; do
+    : > "$CALL_LOG"
+    FAKE_SETUP_EXIT=$code DISPLAY=:0 run_main
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"NOTE The setup window could not open, so I will finish the installation here in the terminal."* ]]
+    grep -q "fetch_models:" "$CALL_LOG"
+    grep -q "service_enable_and_start" "$CALL_LOG"
+  done
+}
+
+@test "the terminal run prints plain step headings" {
+  run_main
+  [[ "$output" == *"--- Step A: preparing your computer ---"* ]]
+  [[ "$output" == *"--- Step B: "* ]]
+  [[ "$output" == *"--- Step C: "* ]]
+}
+
+@test "a failing hardware plan prints a NOTE about the safe choice" {
+  FAKE_GPU_FAIL=1 FAKE_FLAGS_FAIL=1 run_main
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NOTE The hardware check did not work, so I will use the processor-only speech runtime"* ]]
+  [[ "$output" == *"NOTE The hardware check did not work, so I will skip the large Qwen3 voice"* ]]
+}
+
+@test "the Qwen3 checking line is not printed when Qwen3 is skipped" {
+  FAKE_FETCH_FLAGS=--skip-qwen3 run_main --phase models
+  [[ "$output" != *"Checking Qwen3-TTS"* ]]
+  run_main --phase models
+  [[ "$output" == *"Checking Qwen3-TTS"* ]]
 }

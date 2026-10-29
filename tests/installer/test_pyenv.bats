@@ -171,3 +171,13 @@ teardown() {
   [ "$status" -eq 0 ]
   ! grep -q "CALLED" "$CALL_LOG"
 }
+
+@test "pyenv_use_cpu_onnxruntime explains in plain English when the CPU reinstall fails" {
+  mkdir -p "$WORKDIR/venv/bin"
+  printf '#!/bin/sh\necho 1.31.0\n' > "$WORKDIR/venv/bin/python"
+  chmod +x "$WORKDIR/venv/bin/python"
+  pyenv_run_uv() { case "$*" in *"--reinstall"*) return 1 ;; esac; }
+  run pyenv_use_cpu_onnxruntime "$WORKDIR/venv"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Could not finish switching to the processor-only speech runtime. Please check your internet connection and run the installer again."* ]]
+}
