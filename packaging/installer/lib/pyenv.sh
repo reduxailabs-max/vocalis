@@ -116,3 +116,19 @@ pyenv_prefer_gpu_onnxruntime() {
   fi
   pyenv_run_uv pip install --python "${venv_dir}/bin/python" --reinstall --no-deps "onnxruntime-gpu==${version}"
 }
+
+# The opposite of pyenv_prefer_gpu_onnxruntime, for a machine with no usable
+# NVIDIA graphics card: if the GPU build of onnxruntime ended up installed
+# (some package pulled it in), swap it for the plain CPU build at the SAME
+# version so the two never fight over the shared onnxruntime/ folder. If no
+# GPU build is installed, do nothing.
+pyenv_use_cpu_onnxruntime() {
+  local venv_dir="$1"
+  local version
+  version="$("${venv_dir}/bin/python" -c 'import importlib.metadata as m; print(m.version("onnxruntime-gpu"))' 2>/dev/null || true)"
+  if [[ -z "$version" ]]; then
+    return 0
+  fi
+  pyenv_run_uv pip uninstall --python "${venv_dir}/bin/python" onnxruntime-gpu || return 1
+  pyenv_run_uv pip install --python "${venv_dir}/bin/python" --reinstall --no-deps "onnxruntime==${version}"
+}

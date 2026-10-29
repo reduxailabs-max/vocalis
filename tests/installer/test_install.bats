@@ -1,8 +1,23 @@
 #!/usr/bin/env bats
 
+# Builds a fake venv: its python hands every call to $WORKDIR/fake_python.
+make_fake_venv() {
+  mkdir -p "$1/bin"
+  printf '#!/bin/sh\nexec "%s/fake_python" "$@"\n' "$WORKDIR" > "$1/bin/python"
+  chmod +x "$1/bin/python"
+  if [ -z "${FAKE_NO_SETUP:-}" ]; then
+    printf '#!/bin/sh\n' > "$1/bin/vocalis-setup"
+    chmod +x "$1/bin/vocalis-setup"
+  fi
+}
+
 setup() {
   WORKDIR="$(mktemp -d)"
   CALL_LOG="$(mktemp)"
+  export CALL_LOG WORKDIR
+  # No screen by default: main with no flags then runs every phase.
+  export DISPLAY= WAYLAND_DISPLAY=
+  unset FAKE_GPU_ANSWER FAKE_GPU_FAIL FAKE_FETCH_FLAGS FAKE_FLAGS_FAIL FAKE_NO_SETUP
   source "${BATS_TEST_DIRNAME}/../../packaging/installer/install.sh"
 
   # Replace every real external effect with a call-logging stub.
@@ -11,21 +26,41 @@ setup() {
   apt_enable_ydotoold() { echo "apt_enable_ydotoold" >> "$CALL_LOG"; }
   pyenv_ensure_uv() { echo "pyenv_ensure_uv" >> "$CALL_LOG"; }
   pyenv_find_or_build_wheel() { echo "pyenv_find_or_build_wheel: $*" >> "$CALL_LOG"; echo "$WORKDIR/vocalis-0.1.0-py3-none-any.whl"; }
-  pyenv_create_venv() { echo "pyenv_create_venv: $*" >> "$CALL_LOG"; mkdir -p "$1/bin"; echo '#!/bin/sh' > "$1/bin/python"; chmod +x "$1/bin/python"; }
+  pyenv_create_venv() {
+    echo "pyenv_create_venv: $*" >> "$CALL_LOG"
+    make_fake_venv "$1"
+  }
   pyenv_install_vocalis() { echo "pyenv_install_vocalis: $*" >> "$CALL_LOG"; }
   pyenv_install_kokoro() { echo "pyenv_install_kokoro: $*" >> "$CALL_LOG"; }
   pyenv_prefer_gpu_onnxruntime() { echo "pyenv_prefer_gpu_onnxruntime: $*" >> "$CALL_LOG"; }
+  pyenv_use_cpu_onnxruntime() { echo "pyenv_use_cpu_onnxruntime: $*" >> "$CALL_LOG"; }
   models_ensure_piper_binary() { echo "models_ensure_piper_binary: $*" >> "$CALL_LOG"; }
   service_substitute_unit() { echo "service_substitute_unit: $*" >> "$CALL_LOG"; }
   service_enable_and_start() { echo "service_enable_and_start" >> "$CALL_LOG"; }
   desktop_install_launcher() { echo "desktop_install_launcher: $*" >> "$CALL_LOG"; }
 
-  # install.sh queries four paths and runs fetch_models.py via the
-  # venv's python -- stub that interpreter itself so no real python runs.
-  cat > "$WORKDIR/fake_python" <<'EOF'
+  # A fake interpreter that answers by looking at its arguments:
+  #   plan gpu-runtime  -> $FAKE_GPU_ANSWER (default "yes"), fails if FAKE_GPU_FAIL is set
+  #   plan fetch-flags  -> $FAKE_FETCH_FLAGS (default empty), fails if FAKE_FLAGS_FAIL is set
+  #   fetch_models.py   -> logs its arguments to the call log
+  #   anything else     -> a path ($WORKDIR/qwen3 for the Qwen3 folder query)
+  cat > "$WORKDIR/fake_python" <<'FAKE_EOF'
 #!/usr/bin/env bash
-echo "/fake/path"
-EOF
+case "$*" in
+  *"installer.plan gpu-runtime"*)
+    [ -z "${FAKE_GPU_FAIL:-}" ] || exit 3
+    echo "${FAKE_GPU_ANSWER:-yes}" ;;
+  *"installer.plan fetch-flags"*)
+    [ -z "${FAKE_FLAGS_FAIL:-}" ] || exit 3
+    echo "${FAKE_FETCH_FLAGS:-}" ;;
+  *fetch_models.py*)
+    echo "fetch_models: $*" >> "$CALL_LOG" ;;
+  *qwen3_tts_model_dir*)
+    echo "$WORKDIR/qwen3" ;;
+  *)
+    echo "/fake/path" ;;
+esac
+FAKE_EOF
   chmod +x "$WORKDIR/fake_python"
 }
 
@@ -144,4 +179,177 @@ teardown() {
   gpu_line="$(grep -n "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG" | cut -d: -f1)"
   [ -n "$gpu_line" ]
   [ "$kokoro_line" -lt "$gpu_line" ]
+}
+
+# Runs main with the standard test environment.
+# Phases other than "prepare" expect the venv to exist already, so make one.
+run_main() {
+  make_fake_venv "$WORKDIR/.local/share/vocalis/venv"
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main "$@"
+}
+
+@test "phase prepare runs only the prepare steps" {
+  run_main --phase prepare
+  [ "$status" -eq 0 ]
+  grep -q "^preflight_run$" "$CALL_LOG"
+  grep -q "pyenv_install_kokoro" "$CALL_LOG"
+  [ -L "$WORKDIR/.local/bin/vocalis" ]
+  ! grep -q "models_ensure_piper_binary" "$CALL_LOG"
+  ! grep -q "fetch_models" "$CALL_LOG"
+  ! grep -q "service_enable_and_start" "$CALL_LOG"
+}
+
+@test "phase models runs only the downloads" {
+  run_main --phase models
+  [ "$status" -eq 0 ]
+  grep -q "fetch_models:" "$CALL_LOG"
+  grep -q "models_ensure_piper_binary" "$CALL_LOG"
+  ! grep -q "preflight_run" "$CALL_LOG"
+  ! grep -q "apt_install_missing" "$CALL_LOG"
+  ! grep -q "service_enable_and_start" "$CALL_LOG"
+}
+
+@test "phase finish runs only service and desktop" {
+  run_main --phase finish
+  [ "$status" -eq 0 ]
+  grep -q "service_substitute_unit" "$CALL_LOG"
+  grep -q "service_enable_and_start" "$CALL_LOG"
+  grep -q "desktop_install_launcher" "$CALL_LOG"
+  ! grep -q "preflight_run" "$CALL_LOG"
+  ! grep -q "fetch_models" "$CALL_LOG"
+  ! grep -q "models_ensure_piper_binary" "$CALL_LOG"
+}
+
+@test "phase all keeps the old order" {
+  run_main --phase all
+  [ "$status" -eq 0 ]
+  local pre fetch piper svc
+  pre="$(grep -n "^preflight_run$" "$CALL_LOG" | cut -d: -f1)"
+  fetch="$(grep -n "fetch_models:" "$CALL_LOG" | cut -d: -f1)"
+  piper="$(grep -n "models_ensure_piper_binary" "$CALL_LOG" | cut -d: -f1)"
+  svc="$(grep -n "service_enable_and_start" "$CALL_LOG" | cut -d: -f1)"
+  [ "$pre" -lt "$fetch" ]
+  [ "$fetch" -lt "$piper" ]
+  [ "$piper" -lt "$svc" ]
+}
+
+@test "--no-wizard behaves like phase all even with a display" {
+  DISPLAY=:0 run_main --no-wizard
+  [ "$status" -eq 0 ]
+  grep -q "service_enable_and_start" "$CALL_LOG"
+}
+
+@test "an unknown option or phase is refused" {
+  run_main --bogus
+  [ "$status" -eq 2 ]
+  run_main --phase nonsense
+  [ "$status" -eq 2 ]
+}
+
+@test "gpu machine prefers the GPU onnxruntime" {
+  run_main --phase prepare
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG"
+  ! grep -q "pyenv_use_cpu_onnxruntime" "$CALL_LOG"
+}
+
+@test "cpu machine switches to the CPU onnxruntime and not the GPU one" {
+  FAKE_GPU_ANSWER=no run_main --phase prepare
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_use_cpu_onnxruntime" "$CALL_LOG"
+  ! grep -q "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG"
+}
+
+@test "a failing hardware plan means the CPU onnxruntime, not the GPU one" {
+  FAKE_GPU_FAIL=1 run_main --phase prepare
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_use_cpu_onnxruntime" "$CALL_LOG"
+  ! grep -q "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG"
+}
+
+@test "an odd hardware plan answer means the CPU onnxruntime" {
+  FAKE_GPU_ANSWER="yes please" run_main --phase prepare
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_use_cpu_onnxruntime" "$CALL_LOG"
+  ! grep -q "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG"
+}
+
+@test "models phase passes --skip-qwen3 when the plan says so" {
+  FAKE_FETCH_FLAGS=--skip-qwen3 run_main --phase models
+  [ "$status" -eq 0 ]
+  grep -q "fetch_models: .*fetch_models.py --skip-qwen3" "$CALL_LOG"
+}
+
+@test "models phase passes no extra flag when the plan prints nothing" {
+  run_main --phase models
+  [ "$status" -eq 0 ]
+  grep -q "fetch_models.py$" "$CALL_LOG"
+}
+
+@test "a failing fetch-flags plan still skips Qwen3" {
+  FAKE_FLAGS_FAIL=1 run_main --phase models
+  [ "$status" -eq 0 ]
+  grep -q "fetch_models.py --skip-qwen3" "$CALL_LOG"
+}
+
+@test "an odd fetch-flags answer still skips Qwen3" {
+  FAKE_FETCH_FLAGS="--something-else" run_main --phase models
+  [ "$status" -eq 0 ]
+  grep -q "fetch_models.py --skip-qwen3$" "$CALL_LOG"
+}
+
+@test "models phase does not delete or touch an existing Qwen3 folder" {
+  mkdir -p "$WORKDIR/qwen3"
+  echo keep > "$WORKDIR/qwen3/model.bin"
+  FAKE_FETCH_FLAGS=--skip-qwen3 run_main --phase models
+  [ "$status" -eq 0 ]
+  [ "$(cat "$WORKDIR/qwen3/model.bin")" = "keep" ]
+}
+
+@test "no flags and no display runs prepare, models and finish in the terminal" {
+  run_main
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_install_kokoro" "$CALL_LOG"
+  grep -q "fetch_models:" "$CALL_LOG"
+  grep -q "service_enable_and_start" "$CALL_LOG"
+}
+
+@test "no flags with a display launches vocalis-setup with --installer-dir" {
+  install_launch_wizard() { echo "install_launch_wizard: $*" >> "$CALL_LOG"; }
+  DISPLAY=:0 run_main
+  [ "$status" -eq 0 ]
+  grep -q "install_launch_wizard: $WORKDIR/.local/share/vocalis/venv $WORKDIR" "$CALL_LOG"
+  ! grep -q "fetch_models" "$CALL_LOG"
+  ! grep -q "service_enable_and_start" "$CALL_LOG"
+}
+
+@test "a Wayland-only display also launches the wizard" {
+  install_launch_wizard() { echo "install_launch_wizard: $*" >> "$CALL_LOG"; }
+  WAYLAND_DISPLAY=wayland-0 run_main
+  [ "$status" -eq 0 ]
+  grep -q "install_launch_wizard" "$CALL_LOG"
+}
+
+@test "missing vocalis-setup falls back to the terminal path" {
+  install_launch_wizard() { echo "install_launch_wizard: $*" >> "$CALL_LOG"; }
+  FAKE_NO_SETUP=1 DISPLAY=:0 run_main
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NOTE"* ]]
+  ! grep -q "install_launch_wizard" "$CALL_LOG"
+  grep -q "fetch_models:" "$CALL_LOG"
+  grep -q "service_enable_and_start" "$CALL_LOG"
+}
+
+@test "every phase prints STEP i/n lines" {
+  run_main --phase prepare
+  [ "$(grep -cE '^STEP [0-9]+/[0-9]+ ' <<<"$output")" -eq 5 ]
+  [[ "$output" == *"STEP 1/5 "* && "$output" == *"STEP 5/5 "* ]]
+  run_main --phase models
+  [ "$(grep -cE '^STEP [0-9]+/[0-9]+ ' <<<"$output")" -eq 2 ]
+  [[ "$output" == *"STEP 1/2 Downloading voices and the dictation model (a few gigabytes – this can take a while)"* ]]
+  [[ "$output" == *"STEP 2/2 Downloading the Piper speech program"* ]]
+  run_main --phase finish
+  [ "$(grep -cE '^STEP [0-9]+/[0-9]+ ' <<<"$output")" -eq 2 ]
+  [[ "$output" == *"STEP 1/2 Starting Vocalis"* ]]
+  [[ "$output" == *"STEP 2/2 Adding Vocalis to your applications menu"* ]]
 }

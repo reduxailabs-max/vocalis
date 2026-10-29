@@ -147,3 +147,27 @@ teardown() {
   [ "$status" -eq 0 ]
   ! grep -q "CALLED" "$CALL_LOG"
 }
+
+@test "pyenv_use_cpu_onnxruntime swaps the GPU build for the CPU build at the same version" {
+  mkdir -p "$WORKDIR/venv/bin"
+  printf '#!/bin/sh\necho 1.31.0\n' > "$WORKDIR/venv/bin/python"
+  chmod +x "$WORKDIR/venv/bin/python"
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  run pyenv_use_cpu_onnxruntime "$WORKDIR/venv"
+  [ "$status" -eq 0 ]
+  uninstall_line="$(grep -n "pip uninstall --python $WORKDIR/venv/bin/python onnxruntime-gpu" "$CALL_LOG" | cut -d: -f1)"
+  install_line="$(grep -n "pip install --python $WORKDIR/venv/bin/python --reinstall --no-deps onnxruntime==1.31.0" "$CALL_LOG" | cut -d: -f1)"
+  [ -n "$uninstall_line" ]
+  [ -n "$install_line" ]
+  [ "$uninstall_line" -lt "$install_line" ]
+}
+
+@test "pyenv_use_cpu_onnxruntime does nothing when there is no GPU build" {
+  mkdir -p "$WORKDIR/venv/bin"
+  printf '#!/bin/sh\nexit 1\n' > "$WORKDIR/venv/bin/python"
+  chmod +x "$WORKDIR/venv/bin/python"
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  run pyenv_use_cpu_onnxruntime "$WORKDIR/venv"
+  [ "$status" -eq 0 ]
+  ! grep -q "CALLED" "$CALL_LOG"
+}
