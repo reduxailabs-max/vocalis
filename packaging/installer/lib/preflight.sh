@@ -37,8 +37,8 @@ preflight_run_nvidia_smi() {
 }
 
 # Whether a working NVIDIA GPU driver is present (nvidia-smi runs and
-# succeeds). Vocalis needs CUDA for its voice engine and never installs
-# a driver itself.
+# succeeds). A GPU is optional (without one Vocalis uses its CPU voices);
+# Vocalis never installs a driver itself.
 preflight_check_gpu() {
   preflight_run_nvidia_smi
 }
