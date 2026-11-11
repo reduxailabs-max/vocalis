@@ -41,6 +41,7 @@ downloads the voices and the dictation model plus the Piper program.
 ```
 bash install.sh                       # prepare, then the setup window (or the terminal if there is no screen)
 bash install.sh --no-wizard           # everything in the terminal, no window
+./install.run -- --no-wizard          # the same, from the .run file (note the extra --)
 bash install.sh --phase prepare       # run one phase: prepare | models | finish | all
 ```
 
@@ -62,17 +63,17 @@ message, for example that no NVIDIA driver was found).
 
 **No NVIDIA driver:** the installer prints a `NOTE`, installs the plain
 (CPU) `onnxruntime` and carries on. The large Qwen3-TTS voice is also
-skipped whenever the graphics card has less memory than
-`AutoPolicy.qwen3_min_gpu_total_mb` (4096 MB); Piper and Kokoro are still
+skipped unless the graphics card has more memory than
+`AutoPolicy.qwen3_min_gpu_total_mb` (4096 MB, so a 4 GB card skips it, like the app's Auto rule); Piper and Kokoro are still
 installed.
 
-**If setup stops or fails:** nothing is rolled back. Run `bash install.sh`
-again; finished work is skipped. Wizard progress lines are also saved to
+**If setup stops or fails:** nothing is rolled back. Run the installer
+again (`bash install.sh`, or `./install.run`); finished work is skipped. Wizard progress lines are also saved to
 `~/.local/share/vocalis/install.log`.
 
 To remove Vocalis, run `bash uninstall.sh` (see its own `--help`). This
 also removes the applications-menu entry added above. `--purge`
-additionally removes your config, downloaded models, Piper and the Kokoro
+additionally removes your config, the setup log, downloaded models, Piper and the Kokoro
 voice folder.
 
 The Kokoro Python package (`kokoro-onnx==0.4.7`) is installed with

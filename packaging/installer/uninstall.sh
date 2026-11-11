@@ -95,6 +95,9 @@ main() {
     [[ -n "$piper_binary_dir" && -d "$piper_binary_dir" ]] && rm -rf "$piper_binary_dir"
     [[ -n "$piper_voice_dir" && -d "$piper_voice_dir" ]] && rm -rf "$piper_voice_dir"
     [[ -n "$kokoro_dir" && -d "$kokoro_dir" ]] && rm -rf "$kokoro_dir"
+    # The setup window's log, then its folder if nothing else is left in it.
+    rm -f "${HOME}/.local/share/vocalis/install.log"
+    rmdir "${HOME}/.local/share/vocalis" 2>/dev/null || true
     echo "Vocalis has been removed, including your config, downloaded models, Piper and its voices, and the Kokoro voice."
   else
     echo "Vocalis has been removed. Your config (~/.config/vocalis) and downloaded models were kept."

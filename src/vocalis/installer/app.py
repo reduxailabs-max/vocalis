@@ -8,9 +8,13 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from types import FrameType
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from vocalis.installer.wizard import SetupWizard
@@ -40,6 +44,32 @@ def _make_app(argv: list[str]) -> QApplication:
     return QApplication(argv)
 
 
+_STOP_SIGNALS = (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)
+_SIGNAL_TICK_MS = 200
+
+
+def install_signal_handlers(
+    app: QApplication, wizard: SetupWizard
+) -> Callable[[int, FrameType | None], None]:
+    """Make Ctrl+C, a closed terminal or a kill stop the running install cleanly.
+
+    The handler stops the running phase (its whole process group), closes the
+    window without a dialog and ends the program, so no download is left
+    running unseen. A small timer wakes Python so the handler can run.
+    """
+
+    def handler(signum: int, frame: FrameType | None) -> None:
+        wizard.stop_for_signal()
+        app.quit()
+
+    for signum in _STOP_SIGNALS:
+        signal.signal(signum, handler)
+    timer = QTimer(app)
+    timer.timeout.connect(lambda: None)
+    timer.start(_SIGNAL_TICK_MS)
+    return handler
+
+
 def _leave(code: int) -> int:
     """Return the exit code; if a worker is still running, exit hard so Qt cannot abort."""
     if running_threads():
@@ -62,6 +92,7 @@ def main(argv: list[str] | None = None) -> int:
         apply_theme(app)
         wizard = SetupWizard(args.installer_dir)
         wizard.show()
+        install_signal_handlers(app, wizard)
     except Exception as error:  # noqa: BLE001 - any start-up problem means "no window"
         print(f"{NO_WINDOW_MESSAGE} ({error})", file=sys.stderr)
         return EXIT_NO_WINDOW

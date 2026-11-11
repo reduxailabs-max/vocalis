@@ -40,8 +40,13 @@ def test_read_gpu_parses_injected_output() -> None:
     assert read_gpu(lambda cmd: "Card, 8192\n") == InstalledGpu("Card", 8192)
 
 
-def test_plan_4096mb_fetches_qwen3() -> None:
+def test_plan_4096mb_skips_qwen3_like_the_auto_rule() -> None:
     p = make_plan(InstalledGpu("Card", 4096))
+    assert p.gpu_runtime and not p.fetch_qwen3
+
+
+def test_plan_4097mb_fetches_qwen3() -> None:
+    p = make_plan(InstalledGpu("Card", 4097))
     assert p.gpu_runtime and p.fetch_qwen3
 
 
@@ -67,7 +72,7 @@ def test_run_nvidia_smi_returns_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
     def fake_run(cmd: list[str], **kw: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(cmd, 0, stdout="Card, 1\n")
 
-    monkeypatch.setattr(plan.subprocess, "run", fake_run)
+    monkeypatch.setattr("subprocess.run", fake_run)
     assert plan._run_nvidia_smi(["x"]) == "Card, 1\n"
 
 

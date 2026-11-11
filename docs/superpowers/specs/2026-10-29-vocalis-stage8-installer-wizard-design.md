@@ -103,7 +103,7 @@ failure messages with the network unplugged; microphone test with a muted mic.
 
 1. **Hardware decision at install time** uses `nvidia-smi` (name and total
    memory), not torch (torch does not exist yet). Qwen3-TTS is fetched only if
-   total GPU memory is at least `AutoPolicy.qwen3_min_gpu_total_mb` (4096 MB,
+   total GPU memory is more than `AutoPolicy.qwen3_min_gpu_total_mb` (4096 MB,
    `engines/auto_select.py`); Kokoro, Piper and Parakeet are always fetched.
    `fetch_models.py` gets flags (e.g. `--skip-qwen3`) so the decision is passed
    in; the app's own selector is not refactored. If a user later forces Qwen3 on

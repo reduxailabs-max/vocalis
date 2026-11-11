@@ -403,8 +403,8 @@ section for the full step list and `uninstall.sh --purge`'s behavior.
 
 ```
 install.sh main()
-  -> preflight_run()                       # distro, arch, GPU driver
-       any check fails -> plain message to stderr, exit 1, nothing else runs
+  -> preflight_run()                       # distro, arch (a missing GPU driver is only a NOTE since Stage 8)
+       distro/arch check fails -> plain message to stderr, exit 1, nothing else runs
   -> apt_install_missing(APT_REQUIRED_PACKAGES)  # the one sudo prompt
   -> apt_enable_ydotoold()                 # best-effort, never fails the install
   -> pyenv_ensure_uv()
@@ -546,7 +546,7 @@ install.sh main()
 
 vocalis-setup (SetupWizard)
   Welcome -> Found: InstallPlan from nvidia-smi
-          -> Installing: PhaseRunner("models")   # STEP 1/2 .. 2/2; Qwen3-TTS skipped if GPU < 4096 MB
+          -> Installing: PhaseRunner("models")   # STEP 1/2 .. 2/2; Qwen3-TTS skipped if GPU <= 4096 MB
           -> Microphone: run_mic_test()          # warns only
           -> Finishing: PhaseRunner("finish")    # STEP 1/2 .. 2/2
           -> Finish: open Settings (3 tries); window closes

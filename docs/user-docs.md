@@ -75,18 +75,20 @@ after the first part of the installation. It has five pages:
 
 If something goes wrong on page 3 or 5, press **Try again**. If you close
 the window or press Cancel, setup stops; nothing is undone, so just run
-`bash install.sh` again to finish. A record of what happened is kept in
+the installer again to finish (`bash install.sh`, or `./install.run` if you
+started from the `.run` file). A record of what happened is kept in
 `~/.local/share/vocalis/install.log`.
 
 No screen, or the window can't open? The installer finishes by itself in
 the terminal. You can also ask for that on purpose:
 
 ```bash
-bash install.sh --no-wizard
+bash install.sh --no-wizard          # from the source folder
+./install.run -- --no-wizard        # from the .run file (the extra -- matters)
 ```
 
-Without an NVIDIA graphics card (or with less than 4 GB of graphics
-memory) the installer skips the largest voice, Qwen3-TTS. Piper and Kokoro
+Without an NVIDIA graphics card (or with 4 GB of graphics memory
+or less) the installer skips the largest voice, Qwen3-TTS. Piper and Kokoro
 are still installed, so Vocalis can speak.
 
 When it finishes you'll see a plain "Vocalis is installed and running"
@@ -98,7 +100,8 @@ To remove Vocalis, run `bash uninstall.sh` from the same folder. By
 default this keeps your settings and your downloaded models (in case you
 install again later); run `bash uninstall.sh --purge` instead to remove
 everything, including your settings, every downloaded model, and the
-Piper backup voice (its binary and its voice files) and the Kokoro voice — a full, clean
+Piper backup voice (its binary and its voice files), the Kokoro voice and the
+setup window's log (`~/.local/share/vocalis/install.log`) — a full, clean
 removal. Run `bash uninstall.sh --help` any time to see this usage
 summary without removing anything.
 

@@ -1161,13 +1161,14 @@ lines. `installer/progress.py::parse_line` turns them into `ProgressEvent`
 objects and ignores everything else. `installer/runner.py::PhaseRunner`
 starts the phase in its own process group (`start_new_session=True`), relays
 each output line, and `terminate()` stops the whole group (SIGTERM, then
-SIGKILL after a 3-second grace period), so a running `apt` or download dies
-too. A runner is single-use.
+SIGKILL after a 3-second grace period), so a running download or `systemctl`
+call dies too. A runner is single-use.
 
 **Hardware plan.** `installer/plan.py` reads `nvidia-smi` (10-second
 timeout) and builds an `InstallPlan`: use the GPU `onnxruntime` only if a
-card was found; fetch Qwen3-TTS only if the card has at least
-`AutoPolicy.qwen3_min_gpu_total_mb` (4096 MB) of memory.
+card was found; fetch Qwen3-TTS only if the card has more than
+`AutoPolicy.qwen3_min_gpu_total_mb` (4096 MB) of memory (the same strict rule as
+`auto_select.py`, so a 4 GB card skips it).
 `python -m vocalis.installer.plan gpu-runtime|fetch-flags` lets the shell
 ask; any error or odd answer means the safe choice (CPU runtime,
 `--skip-qwen3`) plus a `NOTE`. With no NVIDIA driver, `preflight_run`

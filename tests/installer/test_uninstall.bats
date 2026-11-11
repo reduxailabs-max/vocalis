@@ -121,8 +121,10 @@ STUB
     "$WORKDIR/.local/bin/piper" "$WORKDIR/.local/share/piper-voices"
   touch "$WORKDIR/.local/bin/piper/piper" "$WORKDIR/.local/share/piper-voices/en_US-lessac-medium.onnx"
   write_purge_python_stub
+  touch "$WORKDIR/.local/share/vocalis/install.log"
   HOME="$WORKDIR" run main --purge
   [ "$status" -eq 0 ]
+  [ ! -e "$WORKDIR/.local/share/vocalis/install.log" ]
   [ ! -e "$WORKDIR/.config/vocalis" ]
   [ ! -e "$WORKDIR/models/parakeet" ]
   [ ! -e "$WORKDIR/models/qwen3" ]

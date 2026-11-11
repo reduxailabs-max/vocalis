@@ -34,10 +34,24 @@ service_run_systemctl_enable_now() {
   systemctl --user enable --now "$1"
 }
 
-# Reload the user systemd manager, then enable and start the given
-# unit (defaulting to vocalis.service).
+service_run_systemctl_is_active() {
+  systemctl --user is-active --quiet "$1"
+}
+
+service_run_systemctl_restart() {
+  systemctl --user restart "$1"
+}
+
+# Reload the user systemd manager, then enable and start the given unit
+# (defaulting to vocalis.service). If it was already running (a re-run
+# after an upgrade), restart it so the new version is the one that runs.
 service_enable_and_start() {
   local unit_name="${1:-vocalis.service}"
+  local was_active=0
+  service_run_systemctl_is_active "$unit_name" && was_active=1
   service_run_systemctl_daemon_reload
   service_run_systemctl_enable_now "$unit_name"
+  if [[ "$was_active" -eq 1 ]]; then
+    service_run_systemctl_restart "$unit_name"
+  fi
 }

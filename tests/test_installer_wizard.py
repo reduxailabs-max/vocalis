@@ -1,10 +1,11 @@
 """Tests for the setup wizard window and the vocalis-setup program."""
+import signal
 import threading
 from pathlib import Path
 from typing import Any, Callable
 
 import pytest
-from PySide6.QtWidgets import QPushButton, QWizard
+from PySide6.QtWidgets import QLabel, QPushButton, QWizard
 
 import vocalis.installer.app as app_module
 import vocalis.installer.wizard as wizard_module
@@ -78,6 +79,14 @@ def messages(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
     return counts
 
 
+REAL_INSTALL_SIGNALS = app_module.install_signal_handlers
+
+
+@pytest.fixture(autouse=True)
+def no_real_signal_handlers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(app_module, "install_signal_handlers", lambda app, wizard: None)
+
+
 def build(qtbot: Any, factory: Factory, mic: MicResult | None = None,
           opener: Callable[[], int] = lambda: 0) -> SetupWizard:
     wizard = SetupWizard(
@@ -101,22 +110,22 @@ def wait_next(qtbot: Any, wizard: SetupWizard) -> None:
     qtbot.waitUntil(lambda: wizard.button(NEXT).isEnabled(), timeout=5000)
 
 
-def test_pages_come_in_the_expected_order(qtbot, log_path, messages) -> None:
+def test_pages_come_in_the_expected_order(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     wizard = build(qtbot, Factory({"models": [ok()], "finish": [ok()]}))
     names = [wizard.page(i).objectName() for i in wizard.pageIds()]
     assert names == ["welcome", "found", "installing", "microphone", "done"]
     assert wizard.button(NEXT).text() == "Start"
 
 
-def test_found_page_shows_the_plan_summary(qtbot, log_path, messages) -> None:
+def test_found_page_shows_the_plan_summary(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     wizard = build(qtbot, Factory({"models": [ok()], "finish": [ok()]}))
     wizard.next()
-    text = wizard.page(1).findChild(object, "found_text").text()  # type: ignore[union-attr]
+    text = wizard.page(1).findChild(QLabel, "found_text").text()  # type: ignore[union-attr]
     assert "RTX 4090" in text
     assert "Qwen3-TTS" in text
 
 
-def test_installing_page_shows_step_text_and_progress(qtbot, log_path, messages) -> None:
+def test_installing_page_shows_step_text_and_progress(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     factory = Factory({"models": [(["STEP 1/2 Getting voices", "NOTE be patient", "plain"], 0, True)]})
     wizard = build(qtbot, factory)
     to_installing(wizard)
@@ -129,7 +138,7 @@ def test_installing_page_shows_step_text_and_progress(qtbot, log_path, messages)
     qtbot.waitUntil(lambda: page.bar.value() == 100, timeout=5000)
 
 
-def test_progress_bar_follows_the_step_index(qtbot, log_path, messages) -> None:
+def test_progress_bar_follows_the_step_index(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     factory = Factory({"models": [(["STEP 1/2 One", "STEP 2/2 Two"], 0, True)]})
     wizard = build(qtbot, factory)
     to_installing(wizard)
@@ -139,14 +148,14 @@ def test_progress_bar_follows_the_step_index(qtbot, log_path, messages) -> None:
     qtbot.waitUntil(lambda: wizard.installing_page.bar.value() == 100, timeout=5000)
 
 
-def test_installing_success_enables_next(qtbot, log_path, messages) -> None:
+def test_installing_success_enables_next(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     wizard = build(qtbot, Factory({"models": [ok()]}))
     to_installing(wizard)
     wait_next(qtbot, wizard)
     assert wizard.installing_page.bar.value() == 100
 
 
-def test_installing_failure_shows_try_again_and_reruns_the_same_phase(
+def test_installing_failure_shows_try_again_and_reruns_the_same_phase(  # type: ignore[no-untyped-def]
         qtbot, log_path, messages) -> None:
     factory = Factory({"models": [(["boom"], 1, False), ok()]})
     wizard = build(qtbot, factory)
@@ -162,14 +171,14 @@ def test_installing_failure_shows_try_again_and_reruns_the_same_phase(
     assert wizard.exit_code == 1
 
 
-def test_lines_are_appended_to_the_log_file(qtbot, log_path, messages) -> None:
+def test_lines_are_appended_to_the_log_file(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     wizard = build(qtbot, Factory({"models": [ok(["STEP 1/1 Go", "hello"])]}))
     to_installing(wizard)
     wait_next(qtbot, wizard)
     assert log_path.read_text(encoding="utf-8").splitlines()[1:] == ["STEP 1/1 Go", "hello"]
 
 
-def test_unwritable_log_never_crashes(qtbot, tmp_path, monkeypatch, messages) -> None:
+def test_unwritable_log_never_crashes(qtbot, tmp_path, monkeypatch, messages) -> None:  # type: ignore[no-untyped-def]
     blocker = tmp_path / "file"
     blocker.write_text("x")
     monkeypatch.setattr(pages_module, "INSTALL_LOG_PATH", blocker / "sub" / "install.log")
@@ -178,7 +187,7 @@ def test_unwritable_log_never_crashes(qtbot, tmp_path, monkeypatch, messages) ->
     wait_next(qtbot, wizard)
 
 
-def test_closing_mid_install_terminates_the_runner_and_shows_the_stopped_message(
+def test_closing_mid_install_terminates_the_runner_and_shows_the_stopped_message(  # type: ignore[no-untyped-def]
         qtbot, log_path, messages) -> None:
     factory = Factory({"models": [(["STEP 1/2 Working"], 0, True)]})
     wizard = build(qtbot, factory)
@@ -192,7 +201,7 @@ def test_closing_mid_install_terminates_the_runner_and_shows_the_stopped_message
 
 
 @pytest.mark.parametrize("verdict", ["quiet", "no_device"])
-def test_microphone_warning_does_not_block_next_or_finish(
+def test_microphone_warning_does_not_block_next_or_finish(  # type: ignore[no-untyped-def]
         qtbot, log_path, messages, verdict: str) -> None:
     mic = MicResult(verdict, 0.0, f"warning {verdict}")  # type: ignore[arg-type]
     wizard = build(qtbot, Factory({"models": [ok()], "finish": [ok()]}), mic=mic)
@@ -207,7 +216,7 @@ def test_microphone_warning_does_not_block_next_or_finish(
     qtbot.waitUntil(lambda: wizard.button(FINISH).isEnabled(), timeout=5000)
 
 
-def test_done_page_runs_the_finish_phase_after_the_microphone_page(
+def test_done_page_runs_the_finish_phase_after_the_microphone_page(  # type: ignore[no-untyped-def]
         qtbot, log_path, messages) -> None:
     factory = Factory({"models": [ok()], "finish": [ok()]})
     wizard = build(qtbot, factory)
@@ -235,7 +244,7 @@ def _finish(qtbot: Any, factory: Factory, opener: Callable[[], int]) -> SetupWiz
     return wizard
 
 
-def test_finish_opens_settings_and_retries_until_it_succeeds(qtbot, log_path, messages) -> None:
+def test_finish_opens_settings_and_retries_until_it_succeeds(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     results = iter([1, 1, 0])
     calls: list[int] = []
 
@@ -248,7 +257,7 @@ def test_finish_opens_settings_and_retries_until_it_succeeds(qtbot, log_path, me
     assert messages["hint"] == 0
 
 
-def test_finish_gives_up_after_three_tries_without_crashing(qtbot, log_path, messages) -> None:
+def test_finish_gives_up_after_three_tries_without_crashing(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     calls: list[int] = []
 
     def opener() -> int:
@@ -261,7 +270,7 @@ def test_finish_gives_up_after_three_tries_without_crashing(qtbot, log_path, mes
     assert wizard.exit_code == 0
 
 
-def test_finish_survives_an_opener_that_raises(qtbot, log_path, messages) -> None:
+def test_finish_survives_an_opener_that_raises(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     def opener() -> int:
         raise RuntimeError("no service")
 
@@ -269,7 +278,7 @@ def test_finish_survives_an_opener_that_raises(qtbot, log_path, messages) -> Non
     assert messages["hint"] == 1
 
 
-def test_wizard_uses_the_theme_in_app_main(monkeypatch, tmp_path) -> None:
+def test_wizard_uses_the_theme_in_app_main(monkeypatch, tmp_path) -> None:  # type: ignore[no-untyped-def]
     shown: list[Any] = []
     themed: list[Any] = []
 
@@ -295,7 +304,7 @@ def test_wizard_uses_the_theme_in_app_main(monkeypatch, tmp_path) -> None:
     assert len(themed) == 1
 
 
-def test_app_main_returns_one_and_prints_a_message_when_stopped(monkeypatch, capsys, tmp_path) -> None:
+def test_app_main_returns_one_and_prints_a_message_when_stopped(monkeypatch, capsys, tmp_path) -> None:  # type: ignore[no-untyped-def]
     class FakeApp:
         def exec(self) -> int:
             return 0
@@ -317,13 +326,13 @@ def test_app_main_returns_one_and_prints_a_message_when_stopped(monkeypatch, cap
     assert "Setup was stopped." in capsys.readouterr().err
 
 
-def test_app_main_returns_three_when_no_window_can_open(monkeypatch, capsys, tmp_path) -> None:
+def test_app_main_returns_three_when_no_window_can_open(monkeypatch, capsys, tmp_path) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(app_module, "_has_display", lambda: False)
     assert app_module.main(["--installer-dir", str(tmp_path)]) == 3
     assert "could not open a window" in capsys.readouterr().err
 
 
-def test_app_main_returns_three_when_the_application_cannot_start(
+def test_app_main_returns_three_when_the_application_cannot_start(  # type: ignore[no-untyped-def]
         monkeypatch, capsys, tmp_path) -> None:
     def broken(argv: list[str]) -> Any:
         raise RuntimeError("no platform")
@@ -333,7 +342,7 @@ def test_app_main_returns_three_when_the_application_cannot_start(
     assert "no platform" in capsys.readouterr().err
 
 
-def test_has_display_reads_the_environment(monkeypatch) -> None:
+def test_has_display_reads_the_environment(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     for name in ("QT_QPA_PLATFORM", "DISPLAY", "WAYLAND_DISPLAY"):
         monkeypatch.delenv(name, raising=False)
     assert not app_module._has_display()
@@ -347,7 +356,7 @@ def test_app_main_requires_installer_dir() -> None:
     assert info.value.code == 2
 
 
-def test_failure_text_and_stopped_text_show_the_log_path(qtbot, log_path, messages) -> None:
+def test_failure_text_and_stopped_text_show_the_log_path(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     factory = Factory({"models": [(["boom"], 1, False)]})
     wizard = build(qtbot, factory)
     to_installing(wizard)
@@ -360,18 +369,18 @@ def test_failure_text_and_stopped_text_show_the_log_path(qtbot, log_path, messag
     assert "Details are saved in" in wizard.final_message
 
 
-def test_stopped_final_message_has_the_log_path(qtbot, log_path, messages) -> None:
+def test_stopped_final_message_has_the_log_path(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     wizard = build(qtbot, Factory({"models": [ok()]}))
     assert "Setup was stopped." in wizard.final_message
     assert "Details are saved in" in wizard.final_message
 
 
-def test_log_hint_uses_a_tilde_for_the_home_folder(monkeypatch) -> None:
+def test_log_hint_uses_a_tilde_for_the_home_folder(monkeypatch) -> None:  # type: ignore[no-untyped-def]
     monkeypatch.setattr(pages_module, "INSTALL_LOG_PATH", Path.home() / "x" / "install.log")
     assert pages_module.log_hint() == "Details are saved in ~/x/install.log"
 
 
-def test_a_successful_retry_clears_the_failure_message(qtbot, log_path, messages) -> None:
+def test_a_successful_retry_clears_the_failure_message(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     factory = Factory({"models": [(["boom"], 1, False), ok()]})
     wizard = build(qtbot, factory)
     to_installing(wizard)
@@ -382,7 +391,7 @@ def test_a_successful_retry_clears_the_failure_message(qtbot, log_path, messages
     assert "did not finish" not in wizard.final_message
 
 
-def test_failure_and_try_again_on_the_finish_page(qtbot, log_path, messages) -> None:
+def test_failure_and_try_again_on_the_finish_page(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     factory = Factory({"models": [ok()], "finish": [(["bad"], 2, False), ok()]})
     wizard = build(qtbot, factory)
     to_installing(wizard)
@@ -398,7 +407,7 @@ def test_failure_and_try_again_on_the_finish_page(qtbot, log_path, messages) -> 
     assert wizard.exit_code == 0
 
 
-def test_each_attempt_writes_a_header_line_to_the_log(qtbot, log_path, messages) -> None:
+def test_each_attempt_writes_a_header_line_to_the_log(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     wizard = build(qtbot, Factory({"models": [ok(["hi"])]}))
     to_installing(wizard)
     wait_next(qtbot, wizard)
@@ -407,7 +416,7 @@ def test_each_attempt_writes_a_header_line_to_the_log(qtbot, log_path, messages)
     assert lines[1] == "hi"
 
 
-def test_the_bar_is_busy_until_the_first_step(qtbot, log_path, messages) -> None:
+def test_the_bar_is_busy_until_the_first_step(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     factory = Factory({"models": [(["plain"], 0, True)]})
     wizard = build(qtbot, factory)
     to_installing(wizard)
@@ -419,7 +428,7 @@ def test_the_bar_is_busy_until_the_first_step(qtbot, log_path, messages) -> None
     assert page.bar.maximum() == 100
 
 
-def test_close_with_a_stubborn_runner_still_exits_one_without_aborting(
+def test_close_with_a_stubborn_runner_still_exits_one_without_aborting(  # type: ignore[no-untyped-def]
         qtbot, log_path, messages, monkeypatch) -> None:
     monkeypatch.setattr(pages_module, "_THREAD_WAIT_MS", 50)
     factory = Factory({"models": [(["STEP 1/2 Working"], 0, True)]})
@@ -433,7 +442,7 @@ def test_close_with_a_stubborn_runner_still_exits_one_without_aborting(
     assert wizard.exit_code == 1
     assert pages_module.running_threads()
     exits: list[int] = []
-    monkeypatch.setattr(app_module.os, "_exit", exits.append)
+    monkeypatch.setattr("os._exit", exits.append)
     assert app_module._leave(1) == 1 or exits == [1]
     assert exits == [1]
     runner.gate.set()
@@ -441,7 +450,7 @@ def test_close_with_a_stubborn_runner_still_exits_one_without_aborting(
     assert app_module._leave(1) == 1
 
 
-def test_closing_after_a_clean_stop_leaves_no_running_thread(qtbot, log_path, messages) -> None:
+def test_closing_after_a_clean_stop_leaves_no_running_thread(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
     factory = Factory({"models": [(["STEP 1/2 Working"], 0, True)]})
     wizard = build(qtbot, factory)
     to_installing(wizard)
@@ -450,7 +459,7 @@ def test_closing_after_a_clean_stop_leaves_no_running_thread(qtbot, log_path, me
     assert not pages_module.running_threads()
 
 
-def test_finish_shows_opening_text_and_can_be_closed_while_opening(
+def test_finish_shows_opening_text_and_can_be_closed_while_opening(  # type: ignore[no-untyped-def]
         qtbot, log_path, messages) -> None:
     gate = threading.Event()
 
@@ -472,3 +481,28 @@ def test_finish_shows_opening_text_and_can_be_closed_while_opening(
     assert wizard.exit_code == 0
     gate.set()
     qtbot.waitUntil(lambda: not pages_module.running_threads(), timeout=5000)
+
+
+def test_a_kill_signal_stops_the_runner_and_exits_one_without_a_dialog(  # type: ignore[no-untyped-def]
+        qtbot, log_path, messages) -> None:
+    from PySide6.QtWidgets import QApplication
+
+    factory = Factory({"models": [(["STEP 1/2 Working"], 0, True)]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    qtbot.waitUntil(lambda: bool(factory.built), timeout=5000)
+    saved = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM)}
+    try:
+        app = QApplication.instance()
+        assert isinstance(app, QApplication)
+        handler = REAL_INSTALL_SIGNALS(app, wizard)
+        assert signal.getsignal(signal.SIGTERM) is handler
+        handler(signal.SIGTERM, None)
+    finally:
+        for number, old in saved.items():
+            signal.signal(number, old)
+    assert factory.built[0][1].terminated
+    assert wizard.exit_code == 1
+    assert messages["stopped"] == 0
+    assert "Setup was stopped." in wizard.final_message
+    assert not pages_module.running_threads()

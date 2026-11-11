@@ -428,6 +428,35 @@ which files count as "the model is present" for either Parakeet or
 Qwen3-TTS, change it here; both the installer and `run_startup_checks()`
 pick up the change automatically.
 
+## The setup wizard and installer package (Stage 8)
+
+`src/vocalis/installer/` holds the Python side of the installer: `plan.py`
+(reads `nvidia-smi`, decides GPU runtime and Qwen3-TTS; also a small command
+line `python -m vocalis.installer.plan gpu-runtime|fetch-flags`), `progress.py`
+(parses `STEP`/`NOTE` lines), `runner.py` (runs one `install.sh --phase X` in
+its own process group), `mic_test.py`, `wizard.py` + `wizard_pages.py` (the Qt
+window) and `app.py` (the `vocalis-setup` program).
+
+Try the window by hand (never from the NTFS drive; use a normal Linux folder):
+
+```bash
+vocalis-setup --installer-dir packaging/installer
+```
+
+Exit codes: `0` finished, `1` stopped or failed, `3` no window could be opened.
+
+Tests: the Python side runs under plain `pytest` (Qt tests use the offscreen
+platform and inject fake runners, so nothing real is installed):
+
+```bash
+pytest tests/test_installer_wizard.py tests/test_installer_plan.py --no-cov -q
+bats tests/installer/        # the shell side (install.sh phases, apt, service, uninstall)
+```
+
+Worker threads are kept in a module list (`track_thread`) because Qt aborts if
+a running `QThread` is garbage-collected; `app.main` ends with `os._exit` when
+one is still running so a cancel always exits `1`.
+
 ## `vocalis --settings` and the console-script entrypoint (Stage 5)
 
 The `vocalis` console script (`[project.scripts]` in `pyproject.toml`)

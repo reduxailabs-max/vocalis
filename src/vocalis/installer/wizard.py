@@ -14,11 +14,11 @@ from vocalis.installer.runner import PhaseRunner
 from vocalis.installer.wizard_pages import (
     DID_NOT_FINISH_MESSAGE,
     RunnerFactory,
-    _CallThread,
-    _FoundPage,
-    _MicrophonePage,
-    _PhasePage,
-    _TextPage,
+    CallThread,
+    FoundPage,
+    MicrophonePage,
+    PhasePage,
+    TextPage,
     log_hint,
     track_thread,
 )
@@ -52,7 +52,6 @@ def _default_settings_opener() -> int:
     return open_settings(default_socket_path())
 
 
-
 class SetupWizard(QWizard):
     """Welcome, found, installing, microphone and done pages for first-time setup."""
 
@@ -72,17 +71,17 @@ class SetupWizard(QWizard):
         self._opening = False
         self._closed = False
         self._failure_message = ""
-        self._settings_thread: _CallThread | None = None
-        self.installing_page = _PhasePage(
+        self._settings_thread: CallThread | None = None
+        self.installing_page = PhasePage(
             "installing", "Installing", "models", "All set.", installer_dir, runner_factory)
-        self.microphone_page = _MicrophonePage(mic_tester)
-        self.done_page = _PhasePage(
+        self.microphone_page = MicrophonePage(mic_tester)
+        self.done_page = PhasePage(
             "done", "Finishing up", "finish", "Vocalis is running", installer_dir, runner_factory)
-        self.addPage(_TextPage(
+        self.addPage(TextPage(
             "welcome", "Welcome to Vocalis",
             "Vocalis reads text aloud and types what you say. Press Start and we will set "
             "everything up for you."))
-        self.addPage(_FoundPage(plan_reader))
+        self.addPage(FoundPage(plan_reader))
         self.addPage(self.installing_page)
         self.addPage(self.microphone_page)
         self.addPage(self.done_page)
@@ -108,9 +107,9 @@ class SetupWizard(QWizard):
         if phase == "finish":
             self._succeeded = True
 
-    def phase_failed(self, message: str) -> None:
+    def phase_failed(self) -> None:
         """Called by a page when its phase failed; remembered for the exit message."""
-        self._failure_message = message
+        self._failure_message = DID_NOT_FINISH_MESSAGE
 
     def _update_next_text(self, page_id: int) -> None:
         """The first page's button says Start."""
@@ -134,6 +133,15 @@ class SetupWizard(QWizard):
             self._show_stopped_message()
         super().reject()
 
+    def stop_for_signal(self) -> None:
+        """A kill signal arrived: stop any running phase and close without a dialog."""
+        self._closed = True
+        if not self._succeeded:
+            self.installing_page.stop()
+            self.done_page.stop()
+            self.microphone_page.stop()
+        super().reject()
+
     def accept(self) -> None:
         """Finish: open Settings on a helper thread (it can take a while), then close."""
         if self._opening:
@@ -143,7 +151,7 @@ class SetupWizard(QWizard):
         finish = self.button(QWizard.WizardButton.FinishButton)
         if finish is not None:
             finish.setEnabled(False)
-        thread = _CallThread(self._open_settings_with_retries, False)
+        thread = CallThread(self._open_settings_with_retries, False)
         thread.result.connect(self._on_settings_done)
         self._settings_thread = thread
         track_thread(thread)

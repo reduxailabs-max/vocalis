@@ -68,7 +68,7 @@ def _append_log(line: str) -> None:
         pass
 
 
-class _PhaseThread(QThread):
+class PhaseThread(QThread):
     """Runs one installer phase off the window thread; only emits signals."""
 
     line = Signal(str)
@@ -88,7 +88,7 @@ class _PhaseThread(QThread):
         self.finished_with.emit(code)
 
 
-class _CallThread(QThread):
+class CallThread(QThread):
     """Runs one function off the window thread and emits what it returned."""
 
     result = Signal(object)
@@ -107,7 +107,7 @@ class _CallThread(QThread):
         self.result.emit(value)
 
 
-class _TextPage(QWizardPage):
+class TextPage(QWizardPage):
     """A page with a title and one block of plain text."""
 
     def __init__(self, name: str, title: str, text: str) -> None:
@@ -121,7 +121,7 @@ class _TextPage(QWizardPage):
         layout.addWidget(self.label)
 
 
-class _FoundPage(_TextPage):
+class FoundPage(TextPage):
     """Shows what was found in this PC and what will be installed."""
 
     def __init__(self, plan_reader: Callable[[], InstallPlan]) -> None:
@@ -136,7 +136,7 @@ class _FoundPage(_TextPage):
             self.label.setText("Could not look at your PC, but setup can still continue.")
 
 
-class _PhasePage(QWizardPage):
+class PhasePage(QWizardPage):
     """Runs one installer phase, shows progress, and offers Try again on failure."""
 
     def __init__(self, name: str, title: str, phase: str, success_text: str,
@@ -146,7 +146,7 @@ class _PhasePage(QWizardPage):
         self.setTitle(title)
         self._phase, self._success_text = phase, success_text
         self._installer_dir, self._factory = installer_dir, factory
-        self._thread: _PhaseThread | None = None
+        self._thread: PhaseThread | None = None
         self._running = self._succeeded = self._cancelled = False
         self.status = QLabel("")
         self.status.setObjectName(f"{name}_status")
@@ -193,7 +193,7 @@ class _PhasePage(QWizardPage):
             self._thread.wait()
         stamp = datetime.datetime.now().isoformat(timespec="seconds")
         _append_log(f"--- {self._phase} phase {stamp} ---")
-        thread = _PhaseThread(self._factory, self._installer_dir, self._phase)
+        thread = PhaseThread(self._factory, self._installer_dir, self._phase)
         thread.line.connect(self._on_line)
         thread.finished_with.connect(self._on_finished)
         self._thread, self._running = thread, True
@@ -227,7 +227,7 @@ class _PhasePage(QWizardPage):
             self.bar.setValue(0)
             self.error.show()
             self.retry.show()
-            self._owner().phase_failed(DID_NOT_FINISH_MESSAGE)
+            self._owner().phase_failed()
         self.completeChanged.emit()
 
     def stop(self) -> None:
@@ -239,7 +239,7 @@ class _PhasePage(QWizardPage):
             self._running = False
 
 
-class _MicrophonePage(QWizardPage):
+class MicrophonePage(QWizardPage):
     """Lets the person try the microphone; a warning never blocks Next."""
 
     def __init__(self, mic_tester: Callable[[], MicResult]) -> None:
@@ -247,7 +247,7 @@ class _MicrophonePage(QWizardPage):
         self.setObjectName("microphone")
         self.setTitle("Check your microphone")
         self._mic_tester = mic_tester
-        self.thread_: _CallThread | None = None
+        self.thread_: CallThread | None = None
         self.intro = QLabel("Press the button and say a few words. You can skip this.")
         self.intro.setWordWrap(True)
         self.button = QPushButton("Test my microphone")
@@ -267,7 +267,7 @@ class _MicrophonePage(QWizardPage):
         fallback = MicResult("no_device", 0.0, "The microphone test could not run. You can continue.")
         if self.thread_ is not None:
             self.thread_.wait()
-        thread = _CallThread(self._mic_tester, fallback)
+        thread = CallThread(self._mic_tester, fallback)
         thread.result.connect(self._on_result)
         self.thread_ = thread
         track_thread(thread)

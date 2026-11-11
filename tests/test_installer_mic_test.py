@@ -100,7 +100,7 @@ class RaisingStopRecorder(FakeRecorder):
 def test_stop_returning_none_is_quiet() -> None:
     result = _run(FakeRecorder(audio=None))
     recorder = FakeRecorder()
-    recorder.stop = lambda: None  # type: ignore[method-assign,assignment]
+    recorder.stop = lambda: None  # type: ignore[method-assign]
     assert _run(recorder).verdict == "quiet"
     assert result.verdict == "quiet"
 

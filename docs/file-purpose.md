@@ -263,7 +263,7 @@
 | File | Purpose |
 |---|---|
 | `src/vocalis/installer/__init__.py` | Marks the installer package. |
-| `src/vocalis/installer/plan.py` | Reads `nvidia-smi` and decides the GPU runtime and whether to fetch Qwen3-TTS (needs `AutoPolicy.qwen3_min_gpu_total_mb`, 4096 MB); command line `python -m vocalis.installer.plan gpu-runtime|fetch-flags` used by `install.sh`. |
+| `src/vocalis/installer/plan.py` | Reads `nvidia-smi` and decides the GPU runtime and whether to fetch Qwen3-TTS (needs more than `AutoPolicy.qwen3_min_gpu_total_mb`, 4096 MB); command line `python -m vocalis.installer.plan gpu-runtime|fetch-flags` used by `install.sh`. |
 | `src/vocalis/installer/progress.py` | `parse_line()` turns `STEP i/n text` and `NOTE text` lines into `ProgressEvent`s. |
 | `src/vocalis/installer/runner.py` | `PhaseRunner`: runs `install.sh --phase <name>` in its own process group, relays output lines, `terminate()` stops the whole group. |
 | `src/vocalis/installer/mic_test.py` | Records about 2 seconds and returns a `MicResult` (`heard`, `quiet`, `no_device`); never raises. |

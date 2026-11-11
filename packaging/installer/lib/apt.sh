@@ -4,7 +4,13 @@
 # enables the ydotoold background service the ydotool package ships.
 set -uo pipefail
 
-export APT_REQUIRED_PACKAGES=(tesseract-ocr xclip ydotool)
+# The xcb/EGL libraries are what Qt 6 (the Vocalis window toolkit) needs to open
+# its windows on an X11 desktop; without libxcb-cursor0 no window can open.
+export APT_REQUIRED_PACKAGES=(
+  tesseract-ocr xclip ydotool
+  libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0
+  libxcb-xinerama0 libxcb-xkb1 libxkbcommon-x11-0 libegl1
+)
 
 # Wrapper around `dpkg -s <package>`, overridable by tests.
 apt_run_dpkg_query() {

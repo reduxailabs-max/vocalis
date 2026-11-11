@@ -55,9 +55,9 @@
 **Interfaces:**
 - Produces: `preflight_run` returns 0 on a Debian-family x86_64 machine even when `preflight_check_gpu` fails, and prints `NOTE No NVIDIA graphics card driver was found. Vocalis will use its lighter voices on your processor.` to stdout in that case. `preflight_check_gpu` itself is unchanged.
 
-- [ ] **Step 1: Tests.** In `test_preflight.bats` replace the "fails when no GPU driver" test with `preflight_run succeeds without an NVIDIA driver and prints the NOTE line` (stub `preflight_run_nvidia_smi` to return 1; assert status 0 and output contains `NOTE No NVIDIA graphics card driver was found`). Keep/adjust: wrong distro → status 1; wrong arch → status 1; GPU present → status 0 and no `NOTE`.
-- [ ] **Step 2: Implement** the change in `preflight_run`; update the file's header comment so it no longer says the GPU is a hard requirement.
-- [ ] **Step 3: Run** `bats tests/installer/test_preflight.bats` → all pass. Commit `feat: let the installer continue without an NVIDIA driver`.
+- [x] **Step 1: Tests.** In `test_preflight.bats` replace the "fails when no GPU driver" test with `preflight_run succeeds without an NVIDIA driver and prints the NOTE line` (stub `preflight_run_nvidia_smi` to return 1; assert status 0 and output contains `NOTE No NVIDIA graphics card driver was found`). Keep/adjust: wrong distro → status 1; wrong arch → status 1; GPU present → status 0 and no `NOTE`.
+- [x] **Step 2: Implement** the change in `preflight_run`; update the file's header comment so it no longer says the GPU is a hard requirement.
+- [x] **Step 3: Run** `bats tests/installer/test_preflight.bats` → all pass. Commit `feat: let the installer continue without an NVIDIA driver`.
 
 ---
 
@@ -70,9 +70,9 @@
 **Interfaces:**
 - Produces: `main(argv: list[str] | None = None) -> int`; `--skip-qwen3` skips `ensure_qwen3_tts` and prints `NOTE Skipping the Qwen3-TTS voice (needs a graphics card with 4 GB or more).` Without the flag behaviour is unchanged. `if __name__ == "__main__": sys.exit(main())` stays (argv from `sys.argv[1:]`).
 
-- [ ] **Step 1: Tests** (patch the four `ensure_*` functions, as the file's existing tests do): `test_main_fetches_all_four_by_default`, `test_main_skip_qwen3_does_not_call_ensure_qwen3_tts_but_fetches_the_rest`, `test_main_skip_qwen3_prints_the_note` (capsys contains `NOTE Skipping the Qwen3-TTS voice`).
-- [ ] **Step 2: Implement** with `argparse`; unknown flags exit non-zero (argparse default).
-- [ ] **Step 3: Run** `pytest tests/test_installer_fetch_models.py` → pass. Commit `feat: let the model downloader skip Qwen3-TTS`.
+- [x] **Step 1: Tests** (patch the four `ensure_*` functions, as the file's existing tests do): `test_main_fetches_all_four_by_default`, `test_main_skip_qwen3_does_not_call_ensure_qwen3_tts_but_fetches_the_rest`, `test_main_skip_qwen3_prints_the_note` (capsys contains `NOTE Skipping the Qwen3-TTS voice`).
+- [x] **Step 2: Implement** with `argparse`; unknown flags exit non-zero (argparse default).
+- [x] **Step 3: Run** `pytest tests/test_installer_fetch_models.py` → pass. Commit `feat: let the model downloader skip Qwen3-TTS`.
 
 ---
 
@@ -92,9 +92,9 @@
   - `make_plan(gpu: InstalledGpu | None, policy: AutoPolicy = AutoPolicy()) -> InstallPlan` — `gpu_runtime = gpu is not None`; `fetch_qwen3 = gpu is not None and gpu.total_mb >= policy.qwen3_min_gpu_total_mb`.
   - `main(argv: list[str] | None = None) -> int` — one positional arg: `gpu-runtime` prints `yes`/`no`; `fetch-flags` prints `--skip-qwen3` or an empty line. Callable as `python -m vocalis.installer.plan <what>` (add `if __name__ == "__main__"`).
 
-- [ ] **Step 1: Tests:** `test_parse_nvidia_smi_reads_name_and_memory` ("NVIDIA GeForce RTX 3060, 12288" → name/12288); `test_parse_nvidia_smi_garbage_is_none` (parametrize "", "oops", "a, b", "x, -5"); `test_read_gpu_missing_binary_is_none`, `test_read_gpu_nonzero_exit_is_none`, `test_read_gpu_timeout_is_none` (inject `run` raising each); `test_plan_4096mb_fetches_qwen3`, `test_plan_4095mb_skips_qwen3`, `test_plan_no_gpu_uses_cpu_runtime_and_skips_qwen3`; `test_summary_mentions_gpu_name_or_processor`; `test_main_gpu_runtime_prints_yes_or_no` and `test_main_fetch_flags_prints_skip_flag_only_when_needed` (monkeypatch `read_gpu`).
-- [ ] **Step 2: Implement.**
-- [ ] **Step 3: Run** `pytest tests/test_installer_plan.py` + `mypy src`. Commit `feat: add the installer hardware plan`.
+- [x] **Step 1: Tests:** `test_parse_nvidia_smi_reads_name_and_memory` ("NVIDIA GeForce RTX 3060, 12288" → name/12288); `test_parse_nvidia_smi_garbage_is_none` (parametrize "", "oops", "a, b", "x, -5"); `test_read_gpu_missing_binary_is_none`, `test_read_gpu_nonzero_exit_is_none`, `test_read_gpu_timeout_is_none` (inject `run` raising each); `test_plan_4096mb_fetches_qwen3`, `test_plan_4095mb_skips_qwen3`, `test_plan_no_gpu_uses_cpu_runtime_and_skips_qwen3`; `test_summary_mentions_gpu_name_or_processor`; `test_main_gpu_runtime_prints_yes_or_no` and `test_main_fetch_flags_prints_skip_flag_only_when_needed` (monkeypatch `read_gpu`).
+- [x] **Step 2: Implement.**
+- [x] **Step 3: Run** `pytest tests/test_installer_plan.py` + `mypy src`. Commit `feat: add the installer hardware plan`.
 
 ---
 
@@ -114,9 +114,9 @@
   - `all`: prepare, models, finish in order (today's behaviour). `--no-wizard` ⇒ `all`.
   - No flags: run `prepare`; then if `DISPLAY` or `WAYLAND_DISPLAY` is non-empty, `exec "${venv_dir}/bin/vocalis-setup" --installer-dir "$script_dir"`; otherwise run `models` then `finish` in the terminal (display-less fallback). If `vocalis-setup` is missing or fails to start, fall back to the terminal path with a one-line `NOTE`.
 
-- [ ] **Step 1: Tests (bats).** Update the existing `setup()` stubs so the new calls are stubbed (`pyenv_use_cpu_onnxruntime`, and make the fake venv python answer `yes`/`no` and flags from a per-test variable); keep every existing assertion that still applies and set `DISPLAY=` and `WAYLAND_DISPLAY=` empty in `setup`. New tests: `phase prepare runs only the prepare steps` (call log has preflight…symlink, no `models_ensure_piper_binary`, no `service_enable_and_start`); `phase models runs only the downloads`; `phase finish runs only service and desktop`; `phase all keeps the old order`; `gpu machine prefers the GPU onnxruntime`; `cpu machine switches to the CPU onnxruntime and not the GPU one`; `models phase passes --skip-qwen3 when the plan says so` (fake python prints `--skip-qwen3`, assert the fetch call received it) and `does not delete or touch an existing Qwen3 folder` (create the folder, run, assert it still exists); `no flags and no display runs prepare, models and finish in the terminal`; `no flags with a display launches vocalis-setup with --installer-dir` (stub the launcher via a function `install_launch_wizard`, assert args); `missing vocalis-setup falls back to the terminal path`; `every phase prints STEP i/n lines` (grep `^STEP [0-9]+/[0-9]+ `). In `test_pyenv.bats`: `pyenv_use_cpu_onnxruntime swaps the GPU build for the CPU build at the same version` and `…does nothing when there is no GPU build`.
-- [ ] **Step 2: Implement** `pyenv_use_cpu_onnxruntime`, restructure `install.sh` (keep `BASH_SOURCE` guard and the overridable `SCRIPT_DIR`/`REPO_ROOT` mechanism; add small function `install_launch_wizard <venv_dir> <script_dir>` that does the `exec`, so tests can stub it).
-- [ ] **Step 3: Run** `bats tests/installer` → all pass (including `test_build_run.bats`; check `build-run.sh` still stages `lib/` and `install.sh`, and fix only if the test shows otherwise). Commit `feat: split the installer into phases and add a CPU-only path`.
+- [x] **Step 1: Tests (bats).** Update the existing `setup()` stubs so the new calls are stubbed (`pyenv_use_cpu_onnxruntime`, and make the fake venv python answer `yes`/`no` and flags from a per-test variable); keep every existing assertion that still applies and set `DISPLAY=` and `WAYLAND_DISPLAY=` empty in `setup`. New tests: `phase prepare runs only the prepare steps` (call log has preflight…symlink, no `models_ensure_piper_binary`, no `service_enable_and_start`); `phase models runs only the downloads`; `phase finish runs only service and desktop`; `phase all keeps the old order`; `gpu machine prefers the GPU onnxruntime`; `cpu machine switches to the CPU onnxruntime and not the GPU one`; `models phase passes --skip-qwen3 when the plan says so` (fake python prints `--skip-qwen3`, assert the fetch call received it) and `does not delete or touch an existing Qwen3 folder` (create the folder, run, assert it still exists); `no flags and no display runs prepare, models and finish in the terminal`; `no flags with a display launches vocalis-setup with --installer-dir` (stub the launcher via a function `install_launch_wizard`, assert args); `missing vocalis-setup falls back to the terminal path`; `every phase prints STEP i/n lines` (grep `^STEP [0-9]+/[0-9]+ `). In `test_pyenv.bats`: `pyenv_use_cpu_onnxruntime swaps the GPU build for the CPU build at the same version` and `…does nothing when there is no GPU build`.
+- [x] **Step 2: Implement** `pyenv_use_cpu_onnxruntime`, restructure `install.sh` (keep `BASH_SOURCE` guard and the overridable `SCRIPT_DIR`/`REPO_ROOT` mechanism; add small function `install_launch_wizard <venv_dir> <script_dir>` that does the `exec`, so tests can stub it).
+- [x] **Step 3: Run** `bats tests/installer` → all pass (including `test_build_run.bats`; check `build-run.sh` still stages `lib/` and `install.sh`, and fix only if the test shows otherwise). Commit `feat: split the installer into phases and add a CPU-only path`.
 
 ---
 
@@ -132,8 +132,8 @@
   - `parse_line(line: str) -> ProgressEvent | None` — `STEP 3/5 Some text` → step(3,5,"Some text"); `NOTE text` → note; anything else, `STEP` with a bad format, `i > n`, `i < 1`, or empty text → `None`.
   - `class PhaseRunner` — `__init__(self, installer_dir: Path, phase: str, on_line: Callable[[str], None], popen: Callable[..., Any] = subprocess.Popen)`; `run(self) -> int` runs `["bash", str(installer_dir / "install.sh"), "--phase", phase]` with `stdout=PIPE, stderr=STDOUT, text=True, errors="replace"`, calls `on_line` for each stripped non-empty line, returns the exit code (non-zero if it could not start: `OSError` → call `on_line` with a plain message and return 127); `terminate(self) -> None` terminates the child if running (safe to call twice or before `run`).
 
-- [ ] **Step 1: Tests:** parse: valid step, valid note, `test_parse_line_ignores_malformed_lines` (parametrize "STEP x/y t", "STEP 0/3 t", "STEP 4/3 t", "STEP 1/3", "hello", ""), `test_parse_line_keeps_text_with_colons`. Runner with a fake `popen` object (stdout iterable, `wait()`, `poll()`, `terminate()`): `test_run_forwards_each_line_and_returns_exit_code`, `test_run_survives_undecodable_bytes` (feed a str containing "�"), `test_run_reports_a_missing_bash_as_127`, `test_terminate_stops_a_running_child_and_is_idempotent`, `test_terminate_before_run_is_harmless`.
-- [ ] **Step 2: Implement.** [ ] **Step 3: Run** both test files + `mypy src`. Commit `feat: read the installer's progress lines`.
+- [x] **Step 1: Tests:** parse: valid step, valid note, `test_parse_line_ignores_malformed_lines` (parametrize "STEP x/y t", "STEP 0/3 t", "STEP 4/3 t", "STEP 1/3", "hello", ""), `test_parse_line_keeps_text_with_colons`. Runner with a fake `popen` object (stdout iterable, `wait()`, `poll()`, `terminate()`): `test_run_forwards_each_line_and_returns_exit_code`, `test_run_survives_undecodable_bytes` (feed a str containing "�"), `test_run_reports_a_missing_bash_as_127`, `test_terminate_stops_a_running_child_and_is_idempotent`, `test_terminate_before_run_is_harmless`.
+- [x] **Step 2: Implement.** [ ] **Step 3: Run** both test files + `mypy src`. Commit `feat: read the installer's progress lines`.
 
 ---
 
@@ -147,8 +147,8 @@
 - Consumes: `vocalis.audio.capture.MicRecorder` and `pick_input_device`; the existing "no sound / muted" wording constant `NO_AUDIO_MESSAGE` (find it with `grep -rn NO_AUDIO_MESSAGE src/vocalis` and import it; do not duplicate the text).
 - Produces: `@dataclass(frozen=True) class MicResult: verdict: Literal["heard", "quiet", "no_device"]; peak: float; message: str` and `run_mic_test(seconds: float = 2.0, recorder_factory: Callable[[int | None], MicRecorder] = ..., device_picker: Callable[[], int | None] = pick_input_device, sleep: Callable[[float], None] = time.sleep) -> MicResult`. Peak = max absolute sample; `heard` when peak ≥ `HEARD_PEAK = 0.02`, else `quiet`. `recorder.start()` raising any exception (incl. `sounddevice.PortAudioError`) → `no_device`. The recorder is always stopped if started. Messages: heard → "Great – Vocalis can hear you."; quiet → `NO_AUDIO_MESSAGE`; no_device → "Vocalis could not find a microphone. You can still finish setup and fix this later in your sound settings."
 
-- [ ] **Step 1: Tests** with a fake recorder: `test_loud_audio_is_heard`, `test_silence_is_quiet_and_uses_the_existing_message`, `test_empty_capture_is_quiet`, `test_start_failure_is_no_device`, `test_recorder_is_stopped_after_a_successful_start`, `test_uses_the_picked_device` (factory receives the picker's value), `test_waits_for_the_requested_seconds` (fake sleep records 2.0).
-- [ ] **Step 2: Implement.** [ ] **Step 3: Run** the test file + `mypy src`. Commit `feat: add the installer microphone test`.
+- [x] **Step 1: Tests** with a fake recorder: `test_loud_audio_is_heard`, `test_silence_is_quiet_and_uses_the_existing_message`, `test_empty_capture_is_quiet`, `test_start_failure_is_no_device`, `test_recorder_is_stopped_after_a_successful_start`, `test_uses_the_picked_device` (factory receives the picker's value), `test_waits_for_the_requested_seconds` (fake sleep records 2.0).
+- [x] **Step 2: Implement.** [ ] **Step 3: Run** the test file + `mypy src`. Commit `feat: add the installer microphone test`.
 
 ---
 
@@ -167,9 +167,9 @@
   - Closing the window (or Cancel) while a phase runs calls `runner.terminate()` and shows a plain message box text "Setup was stopped. Run the installer again to finish." (do not use blocking dialogs in tests: inject through a method `_show_stopped_message()` that tests can patch).
   - `app.main(argv: list[str] | None = None) -> int` — parses required `--installer-dir`, creates `QApplication`, calls `apply_theme`, shows the wizard, returns the exit code of `exec()`.
 
-- [ ] **Step 1: Tests (pytest-qt, all with injected fakes, no real subprocess):** `test_pages_come_in_the_expected_order`; `test_found_page_shows_the_plan_summary`; `test_installing_page_shows_step_text_and_progress` (fake runner emits `STEP 1/2 …` then `STEP 2/2 …`); `test_installing_success_enables_next`; `test_installing_failure_shows_try_again_and_reruns_the_same_phase`; `test_lines_are_appended_to_the_log_file` (use `tmp_path` via monkeypatched log path); `test_closing_mid_install_terminates_the_runner_and_shows_the_stopped_message`; `test_microphone_warning_does_not_block_next_or_finish` (parametrize `quiet`, `no_device`); `test_done_page_runs_the_finish_phase_after_the_microphone_page`; `test_finish_opens_settings_and_retries_until_it_succeeds` (opener returns 1,1,0 → called 3 times; patch the sleep); `test_finish_gives_up_after_ten_tries_without_crashing`; `test_wizard_uses_the_theme_in_app_main` (smoke: `app.main` with `--installer-dir` and a patched `SetupWizard` shown once, returns 0); `test_app_main_requires_installer_dir`.
-- [ ] **Step 2: Implement** (keep each file under ~300 lines; pages may live as small private classes in `wizard.py`; the worker thread class holds only the runner and emits `line = Signal(str)` and `finished_with = Signal(int)`).
-- [ ] **Step 3: Run** `pytest tests/test_installer_wizard.py`, then the full suite once (`pytest`), then `mypy src`; coverage must stay ≥ 85%. Commit `feat: add the installer setup wizard`.
+- [x] **Step 1: Tests (pytest-qt, all with injected fakes, no real subprocess):** `test_pages_come_in_the_expected_order`; `test_found_page_shows_the_plan_summary`; `test_installing_page_shows_step_text_and_progress` (fake runner emits `STEP 1/2 …` then `STEP 2/2 …`); `test_installing_success_enables_next`; `test_installing_failure_shows_try_again_and_reruns_the_same_phase`; `test_lines_are_appended_to_the_log_file` (use `tmp_path` via monkeypatched log path); `test_closing_mid_install_terminates_the_runner_and_shows_the_stopped_message`; `test_microphone_warning_does_not_block_next_or_finish` (parametrize `quiet`, `no_device`); `test_done_page_runs_the_finish_phase_after_the_microphone_page`; `test_finish_opens_settings_and_retries_until_it_succeeds` (opener returns 1,1,0 → called 3 times; patch the sleep); `test_finish_gives_up_after_ten_tries_without_crashing`; `test_wizard_uses_the_theme_in_app_main` (smoke: `app.main` with `--installer-dir` and a patched `SetupWizard` shown once, returns 0); `test_app_main_requires_installer_dir`.
+- [x] **Step 2: Implement** (keep each file under ~300 lines; pages may live as small private classes in `wizard.py`; the worker thread class holds only the runner and emits `line = Signal(str)` and `finished_with = Signal(int)`).
+- [x] **Step 3: Run** `pytest tests/test_installer_wizard.py`, then the full suite once (`pytest`), then `mypy src`; coverage must stay ≥ 85%. Commit `feat: add the installer setup wizard`.
 
 ---
 
@@ -179,6 +179,6 @@
 - Modify: `packaging/installer/README.md`, `docs/user-docs.md` (installing section), `docs/architecture.md` (new "Stage 8: installer wizard" section), `docs/file-purpose.md` (new `vocalis/installer/` rows + changed shell files), `docs/folder-structure.md`, `docs/workflow.md` (install flow, user and installer views)
 - Create: `.claude/<YYYY-MM-DD_HHMM>_CHANGELOG.md`
 
-- [ ] **Step 1:** Update each doc: the three phases and `--phase`/`--no-wizard`; the STEP/NOTE protocol; CPU-only behaviour (no NVIDIA driver → note, CPU onnxruntime, Qwen3 skipped below 4096 MB); the five wizard pages; where the install log is; what to do after a failed or stopped install (run the installer again); `vocalis-setup --installer-dir DIR` is internal. Mention real-PC checks left for the user (fresh account, no-GPU PC, network unplugged, muted mic) — not on the NTFS dev drive.
-- [ ] **Step 2:** Changelog in plain English (what changed, why, how to roll back: `git revert` the Stage 8 commits; old terminal install still available via `--no-wizard`).
-- [ ] **Step 3:** Full `pytest`, `mypy src`, `bats tests/installer`; commit `docs: document Stage 8 installer wizard`.
+- [x] **Step 1:** Update each doc: the three phases and `--phase`/`--no-wizard`; the STEP/NOTE protocol; CPU-only behaviour (no NVIDIA driver → note, CPU onnxruntime, Qwen3 skipped below 4096 MB); the five wizard pages; where the install log is; what to do after a failed or stopped install (run the installer again); `vocalis-setup --installer-dir DIR` is internal. Mention real-PC checks left for the user (fresh account, no-GPU PC, network unplugged, muted mic) — not on the NTFS dev drive.
+- [x] **Step 2:** Changelog in plain English (what changed, why, how to roll back: `git revert` the Stage 8 commits; old terminal install still available via `--no-wizard`).
+- [x] **Step 3:** Full `pytest`, `mypy src`, `bats tests/installer`; commit `docs: document Stage 8 installer wizard`.

@@ -38,6 +38,12 @@ install_venv_dir() {
   echo "${HOME}/.local/share/vocalis/venv"
 }
 
+# Print the first line of a file (the reason a helper command failed),
+# kept on one line so a NOTE stays one line.
+install_first_line() {
+  head -n 1 "${1:-/dev/null}" 2>/dev/null | tr -d '\r' || true
+}
+
 # Ask the hardware plan whether to use the graphics-card build of
 # onnxruntime. ANY failure (the command errors, or prints anything other
 # than exactly "yes" or "no") means "no graphics card": the safe CPU path,
@@ -45,10 +51,14 @@ install_venv_dir() {
 install_plan_wants_gpu() {
   local venv_dir="$1"
   local answer
-  if ! answer="$("${venv_dir}/bin/python" -m vocalis.installer.plan gpu-runtime 2>/dev/null)"; then
-    echo "NOTE The hardware check did not work, so I will use the processor-only speech runtime (the safe choice)."
+  local errors
+  errors="$(mktemp)" || errors=""
+  if ! answer="$("${venv_dir}/bin/python" -m vocalis.installer.plan gpu-runtime 2>"${errors:-/dev/null}")"; then
+    echo "NOTE The hardware check did not work, so I will use the processor-only speech runtime (the safe choice). $(install_first_line "$errors")"
+    [[ -n "$errors" ]] && rm -f "$errors"
     return 1
   fi
+  [[ -n "$errors" ]] && rm -f "$errors"
   if [[ "$answer" == "yes" ]]; then
     return 0
   fi
@@ -67,11 +77,15 @@ install_fetch_flags() {
   local venv_dir="$1"
   local flags
   INSTALL_FETCH_FLAGS=()
-  if ! flags="$("${venv_dir}/bin/python" -m vocalis.installer.plan fetch-flags 2>/dev/null)"; then
-    echo "NOTE The hardware check did not work, so I will skip the large Qwen3 voice (the safe choice)."
+  local errors
+  errors="$(mktemp)" || errors=""
+  if ! flags="$("${venv_dir}/bin/python" -m vocalis.installer.plan fetch-flags 2>"${errors:-/dev/null}")"; then
+    echo "NOTE The hardware check did not work, so I will skip the large Qwen3 voice (the safe choice). $(install_first_line "$errors")"
+    [[ -n "$errors" ]] && rm -f "$errors"
     INSTALL_FETCH_FLAGS=("--skip-qwen3")
     return 0
   fi
+  [[ -n "$errors" ]] && rm -f "$errors"
   if [[ -z "$flags" ]]; then
     return 0
   fi
@@ -279,7 +293,7 @@ install_run_default() {
   venv_dir="$(install_venv_dir)"
   if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     if [[ -x "${venv_dir}/bin/vocalis-setup" ]]; then
-      echo "NOTE If no setup window opens, run: bash install.sh --no-wizard"
+      echo "NOTE If no setup window opens, run the installer again with: bash install.sh --no-wizard (or ./install.run -- --no-wizard)"
       local wizard_status=0
       install_launch_wizard "$venv_dir" "$script_dir" || wizard_status=$?
       if [[ "$wizard_status" -eq 0 ]]; then

@@ -98,7 +98,7 @@ def make_plan(gpu: "InstalledGpu | None", policy: AutoPolicy = AutoPolicy()) -> 
     return InstallPlan(
         gpu=gpu,
         gpu_runtime=gpu is not None,
-        fetch_qwen3=gpu is not None and gpu.total_mb >= policy.qwen3_min_gpu_total_mb,
+        fetch_qwen3=gpu is not None and gpu.total_mb > policy.qwen3_min_gpu_total_mb,
     )
 
 

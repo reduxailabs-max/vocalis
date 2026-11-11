@@ -62,3 +62,9 @@ teardown() {
   run apt_enable_ydotoold
   [ "$status" -eq 0 ]
 }
+
+@test "the required packages include the Qt window libraries" {
+  [[ " ${APT_REQUIRED_PACKAGES[*]} " == *" libxcb-cursor0 "* ]]
+  [[ " ${APT_REQUIRED_PACKAGES[*]} " == *" libxkbcommon-x11-0 "* ]]
+  [[ " ${APT_REQUIRED_PACKAGES[*]} " == *" libegl1 "* ]]
+}
