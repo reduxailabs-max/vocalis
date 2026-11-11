@@ -343,6 +343,18 @@ required to run the regular Python suite.) The one Python helper,
 loads it by file path (via `importlib.util`) since it lives outside the
 `vocalis` package, and `pyproject.toml`'s `[tool.mypy] files` includes it.
 
+`fetch_models.py` only works out *what* to download (names, exact sizes,
+SHA-256 from Hugging Face metadata, Qwen3 pinned to one commit). The
+transfer itself is `src/vocalis/installer/downloader.py` (standard
+library only): 16 MiB chunks via HTTP `Range`, 4 worker threads shared
+across all files, `*.part` + `*.part.json` resume records, exponential
+backoff retries, size/checksum verification, whole-file fallback for
+servers without Range. `download_progress.py` holds the speed meter
+(5 s moving average; resumed bytes excluded from speed), formatting and
+the `PROGRESS done total speed eta` reporter that
+`installer/progress.py` parses for the setup window's bar. Tests use a
+fake in-memory server plus one real loopback HTTP test.
+
 ### The `*_run_*` override-after-source testing idiom
 
 Every `packaging/installer/lib/*.sh` function that would otherwise call a

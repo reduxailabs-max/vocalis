@@ -277,13 +277,13 @@ run_main() {
 @test "models phase passes --skip-qwen3 when the plan says so" {
   FAKE_FETCH_FLAGS=--skip-qwen3 run_main --phase models
   [ "$status" -eq 0 ]
-  grep -q "fetch_models: .*-u .*fetch_models.py --skip-qwen3" "$CALL_LOG"
+  grep -q "fetch_models: .*-u .*fetch_models.py --skip-qwen3 --piper-tarball .*piper_linux_x86_64.tar.gz" "$CALL_LOG"
 }
 
 @test "models phase passes no extra flag when the plan prints nothing" {
   run_main --phase models
   [ "$status" -eq 0 ]
-  grep -q "fetch_models.py$" "$CALL_LOG"
+  grep -q "fetch_models.py --piper-tarball .*piper_linux_x86_64.tar.gz$" "$CALL_LOG"
 }
 
 @test "a failing fetch-flags plan still skips Qwen3" {
@@ -295,7 +295,7 @@ run_main() {
 @test "an odd fetch-flags answer still skips Qwen3" {
   FAKE_FETCH_FLAGS="--something-else" run_main --phase models
   [ "$status" -eq 0 ]
-  grep -q "fetch_models.py --skip-qwen3$" "$CALL_LOG"
+  grep -q "fetch_models.py --skip-qwen3 --piper-tarball " "$CALL_LOG"
 }
 
 @test "models phase does not delete or touch an existing Qwen3 folder" {
@@ -346,8 +346,8 @@ run_main() {
   [[ "$output" == *"STEP 1/5 "* && "$output" == *"STEP 5/5 "* ]]
   run_main --phase models
   [ "$(grep -cE '^STEP [0-9]+/[0-9]+ ' <<<"$output")" -eq 2 ]
-  [[ "$output" == *"STEP 1/2 Downloading voices and the dictation model (a few gigabytes – this can take a while)"* ]]
-  [[ "$output" == *"STEP 2/2 Downloading the Piper speech program"* ]]
+  [[ "$output" == *"STEP 1/2 Downloading voices, the dictation model and the Piper program (a few gigabytes"* ]]
+  [[ "$output" == *"STEP 2/2 Unpacking the Piper speech program"* ]]
   run_main --phase finish
   [ "$(grep -cE '^STEP [0-9]+/[0-9]+ ' <<<"$output")" -eq 2 ]
   [[ "$output" == *"STEP 1/2 Starting Vocalis"* ]]
@@ -360,7 +360,7 @@ run_main() {
   grep -q "^vocalis-setup: --installer-dir $WORKDIR$" "$CALL_LOG"
   ! grep -q "fetch_models" "$CALL_LOG"
   ! grep -q "service_enable_and_start" "$CALL_LOG"
-  [[ "$output" == *"NOTE If no setup window opens, run: bash install.sh --no-wizard"* ]]
+  [[ "$output" == *"NOTE If no setup window opens, run the installer again with: bash install.sh --no-wizard"* ]]
 }
 
 @test "wizard exit 1 is returned without any terminal fallback" {

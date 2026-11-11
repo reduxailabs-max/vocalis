@@ -134,6 +134,22 @@ STUB
   [ -d "$WORKDIR/.local/share" ]
 }
 
+@test "main --purge also removes the resumable download cache" {
+  mkdir -p "$WORKDIR/.cache/vocalis/downloads"
+  touch "$WORKDIR/.cache/vocalis/downloads/piper_linux_x86_64.tar.gz.part"
+  write_purge_python_stub
+  HOME="$WORKDIR" run main --purge
+  [ "$status" -eq 0 ]
+  [ ! -e "$WORKDIR/.cache/vocalis/downloads" ]
+}
+
+@test "main without --purge keeps the download cache" {
+  mkdir -p "$WORKDIR/.cache/vocalis/downloads"
+  write_purge_python_stub
+  HOME="$WORKDIR" run main
+  [ -d "$WORKDIR/.cache/vocalis/downloads" ]
+}
+
 @test "main --purge leaves Piper alone when the venv cannot report its paths" {
   mkdir -p "$WORKDIR/.local/share/vocalis/venv/bin" "$WORKDIR/.local/bin/piper"
   touch "$WORKDIR/.local/bin/piper/piper"

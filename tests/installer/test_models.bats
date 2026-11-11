@@ -67,3 +67,36 @@ teardown() {
   [ ! -e "$binary_path" ]
   [ ! -e "$WORKDIR/bin/piper" ]
 }
+
+make_piper_tarball() {
+  local dest="$1" staging
+  staging="$(mktemp -d)"
+  mkdir -p "$staging/piper"
+  install -m 755 /bin/true "$staging/piper/piper"
+  tar czf "$dest" -C "$staging" piper
+  rm -rf "$staging"
+}
+
+@test "models_ensure_piper_binary unpacks a given tarball without downloading, then removes it" {
+  local binary_path="$WORKDIR/bin/piper/piper"
+  make_piper_tarball "$WORKDIR/given.tar.gz"
+  models_run_download_piper() { echo "CALLED" >> "$CALL_LOG"; }
+  run models_ensure_piper_binary "$binary_path" "$WORKDIR/given.tar.gz"
+  [ "$status" -eq 0 ]
+  [ -x "$binary_path" ]
+  [ ! -s "$CALL_LOG" ]
+  [ ! -e "$WORKDIR/given.tar.gz" ]
+  [[ "$output" == *"Unpacking Piper"* ]]
+}
+
+@test "models_ensure_piper_binary downloads when the given tarball does not exist" {
+  local binary_path="$WORKDIR/bin/piper/piper"
+  models_run_download_piper() { make_piper_tarball "$1"; }
+  models_ensure_piper_binary "$binary_path" "$WORKDIR/missing.tar.gz"
+  [ -x "$binary_path" ]
+}
+
+@test "the curl fallback resumes and retries" {
+  run grep -c -e "-C - --retry 5 --retry-delay 2 --retry-all-errors" "${BATS_TEST_DIRNAME}/../../packaging/installer/lib/models.sh"
+  [ "$output" = "1" ]
+}

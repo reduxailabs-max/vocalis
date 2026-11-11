@@ -15,9 +15,24 @@ that file instead) from inside this folder. It will:
    machine (a few gigabytes — this can take a while). This includes the
    Kokoro voice, two files in `~/.local/share/vocalis/models/kokoro/`
    (`kokoro-v1.0.onnx`, 325,532,387 bytes, and `voices-v1.0.bin`,
-   28,214,398 bytes — about 350 MB together). Each download connection
-   times out after 60 seconds, so a stalled network cannot hang the
-   installer; just run it again.
+   28,214,398 bytes — about 350 MB together).
+
+   Downloads are **resumable and fast**: every file is fetched in 16 MB
+   pieces over four connections at once, into `*.part` files (with a
+   `*.part.json` record of finished pieces). If the network drops, you
+   click Stop, or the PC restarts, run the installer again (or click
+   "Try again") and it continues where it stopped — only the piece being
+   fetched is repeated. Failed pieces are retried automatically (8 tries,
+   waiting 1, 2, 4… up to 30 seconds), and a stalled connection is given
+   up after 30 seconds and retried. Finished files are checked (size, and
+   SHA-256 where Hugging Face provides one) before being moved into
+   place. Before starting, the installer prints the total size, how much
+   is already downloaded, and checks there is enough free disk space.
+   The setup window shows a real progress bar with live speed and time
+   left (the script prints `PROGRESS done total bytes_per_s eta_s`
+   lines); in a terminal you get a single live line. The Piper program's
+   archive is cached in `~/.cache/vocalis/downloads/` while downloading
+   (removed after unpacking; `uninstall.sh --purge` deletes the folder).
 5. Set Vocalis up to start automatically whenever you log in, and start
    it right now.
 6. Add a "Vocalis" entry to your desktop's applications menu (if this one

@@ -506,3 +506,34 @@ def test_a_kill_signal_stops_the_runner_and_exits_one_without_a_dialog(  # type:
     assert messages["stopped"] == 0
     assert "Setup was stopped." in wizard.final_message
     assert not pages_module.running_threads()
+
+
+def test_download_progress_fills_the_bar_and_shows_speed(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
+    lines = ["STEP 1/2 Getting voices", "PROGRESS 1200000000 3400000000 12500000 176", "PROGRESS 1300000000 3400000000 0 -1"]
+    factory = Factory({"models": [(lines, 0, True)]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    page = wizard.installing_page
+    qtbot.waitUntil(lambda: page.bar.value() == 1300000000 * 1000 // 3400000000, timeout=5000)
+    assert page.bar.maximum() == 1000
+    assert page.status.text() == "Getting voices — 1.3 GB of 3.4 GB"
+    factory.built[0][1].gate.set()
+    qtbot.waitUntil(lambda: page.bar.value() == 100, timeout=5000)
+
+
+def test_download_status_has_speed_and_time_left(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
+    wizard = build(qtbot, Factory({"models": [ok()], "finish": [ok()]}))
+    to_installing(wizard)
+    page = wizard.installing_page
+    page._on_line("STEP 1/2 Getting voices")
+    page._on_line("PROGRESS 1200000000 3400000000 12500000 176")
+    assert page.status.text() == "Getting voices — 1.2 GB of 3.4 GB · 12.5 MB/s · about 3 min left"
+
+
+def test_progress_lines_stay_out_of_the_log(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
+    wizard = build(qtbot, Factory({"models": [ok()], "finish": [ok()]}))
+    to_installing(wizard)
+    page = wizard.installing_page
+    page._on_line("PROGRESS 5 10 1 1")
+    assert "PROGRESS" not in page.log_pane.toPlainText()
+    assert not log_path.exists() or "PROGRESS" not in log_path.read_text()

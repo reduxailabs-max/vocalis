@@ -167,18 +167,22 @@ install_phase_models() {
 
   install_fetch_flags "$venv_dir"
 
-  echo "STEP 1/2 Downloading voices and the dictation model (a few gigabytes – this can take a while)"
+  local download_dir="${HOME}/.cache/vocalis/downloads"
+  local piper_tarball="${download_dir}/piper_linux_x86_64.tar.gz"
+
+  echo "STEP 1/2 Downloading voices, the dictation model and the Piper program (a few gigabytes – this can take a while; it continues where it stopped if interrupted)"
   echo "Checking Parakeet model at ${parakeet_dir} ..."
   if [[ ${#INSTALL_FETCH_FLAGS[@]} -eq 0 ]]; then
     echo "Checking Qwen3-TTS model at ${qwen3_tts_dir} ..."
   fi
   echo "Checking Piper voice at ${piper_voice} ..."
   echo "Checking Kokoro voice at ${kokoro_model} ..."
-  "$venv_python" -u "${script_dir}/lib/fetch_models.py" ${INSTALL_FETCH_FLAGS[@]+"${INSTALL_FETCH_FLAGS[@]}"}
+  INSTALL_FETCH_FLAGS+=(--piper-tarball "$piper_tarball")
+  "$venv_python" -u "${script_dir}/lib/fetch_models.py" "${INSTALL_FETCH_FLAGS[@]}"
 
-  echo "STEP 2/2 Downloading the Piper speech program"
+  echo "STEP 2/2 Unpacking the Piper speech program"
   echo "Checking Piper binary at ${piper_binary} ..."
-  models_ensure_piper_binary "$piper_binary"
+  models_ensure_piper_binary "$piper_binary" "$piper_tarball"
 }
 
 # Phase 3: background service, menu entry, final message.

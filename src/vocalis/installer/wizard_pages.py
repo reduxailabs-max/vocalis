@@ -17,9 +17,10 @@ from PySide6.QtWidgets import (
     QWizardPage,
 )
 
+from vocalis.installer.download_progress import format_bytes, format_eta, format_speed
 from vocalis.installer.mic_test import MicResult
 from vocalis.installer.plan import InstallPlan
-from vocalis.installer.progress import parse_line
+from vocalis.installer.progress import ProgressEvent, parse_line
 from vocalis.installer.runner import PhaseRunner
 from vocalis.ui.theme import mark_primary
 
@@ -36,6 +37,9 @@ RunnerFactory = Callable[[Path, str, Callable[[str], None]], PhaseRunner]
 
 
 _THREADS: list[QThread] = []
+
+
+_BAR_STEPS = 1000
 
 
 def track_thread(thread: QThread) -> None:
@@ -148,6 +152,7 @@ class PhasePage(QWizardPage):
         self._installer_dir, self._factory = installer_dir, factory
         self._thread: PhaseThread | None = None
         self._running = self._succeeded = self._cancelled = False
+        self._step_text = ""
         self.status = QLabel("")
         self.status.setObjectName(f"{name}_status")
         self.status.setWordWrap(True)
@@ -201,15 +206,31 @@ class PhasePage(QWizardPage):
         thread.start()
 
     def _on_line(self, line: str) -> None:
-        """Log every line; steps move the bar, other lines go to the log pane."""
-        _append_log(line)
+        """Log every line; steps and downloads move the bar, other lines go to the log pane."""
         event = parse_line(line)
+        if event is not None and event.kind == "progress":
+            self._show_download(event)
+            return
+        _append_log(line)
         if event is not None and event.kind == "step":
+            self._step_text = event.text
             self.status.setText(event.text)
             self.bar.setRange(0, 100)
             self.bar.setValue((event.index - 1) * 100 // event.total)
             return
         self.log_pane.appendPlainText(event.text if event is not None else line)
+
+    def _show_download(self, event: ProgressEvent) -> None:
+        """Smooth bar plus 'x of y · speed · time left'; never added to the log."""
+        self.bar.setRange(0, _BAR_STEPS)
+        self.bar.setValue(event.done * _BAR_STEPS // event.total)
+        parts = [f"{format_bytes(event.done)} of {format_bytes(event.total)}"]
+        if event.speed > 0:
+            parts.append(format_speed(event.speed))
+            eta = format_eta(None if event.eta < 0 else event.eta)
+            if eta:
+                parts.append(eta)
+        self.status.setText(f"{self._step_text} — {' · '.join(parts)}")
 
     def _on_finished(self, code: int) -> None:
         """Show success, or the failure message with Try again."""
