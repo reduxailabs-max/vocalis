@@ -497,7 +497,7 @@ def build_quick_reader(
         model_manager,
         hardware_probe if hardware_probe is not None else probe_hardware,
         settings.max_ram_mb if settings is not None else (lambda: config.max_ram_mb or None),
-        lambda: qwen3_available(config),
+        lambda: qwen3_available(settings.config if settings is not None else config),
     )
     engine_factories: dict[str, Callable[[], ModelEngine]] = {QWEN3_TTS: primary_engine_factory, "kokoro": _make_kokoro_factory(config, settings, selector)}
 

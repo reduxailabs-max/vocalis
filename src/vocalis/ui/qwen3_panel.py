@@ -104,11 +104,15 @@ class PhaseDialog(QDialog):
         """Run the phase on a helper thread."""
         self._display.start()
         thread = PhaseThread(self._factory, self._installer_dir, self._phase)
-        thread.line.connect(self._display.handle)
+        thread.line.connect(self._on_line)
         thread.finished_with.connect(self._on_finished)
         self._thread, self._running = thread, True
         track_thread(thread)
         thread.start()
+
+    def _on_line(self, line: str) -> None:
+        """Show one installer line (a Qt slot, so it runs on the window thread)."""
+        self._display.handle(line)
 
     def _on_button(self) -> None:
         """Stop while running, Close afterwards."""

@@ -94,12 +94,26 @@ def test_normalize_ignores_case_and_separators() -> None:
     assert normalize("zope.interface") == "zope-interface"
 
 
-def test_snapshot_writes_the_package_names_once(tmp_path: Path) -> None:
+def test_snapshot_refreshes_an_older_list_while_qwen3_is_absent(tmp_path: Path) -> None:
     target = tmp_path / "state" / "baseline.txt"
     assert write_snapshot(target, lambda: {"numpy", "pydantic"}, _specs(set())) is True
     assert read_name_list(target) == {"numpy", "pydantic"}
-    assert write_snapshot(target, lambda: {"numpy", "other"}, _specs(set())) is False
-    assert read_name_list(target) == {"numpy", "pydantic"}
+    assert write_snapshot(target, lambda: {"numpy", "other"}, _specs(set())) is True
+    assert read_name_list(target) == {"numpy", "other"}
+
+
+def test_snapshot_keeps_the_old_list_once_qwen3_is_installed(tmp_path: Path) -> None:
+    target = tmp_path / "baseline.txt"
+    target.write_text("numpy\n")
+    assert write_snapshot(target, lambda: {"numpy", "torch"}, _specs({"qwen_tts", "torch"})) is False
+    assert read_name_list(target) == {"numpy"}
+
+
+def test_removable_never_includes_the_speech_runtime(tmp_path: Path) -> None:
+    baseline = tmp_path / "baseline.txt"
+    baseline.write_text("numpy\n")
+    now = {"numpy", "torch", "onnxruntime", "onnxruntime-gpu"}
+    assert removable_packages(baseline, lambda: now) == ["torch"]
 
 
 def test_snapshot_is_skipped_when_qwen3_is_already_installed(tmp_path: Path) -> None:

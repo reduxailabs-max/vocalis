@@ -30,6 +30,7 @@ QWEN3_IMPORT_NAMES = ("qwen_tts", "torch")
 INSTALLER_FOLDER = Path.home() / ".local" / "share" / "vocalis" / "installer"
 BASELINE_FILE = Path.home() / ".local" / "share" / "vocalis" / "qwen3-baseline.txt"
 _KEPT_ALWAYS = frozenset({"vocalis", "pip", "setuptools", "wheel", "uv"})
+_KEPT_PREFIXES = ("onnxruntime",)  # the speech runtime; the installer re-checks which build is needed
 _EXTRA_MARKER = re.compile(r"""extra\s*==\s*['"]([^'"]+)['"]""")
 _NAME_PATTERN = re.compile(r"[-_.]+")
 
@@ -109,11 +110,11 @@ def write_snapshot(
 ) -> bool:
     """Remember which packages exist WITHOUT Qwen3, so removing it later is exact.
 
-    Never overwrites an existing list, and writes nothing when Qwen3's helper
-    programs are already installed (the list would then be wrong). Returns
-    whether a file was written.
+    Refreshes an older list (a Vocalis upgrade may add packages), but writes
+    nothing when Qwen3's helper programs are already installed (the list
+    would then be wrong). Returns whether a file was written.
     """
-    if path.exists() or qwen3_packages_installed(find_spec):
+    if qwen3_packages_installed(find_spec):
         return False
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("\n".join(sorted(installed())) + "\n", encoding="utf-8")
@@ -132,7 +133,8 @@ def removable_packages(
     before = read_name_list(baseline)
     if not before:
         return []
-    return sorted(installed() - before - _KEPT_ALWAYS)
+    added = installed() - before - _KEPT_ALWAYS
+    return sorted(name for name in added if not name.startswith(_KEPT_PREFIXES))
 
 
 def _print_lines(lines: Iterable[str]) -> None:

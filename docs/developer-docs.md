@@ -4,7 +4,7 @@
 
 ```bash
 python3.13 -m venv .venv
-.venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e ".[dev,qwen3]"
 ```
 
 Phase 4 added these dependencies (all declared in `pyproject.toml`):

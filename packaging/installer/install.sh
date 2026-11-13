@@ -110,6 +110,9 @@ install_keep_installer() {
   local target
   target="$(install_runtime_dir)"
   mkdir -p "$target" || return 1
+  if [[ "$(cd "$script_dir" && pwd -P)" == "$(cd "$target" && pwd -P)" ]]; then
+    return 0
+  fi
   rm -rf "${target:?}/lib"
   cp -r "${script_dir}/lib" "${target}/lib" || return 1
   cp "${script_dir}/install.sh" "${target}/install.sh" || return 1
@@ -194,6 +197,8 @@ install_phase_models() {
   local step=1 total=2
   if [[ "$INSTALL_WITH_QWEN3" -eq 1 ]]; then
     total=3
+    pyenv_ensure_uv
+    pyenv_snapshot_baseline "$venv_dir" "$(install_baseline_file)"
     echo "STEP ${step}/${total} Installing the Qwen3-TTS helper programs (several gigabytes – this can take a while)"
     install_qwen3_packages_or_explain "$venv_dir" || return 1
     step=2
@@ -235,6 +240,8 @@ install_phase_qwen3_add() {
   local script_dir="$1"
   local venv_dir
   venv_dir="$(install_venv_dir)"
+  pyenv_ensure_uv
+  pyenv_snapshot_baseline "$venv_dir" "$(install_baseline_file)"
   echo "STEP 1/2 Installing the Qwen3-TTS helper programs (several gigabytes – this can take a while)"
   install_qwen3_packages_or_explain "$venv_dir" || return 1
   echo "STEP 2/2 Downloading the Qwen3-TTS voice (about 2.4 gigabytes; it continues where it stopped if interrupted)"
@@ -247,13 +254,16 @@ install_phase_qwen3_remove() {
   venv_dir="$(install_venv_dir)"
   venv_python="${venv_dir}/bin/python"
   qwen3_tts_dir="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.qwen3_tts_model_dir)')"
+  pyenv_ensure_uv
   echo "STEP 1/3 Removing the Qwen3-TTS helper programs"
   pyenv_remove_qwen3 "$venv_dir" "$(install_baseline_file)"
   echo "STEP 2/3 Deleting the Qwen3-TTS voice files"
-  if [[ "$qwen3_tts_dir" == /?* && "$qwen3_tts_dir" != "$HOME" && "$qwen3_tts_dir" != "${HOME}/" ]]; then
-    rm -rf "$qwen3_tts_dir"
-  else
+  if [[ "$qwen3_tts_dir" != /?* || "$qwen3_tts_dir" == "$HOME" || "$qwen3_tts_dir" == "${HOME}/" ]]; then
     echo "NOTE The Qwen3-TTS folder setting looks unsafe to delete (${qwen3_tts_dir:-empty}), so I left it alone."
+  elif [[ -d "$qwen3_tts_dir" && ! -f "${qwen3_tts_dir}/config.json" && ! -f "${qwen3_tts_dir}/model.safetensors" ]]; then
+    echo "NOTE The folder ${qwen3_tts_dir} does not look like a Qwen3-TTS voice folder, so I left it alone."
+  else
+    rm -rf "$qwen3_tts_dir"
   fi
   echo "STEP 3/3 Checking the speech runtime"
   install_fix_onnxruntime "$venv_dir"

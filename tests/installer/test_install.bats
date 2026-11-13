@@ -358,6 +358,41 @@ FAKE_EOF
   [[ "$output" == *"looks unsafe to delete (/)"* ]]
 }
 
+@test "phase qwen3-add makes sure uv exists and refreshes the package list first" {
+  run_main --phase qwen3-add
+  [ "$status" -eq 0 ]
+  local uv snap inst
+  uv="$(grep -n "pyenv_ensure_uv" "$CALL_LOG" | head -1 | cut -d: -f1)"
+  snap="$(grep -n "pyenv_snapshot_baseline" "$CALL_LOG" | head -1 | cut -d: -f1)"
+  inst="$(grep -n "pyenv_install_qwen3" "$CALL_LOG" | head -1 | cut -d: -f1)"
+  [ "$uv" -lt "$snap" ]
+  [ "$snap" -lt "$inst" ]
+}
+
+@test "phase qwen3-remove makes sure uv exists before removing" {
+  mkdir -p "$WORKDIR/qwen3"
+  echo model > "$WORKDIR/qwen3/model.safetensors"
+  run_main --phase qwen3-remove
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_ensure_uv" "$CALL_LOG"
+}
+
+@test "phase qwen3-remove leaves a folder alone when it does not look like a Qwen3 voice" {
+  mkdir -p "$WORKDIR/qwen3"
+  echo precious > "$WORKDIR/qwen3/my-notes.txt"
+  run_main --phase qwen3-remove
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"does not look like a Qwen3-TTS voice folder"* ]]
+  [ -f "$WORKDIR/qwen3/my-notes.txt" ]
+}
+
+@test "models phase with --with-qwen3 makes sure uv exists and saves the list first" {
+  run_main --phase models --with-qwen3
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_ensure_uv" "$CALL_LOG"
+  grep -q "pyenv_snapshot_baseline" "$CALL_LOG"
+}
+
 @test "phase prepare saves the package list after the speech runtime is settled" {
   run_main --phase prepare
   [ "$status" -eq 0 ]
@@ -395,6 +430,18 @@ FAKE_EOF
   [ "$status" -eq 0 ]
   [ -f "$WORKDIR/.local/share/vocalis/installer/install.sh" ]
   [ -f "$WORKDIR/.local/share/vocalis/installer/lib/models.sh" ]
+}
+
+@test "phase finish never deletes the installer when it already runs from the kept folder" {
+  local kept="$WORKDIR/.local/share/vocalis/installer"
+  mkdir -p "$kept/lib"
+  echo "# installer" > "$kept/install.sh"
+  echo "# lib" > "$kept/lib/models.sh"
+  make_fake_venv "$WORKDIR/.local/share/vocalis/venv"
+  SCRIPT_DIR="$kept" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main --phase finish
+  [ "$status" -eq 0 ]
+  [ -f "$kept/install.sh" ]
+  [ -f "$kept/lib/models.sh" ]
 }
 
 @test "a missing installer copy is only a NOTE, never a failed install" {
