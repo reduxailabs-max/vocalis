@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import datetime
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from PySide6.QtCore import QThread, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QLabel,
     QPlainTextEdit,
     QProgressBar,
@@ -17,10 +18,9 @@ from PySide6.QtWidgets import (
     QWizardPage,
 )
 
-from vocalis.installer.download_progress import format_bytes, format_eta, format_speed
 from vocalis.installer.mic_test import MicResult
 from vocalis.installer.plan import InstallPlan
-from vocalis.installer.progress import ProgressEvent, parse_line
+from vocalis.installer.progress_display import ProgressDisplay
 from vocalis.installer.runner import PhaseRunner
 from vocalis.ui.theme import mark_primary
 
@@ -33,13 +33,11 @@ DID_NOT_FINISH_MESSAGE = "Setup did not finish. Run the installer again to finis
 _THREAD_WAIT_MS = 5000
 _ERROR_STYLE = "color: #ff6b6b;"
 
-RunnerFactory = Callable[[Path, str, Callable[[str], None]], PhaseRunner]
+RunnerFactory = Callable[[Path, str, Callable[[str], None], Sequence[str]], PhaseRunner]
 
 
 _THREADS: list[QThread] = []
 
-
-_BAR_STEPS = 1000
 
 
 def track_thread(thread: QThread) -> None:
@@ -78,9 +76,10 @@ class PhaseThread(QThread):
     line = Signal(str)
     finished_with = Signal(int)
 
-    def __init__(self, factory: RunnerFactory, installer_dir: Path, phase: str) -> None:
+    def __init__(self, factory: RunnerFactory, installer_dir: Path, phase: str,
+                 extra_args: Sequence[str] = ()) -> None:
         super().__init__()
-        self.runner = factory(installer_dir, phase, self.line.emit)
+        self.runner = factory(installer_dir, phase, self.line.emit, extra_args)
 
     def run(self) -> None:
         """Run the phase and report its exit code."""
@@ -125,34 +124,67 @@ class TextPage(QWizardPage):
         layout.addWidget(self.label)
 
 
+QWEN3_CHECKBOX_TEXT = "Also install Qwen3-TTS (optional extra voice, about 8 GB more)"
+QWEN3_HINT_SUITABLE = (
+    "Your graphics card can run it, but Kokoro already sounds great and needs far less. "
+    "You can also add it later in Settings."
+)
+QWEN3_HINT_UNSUITABLE = (
+    "Not recommended: your graphics card is too small or missing, so it would be slow. "
+    "You can add it later in Settings."
+)
+QWEN3_FLAG = "--with-qwen3"
+
+
 class FoundPage(TextPage):
-    """Shows what was found in this PC and what will be installed."""
+    """Shows what was found in this PC, and lets the person opt in to Qwen3-TTS."""
 
     def __init__(self, plan_reader: Callable[[], InstallPlan]) -> None:
         super().__init__("found", "What we found", "Looking at your PC…")
         self._plan_reader = plan_reader
+        self.qwen3_checkbox = QCheckBox(QWEN3_CHECKBOX_TEXT)
+        self.qwen3_checkbox.setObjectName("found_qwen3")
+        self.qwen3_hint = QLabel(QWEN3_HINT_UNSUITABLE)
+        self.qwen3_hint.setObjectName("found_qwen3_hint")
+        self.qwen3_hint.setWordWrap(True)
+        layout = self.layout()
+        if layout is not None:
+            layout.addWidget(self.qwen3_checkbox)
+            layout.addWidget(self.qwen3_hint)
+
+    def wants_qwen3(self) -> bool:
+        """Whether the person ticked the optional Qwen3-TTS box."""
+        return self.qwen3_checkbox.isChecked()
+
+    def extra_args(self) -> list[str]:
+        """The installer flags that follow from the person's choice."""
+        return [QWEN3_FLAG] if self.wants_qwen3() else []
 
     def initializePage(self) -> None:  # noqa: N802 - Qt name
         """Read the plan and list it in plain English."""
         try:
-            self.label.setText("\n".join(self._plan_reader().summary_lines()))
+            plan = self._plan_reader()
         except Exception:  # noqa: BLE001
             self.label.setText("Could not look at your PC, but setup can still continue.")
+            return
+        self.label.setText("\n".join(plan.summary_lines()))
+        self.qwen3_hint.setText(QWEN3_HINT_SUITABLE if plan.qwen3_suitable else QWEN3_HINT_UNSUITABLE)
 
 
 class PhasePage(QWizardPage):
     """Runs one installer phase, shows progress, and offers Try again on failure."""
 
     def __init__(self, name: str, title: str, phase: str, success_text: str,
-                 installer_dir: Path, factory: RunnerFactory) -> None:
+                 installer_dir: Path, factory: RunnerFactory,
+                 extra_args: Callable[[], Sequence[str]] = lambda: ()) -> None:
         super().__init__()
         self.setObjectName(name)
         self.setTitle(title)
+        self._extra_args = extra_args
         self._phase, self._success_text = phase, success_text
         self._installer_dir, self._factory = installer_dir, factory
         self._thread: PhaseThread | None = None
         self._running = self._succeeded = self._cancelled = False
-        self._step_text = ""
         self.status = QLabel("")
         self.status.setObjectName(f"{name}_status")
         self.status.setWordWrap(True)
@@ -160,6 +192,7 @@ class PhasePage(QWizardPage):
         self.bar.setRange(0, 100)
         self.log_pane = QPlainTextEdit()
         self.log_pane.setReadOnly(True)
+        self._display = ProgressDisplay(self.bar, self.status, self.log_pane)
         self.error = QLabel(f"{FAILURE_MESSAGE}\n{log_hint()}")
         self.error.setObjectName(f"{name}_error")
         self.error.setStyleSheet(_ERROR_STYLE)
@@ -192,13 +225,12 @@ class PhasePage(QWizardPage):
         self.error.hide()
         self.retry.hide()
         self.error.setText(f"{FAILURE_MESSAGE}\n{log_hint()}")
-        self.bar.setRange(0, 0)  # busy until the first STEP line
-        self.status.setText("Starting…")
+        self._display.start()
         if self._thread is not None:
             self._thread.wait()
         stamp = datetime.datetime.now().isoformat(timespec="seconds")
         _append_log(f"--- {self._phase} phase {stamp} ---")
-        thread = PhaseThread(self._factory, self._installer_dir, self._phase)
+        thread = PhaseThread(self._factory, self._installer_dir, self._phase, tuple(self._extra_args()))
         thread.line.connect(self._on_line)
         thread.finished_with.connect(self._on_finished)
         self._thread, self._running = thread, True
@@ -206,31 +238,10 @@ class PhasePage(QWizardPage):
         thread.start()
 
     def _on_line(self, line: str) -> None:
-        """Log every line; steps and downloads move the bar, other lines go to the log pane."""
-        event = parse_line(line)
-        if event is not None and event.kind == "progress":
-            self._show_download(event)
-            return
-        _append_log(line)
-        if event is not None and event.kind == "step":
-            self._step_text = event.text
-            self.status.setText(event.text)
-            self.bar.setRange(0, 100)
-            self.bar.setValue((event.index - 1) * 100 // event.total)
-            return
-        self.log_pane.appendPlainText(event.text if event is not None else line)
-
-    def _show_download(self, event: ProgressEvent) -> None:
-        """Smooth bar plus 'x of y · speed · time left'; never added to the log."""
-        self.bar.setRange(0, _BAR_STEPS)
-        self.bar.setValue(event.done * _BAR_STEPS // event.total)
-        parts = [f"{format_bytes(event.done)} of {format_bytes(event.total)}"]
-        if event.speed > 0:
-            parts.append(format_speed(event.speed))
-            eta = format_eta(None if event.eta < 0 else event.eta)
-            if eta:
-                parts.append(eta)
-        self.status.setText(f"{self._step_text} — {' · '.join(parts)}")
+        """Log every line except live download progress, and show it in the window."""
+        event = self._display.handle(line)
+        if event is None or event.kind != "progress":
+            _append_log(line)
 
     def _on_finished(self, code: int) -> None:
         """Show success, or the failure message with Try again."""
@@ -239,13 +250,10 @@ class PhasePage(QWizardPage):
             return
         if code == 0:
             self._succeeded = True
-            self.bar.setRange(0, 100)
-            self.bar.setValue(100)
-            self.status.setText(self._success_text)
+            self._display.finish(True, self._success_text)
             self._owner().phase_succeeded(self._phase)
         else:
-            self.bar.setRange(0, 100)
-            self.bar.setValue(0)
+            self._display.finish(False)
             self.error.show()
             self.retry.show()
             self._owner().phase_failed()

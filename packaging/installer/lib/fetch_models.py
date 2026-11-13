@@ -101,8 +101,21 @@ def _needs(target: Path, size: int | None) -> bool:
     return size is not None and target.stat().st_size != size
 
 
-def plan_items(config: VocalisConfig, skip_qwen3: bool, piper_tarball: Path | None) -> list[DownloadItem]:
-    """Work out the files still to download. Touches the network only if something is missing."""
+def _qwen3_items(config: VocalisConfig, skip_qwen3: bool) -> list[DownloadItem]:
+    """The optional Qwen3-TTS voice files still missing (nothing at all when skipped)."""
+    qwen_dir = Path(config.engines.qwen3_tts_model_dir)
+    if skip_qwen3:
+        print("NOTE Qwen3-TTS (optional extra voice) was not chosen, so it is not downloaded.")
+        return []
+    if any(_needs(qwen_dir / name, None) for name in QWEN3_TTS_MODEL_FILES):
+        revision, names = qwen3_repo_files()
+        return [hf_item(QWEN3_TTS_REPO, name, qwen_dir / name, revision) for name in names]
+    print(f"Qwen3-TTS model already present at {qwen_dir}")
+    return []
+
+
+def _base_items(config: VocalisConfig, piper_tarball: Path | None) -> list[DownloadItem]:
+    """The always-needed files still missing: Parakeet, Piper, Kokoro and the Piper program."""
     engines = config.engines
     items: list[DownloadItem] = []
 
@@ -112,16 +125,6 @@ def plan_items(config: VocalisConfig, skip_qwen3: bool, piper_tarball: Path | No
             items.append(hf_item(PARAKEET_REPO, name, parakeet_dir / name))
     else:
         print(f"Parakeet model already present at {parakeet_dir}")
-
-    qwen_dir = Path(engines.qwen3_tts_model_dir)
-    if skip_qwen3:
-        print("NOTE Skipping the Qwen3-TTS voice (needs a graphics card with 4 GB or more).")
-    elif any(_needs(qwen_dir / name, None) for name in QWEN3_TTS_MODEL_FILES):
-        revision, names = qwen3_repo_files()
-        for name in names:
-            items.append(hf_item(QWEN3_TTS_REPO, name, qwen_dir / name, revision))
-    else:
-        print(f"Qwen3-TTS model already present at {qwen_dir}")
 
     voice = Path(engines.piper_voice_model_path)
     voice_targets = (voice, Path(str(voice) + ".json"))
@@ -143,6 +146,19 @@ def plan_items(config: VocalisConfig, skip_qwen3: bool, piper_tarball: Path | No
     if piper_tarball is not None and not Path(engines.piper_binary_path).exists() and _needs(piper_tarball, None):
         items.append(DownloadItem(PIPER_TARBALL_URL, piper_tarball, head_size(PIPER_TARBALL_URL)))
     return items
+
+
+def plan_items(
+    config: VocalisConfig, skip_qwen3: bool, piper_tarball: Path | None, only_qwen3: bool = False
+) -> list[DownloadItem]:
+    """Work out the files still to download. Touches the network only if something is missing.
+
+    With only_qwen3 just the optional Qwen3-TTS voice is planned (used when it
+    is added later from Settings).
+    """
+    if only_qwen3:
+        return _qwen3_items(config, skip_qwen3=False)
+    return _base_items(config, piper_tarball) + _qwen3_items(config, skip_qwen3)
 
 
 def _free_bytes(path: Path) -> int:
@@ -178,13 +194,15 @@ def run_downloads(items: list[DownloadItem], stop: threading.Event) -> None:
 def main(argv: list[str] | None = None) -> int:
     """Ensure the downloadable assets are present, at vocalis's own default paths.
 
-    Pass --skip-qwen3 to leave out the Qwen3-TTS voice (for PCs without a suitable GPU).
+    Pass --skip-qwen3 to leave out the optional Qwen3-TTS voice.
+    Pass --only-qwen3 to download only that voice (Settings uses this).
     Pass --piper-tarball PATH to also fetch the Piper program's archive to PATH.
     """
     parser = argparse.ArgumentParser(description="Download the Vocalis voice and dictation models.")
     parser.add_argument(
-        "--skip-qwen3", action="store_true", help="do not download the Qwen3-TTS voice (needs a 4 GB+ GPU)"
+        "--skip-qwen3", action="store_true", help="do not download the optional Qwen3-TTS voice"
     )
+    parser.add_argument("--only-qwen3", action="store_true", help="download only the optional Qwen3-TTS voice")
     parser.add_argument("--piper-tarball", type=Path, default=None, help="also download the Piper program archive here")
     args = parser.parse_args(argv)
     stop = threading.Event()
@@ -193,7 +211,7 @@ def main(argv: list[str] | None = None) -> int:
         for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
             signal.signal(sig, lambda *_: stop.set())
     try:
-        run_downloads(plan_items(VocalisConfig(), args.skip_qwen3, args.piper_tarball), stop)
+        run_downloads(plan_items(VocalisConfig(), args.skip_qwen3, args.piper_tarball, args.only_qwen3), stop)
     except DownloadError as error:
         print(str(error), file=sys.stderr)
         return 1

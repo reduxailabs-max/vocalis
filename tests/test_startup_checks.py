@@ -210,9 +210,36 @@ def test_gpu_present_asks_torch_cuda_is_available(monkeypatch: pytest.MonkeyPatc
         assert _real_gpu_present() is answer
 
 
-def test_gpu_present_is_false_when_torch_cannot_be_imported(monkeypatch: pytest.MonkeyPatch) -> None:
-    """A missing or broken torch means no graphics card is reported."""
+def test_gpu_present_is_false_when_torch_is_missing_and_nvidia_smi_finds_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without torch (the Qwen3-TTS add-on is optional) nvidia-smi decides; no card means False."""
     import sys
 
     monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.setattr("vocalis.startup_checks.query_gpu_with_nvidia_smi", lambda: None)
+    assert _real_gpu_present() is False
+
+
+def test_gpu_present_uses_nvidia_smi_when_torch_is_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A PC without the Qwen3-TTS add-on still reports its graphics card."""
+    import sys
+
+    from vocalis.hardware import GpuInfo
+
+    monkeypatch.setitem(sys.modules, "torch", None)
+    monkeypatch.setattr("vocalis.startup_checks.query_gpu_with_nvidia_smi", lambda: GpuInfo("Card", 8192, 4000))
+    assert _real_gpu_present() is True
+
+
+def test_gpu_present_is_false_when_torch_breaks_while_asked(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A torch that imports but fails when asked means no graphics card is reported."""
+    import sys
+    import types
+
+    def boom() -> bool:
+        raise RuntimeError("driver")
+
+    fake = types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=boom))
+    monkeypatch.setitem(sys.modules, "torch", fake)
     assert _real_gpu_present() is False

@@ -135,3 +135,45 @@ pyenv_use_cpu_onnxruntime() {
     return 1
   fi
 }
+
+# Remember which packages exist BEFORE the optional Qwen3-TTS add-on, so
+# removing it later takes out exactly its helper programs. Never overwrites
+# an older list and writes nothing when Qwen3 is already installed (the
+# Python side decides). A failure is only a NOTE: Vocalis works without it.
+pyenv_snapshot_baseline() {
+  local venv_dir="$1"
+  local baseline_file="$2"
+  "${venv_dir}/bin/python" -m vocalis.qwen3_addon snapshot "$baseline_file" \
+    || echo "NOTE Could not save the package list; removing Qwen3-TTS later will only delete its voice files."
+}
+
+# Install the optional Qwen3-TTS helper programs (PyTorch, transformers ...).
+# The list comes from Vocalis's own package data, so it lives in one place.
+pyenv_install_qwen3() {
+  local venv_dir="$1"
+  local requirements
+  if ! requirements="$("${venv_dir}/bin/python" -m vocalis.qwen3_addon requirements)" || [[ -z "$requirements" ]]; then
+    echo "Could not read the Qwen3-TTS package list."
+    return 1
+  fi
+  local -a packages
+  mapfile -t packages <<<"$requirements"
+  pyenv_run_uv pip install --python "${venv_dir}/bin/python" "${packages[@]}"
+}
+
+# Uninstall the packages added after the baseline list (Qwen3-TTS's helper
+# programs). With no saved list, nothing is removed (guessing could break
+# Vocalis), and a NOTE says so.
+pyenv_remove_qwen3() {
+  local venv_dir="$1"
+  local baseline_file="$2"
+  local names
+  names="$("${venv_dir}/bin/python" -m vocalis.qwen3_addon removable "$baseline_file")" || names=""
+  if [[ -z "$names" ]]; then
+    echo "NOTE No Qwen3-TTS helper programs to remove (or no saved package list), so they were left alone."
+    return 0
+  fi
+  local -a packages
+  mapfile -t packages <<<"$names"
+  pyenv_run_uv pip uninstall --python "${venv_dir}/bin/python" "${packages[@]}"
+}

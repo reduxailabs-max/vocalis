@@ -42,30 +42,33 @@ def test_read_gpu_parses_injected_output() -> None:
 
 def test_plan_4096mb_skips_qwen3_like_the_auto_rule() -> None:
     p = make_plan(InstalledGpu("Card", 4096))
-    assert p.gpu_runtime and not p.fetch_qwen3
+    assert p.gpu_runtime and not p.qwen3_suitable
 
 
 def test_plan_4097mb_fetches_qwen3() -> None:
     p = make_plan(InstalledGpu("Card", 4097))
-    assert p.gpu_runtime and p.fetch_qwen3
+    assert p.gpu_runtime and p.qwen3_suitable
 
 
 def test_plan_4095mb_skips_qwen3() -> None:
     p = make_plan(InstalledGpu("Card", 4095))
-    assert p.gpu_runtime and not p.fetch_qwen3
+    assert p.gpu_runtime and not p.qwen3_suitable
 
 
 def test_plan_no_gpu_uses_cpu_runtime_and_skips_qwen3() -> None:
     p = make_plan(None)
-    assert not p.gpu_runtime and not p.fetch_qwen3
+    assert not p.gpu_runtime and not p.qwen3_suitable
 
 
 def test_summary_mentions_gpu_name_or_processor() -> None:
     with_gpu = make_plan(InstalledGpu("RTX 3060", 12288)).summary_lines()
     without = make_plan(None).summary_lines()
-    assert "RTX 3060" in with_gpu[0] and "Qwen3-TTS (best" in with_gpu[1]
+    assert "RTX 3060" in with_gpu[0]
+    assert with_gpu[1] == "Voices to install: Piper and Kokoro"
     assert "using your processor" in without[0]
-    assert any("skipped" in line for line in without)
+    assert any("can run it" in line for line in with_gpu)
+    assert any("not recommended" in line for line in without)
+    assert all("optional extra" in line for line in (with_gpu[-1], without[-1]))
 
 
 def test_run_nvidia_smi_returns_stdout(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -85,13 +88,9 @@ def test_main_gpu_runtime_prints_yes_or_no(
     assert capsys.readouterr().out.strip() == expected
 
 
-@pytest.mark.parametrize(("mb", "expected"), [(8192, ""), (2048, "--skip-qwen3"), (None, "--skip-qwen3")])
-def test_main_fetch_flags_prints_skip_flag_only_when_needed(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], mb: int | None, expected: str
-) -> None:
-    monkeypatch.setattr(plan, "read_gpu", lambda: None if mb is None else InstalledGpu("C", mb))
-    assert plan.main(["fetch-flags"]) == 0
-    assert capsys.readouterr().out.strip() == expected
+def test_main_no_longer_answers_fetch_flags() -> None:
+    with pytest.raises(SystemExit):
+        plan.main(["fetch-flags"])
 
 
 def test_read_gpu_undecodable_output_is_none() -> None:

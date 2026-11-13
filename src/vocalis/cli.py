@@ -15,7 +15,7 @@ import signal
 import sys
 import threading
 from pathlib import Path
-from typing import Callable, cast
+from typing import TYPE_CHECKING, Callable, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -43,7 +43,6 @@ from vocalis.audio.output_device import AUTO, OutputDeviceChooser
 from vocalis.audio.pace import apply_speed
 from vocalis.audio.playback import AudioPlayer
 from vocalis.engines.piper_tts import PiperTTS
-from vocalis.engines.qwen3_tts import Qwen3TTS
 from vocalis.features.quick_reader import QuickReaderFeature
 from vocalis.hotkeys.ctrl_alt_r import CtrlAltRListener, list_hotkey_capable_devices
 from vocalis.output.clipboard import ClipboardReader
@@ -56,9 +55,13 @@ from vocalis.features.ocr_reader import OcrReaderFeature
 from vocalis.output.clipboard import ClipboardWriter
 from vocalis.output.screen_capture import ScreenRegionCapture
 from vocalis.hotkeys.shortcut_parser import DEFAULT_SHORTCUTS, ShortcutError, ShortcutSet, parse_shortcuts
+from vocalis.qwen3_addon import qwen3_available
 from vocalis.settings import LiveSettings
 from vocalis.ui.floating_widget import FloatingWidget
 from vocalis.ui.settings_window import SettingsWindow
+
+if TYPE_CHECKING:
+    from vocalis.engines.qwen3_tts import Qwen3TTS
 from vocalis.ui.status_hub import ReadingControls, StatusHub
 from vocalis.ui.theme import apply_theme
 from vocalis.ui.tray import TrayIcon
@@ -167,8 +170,8 @@ def _make_notifier(config: VocalisConfig, settings: LiveSettings | None) -> Noti
 
 def _make_qwen_factory(
     config: VocalisConfig, settings: LiveSettings | None
-) -> Callable[[], Qwen3TTS]:
-    """A factory building Qwen3TTS; voice, speed and the resource caps are read live when settings are given."""
+) -> "Callable[[], Qwen3TTS]":
+    """A factory building Qwen3TTS (imported only when first needed, since the add-on is optional); voice, speed and the resource caps are read live when settings are given."""
     qwen_model_dir = Path(config.engines.qwen3_tts_model_dir)
     speaker: "str | Callable[[], str]" = (
         settings.voice if settings is not None else config.engines.qwen3_tts_speaker
@@ -181,8 +184,10 @@ def _make_qwen_factory(
         settings.gpu_vram_ceiling_mb if settings is not None else config.gpu_vram_ceiling_mb
     )
 
-    def primary_engine_factory() -> Qwen3TTS:
+    def primary_engine_factory() -> "Qwen3TTS":
         """Build the primary text-to-speech engine."""
+        from vocalis.engines.qwen3_tts import Qwen3TTS
+
         return Qwen3TTS(
             model_dir=qwen_model_dir,
             speaker=speaker,
@@ -202,6 +207,7 @@ def _make_engine_selector(
     model_manager: ModelManager,
     hardware_probe: Callable[[], HardwareInfo],
     max_own_ram_mb: Callable[[], "int | None"] = lambda: None,
+    qwen3_installed: Callable[[], bool] = lambda: True,
 ) -> EngineSelector:
     """A selector that credits Qwen3-TTS's own graphics memory back while it is loaded."""
 
@@ -210,6 +216,7 @@ def _make_engine_selector(
 
     return EngineSelector(
         preference=preference, hardware_probe=hardware_probe, held_vram_mb=held_vram_mb, max_own_ram_mb=max_own_ram_mb,
+        qwen3_installed=qwen3_installed,
     )
 
 
@@ -490,6 +497,7 @@ def build_quick_reader(
         model_manager,
         hardware_probe if hardware_probe is not None else probe_hardware,
         settings.max_ram_mb if settings is not None else (lambda: config.max_ram_mb or None),
+        lambda: qwen3_available(config),
     )
     engine_factories: dict[str, Callable[[], ModelEngine]] = {QWEN3_TTS: primary_engine_factory, "kokoro": _make_kokoro_factory(config, settings, selector)}
 
@@ -606,6 +614,7 @@ def build_doc_reader(
         model_manager,
         hardware_probe if hardware_probe is not None else probe_hardware,
         settings.max_ram_mb if settings is not None else (lambda: config.max_ram_mb or None),
+        lambda: qwen3_available(config),
     )
     engine_factories: dict[str, Callable[[], ModelEngine]] = {QWEN3_TTS: primary_engine_factory, "kokoro": _make_kokoro_factory(config, settings, selector)}
 

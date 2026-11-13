@@ -263,7 +263,7 @@
 | File | Purpose |
 |---|---|
 | `src/vocalis/installer/__init__.py` | Marks the installer package. |
-| `src/vocalis/installer/plan.py` | Reads `nvidia-smi` and decides the GPU runtime and whether to fetch Qwen3-TTS (needs more than `AutoPolicy.qwen3_min_gpu_total_mb`, 4096 MB); command line `python -m vocalis.installer.plan gpu-runtime|fetch-flags` used by `install.sh`. |
+| `src/vocalis/installer/plan.py` | Reads `nvidia-smi` and decides the GPU runtime and whether Qwen3-TTS suits this PC (needs more than `AutoPolicy.qwen3_min_gpu_total_mb`, 4096 MB); command line `python -m vocalis.installer.plan gpu-runtime|fetch-flags` used by `install.sh`. |
 | `src/vocalis/installer/progress.py` | `parse_line()` turns `STEP i/n text` and `NOTE text` lines into `ProgressEvent`s. |
 | `src/vocalis/installer/runner.py` | `PhaseRunner`: runs `install.sh --phase <name>` in its own process group, relays output lines, `terminate()` stops the whole group. |
 | `src/vocalis/installer/mic_test.py` | Records about 2 seconds and returns a `MicResult` (`heard`, `quiet`, `no_device`); never raises. |
@@ -283,3 +283,14 @@
 | `packaging/installer/README.md` | Documents phases, flags, exit codes and the CPU-only behaviour. |
 | `pyproject.toml` | New `vocalis-setup` script entry. |
 | `tests/installer/test_install.bats`, `test_preflight.bats`, `test_pyenv.bats` | Cover phases, flags, fallback and the CPU path. |
+
+## Stage 10 — optional Qwen3-TTS
+
+| File | Purpose |
+|---|---|
+| `src/vocalis/qwen3_addon.py` | Is Qwen3-TTS installed (packages + model)? Reads the `qwen3` extra, saves/compares the package list used to remove it exactly; runs as a command for the shell installer. |
+| `src/vocalis/installer/progress_display.py` | `ProgressDisplay`: turns installer lines into the progress bar, status text and log pane; shared by the setup window and Settings. |
+| `src/vocalis/ui/qwen3_panel.py` | Settings panel (`Qwen3Panel`) and progress dialog (`PhaseDialog`) to download or remove Qwen3-TTS. |
+| `packaging/installer/install.sh` | New `--with-qwen3` flag and `qwen3-add` / `qwen3-remove` phases; keeps a copy of the installer for Settings. |
+| `packaging/installer/lib/pyenv.sh` | `pyenv_snapshot_baseline`, `pyenv_install_qwen3`, `pyenv_remove_qwen3`. |
+| `packaging/installer/lib/fetch_models.py` | New `--only-qwen3` flag; planning split into base and Qwen3 parts. |

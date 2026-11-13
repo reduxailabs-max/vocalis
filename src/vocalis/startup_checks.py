@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Callable
 
 from vocalis.config import VocalisConfig
+from vocalis.hardware import query_gpu_with_nvidia_smi
 
 logger = logging.getLogger("vocalis")
 
@@ -48,14 +49,25 @@ def check_qwen3_tts_model(model_dir: Path) -> str | None:
 
     Returns:
         None if the expected files exist; otherwise a message naming the
-        folder. Reading aloud still works via the Piper fallback voice.
+        folder. Reading aloud still works via the Kokoro or Piper voice.
     """
     if all((model_dir / name).exists() for name in QWEN3_TTS_MODEL_FILES):
         return None
     return (
-        f"The primary voice model is missing at {model_dir}. "
-        "Vocalis will use the backup voice until it is installed."
+        f"The Qwen3-TTS voice you chose is missing at {model_dir}. "
+        "Vocalis will use the Kokoro voice until it is added in Settings."
     )
+
+
+def _check_chosen_qwen3(config: VocalisConfig) -> str | None:
+    """Warn about a missing Qwen3-TTS model only when the person picked that voice.
+
+    Qwen3-TTS is an optional add-on, so its absence is normal otherwise.
+    """
+    engines = config.engines
+    if "qwen3_tts" not in (engines.quick_reader_engine, engines.document_reader_engine):
+        return None
+    return check_qwen3_tts_model(Path(engines.qwen3_tts_model_dir))
 
 
 def check_kokoro_model(model_path: Path, voices_path: Path) -> str | None:
@@ -106,10 +118,17 @@ def check_capture_tools(which: Callable[[str], str | None] = shutil.which) -> st
 
 
 def _gpu_present() -> bool:
-    """Whether a CUDA graphics card is available (asks PyTorch without creating a CUDA context)."""
+    """Whether a CUDA graphics card is available.
+
+    Asks PyTorch (without creating a CUDA context) when it is installed;
+    PyTorch belongs to the optional Qwen3-TTS add-on, so without it the
+    answer comes from nvidia-smi instead.
+    """
     try:
         import torch
-
+    except ImportError:
+        return query_gpu_with_nvidia_smi() is not None
+    try:
         return bool(torch.cuda.is_available())
     except Exception:
         return False
@@ -174,7 +193,7 @@ def run_startup_checks(config: VocalisConfig) -> list[str]:
     runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/run/user/0"))
     checks: "list[Callable[[], str | None]]" = [
         lambda: check_parakeet_model(Path(config.engines.parakeet_model_dir)),
-        lambda: check_qwen3_tts_model(Path(config.engines.qwen3_tts_model_dir)),
+        lambda: _check_chosen_qwen3(config),
         lambda: check_kokoro_model(Path(config.engines.kokoro_model_path), Path(config.engines.kokoro_voices_path)),
         lambda: check_ydotoold(runtime_dir / ".ydotool_socket"),
         # Pass shutil.which explicitly (looked up fresh here, at call time)

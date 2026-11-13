@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Callable
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QStandardItemModel
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -33,11 +34,14 @@ from vocalis.hotkeys.shortcut_parser import (
     format_ctrl_alt_shortcut,
 )
 from vocalis.settings import KOKORO_VOICES, MODEL_PATH_FIELDS, VOICES, LiveSettings
+from vocalis.ui.qwen3_panel import Qwen3Panel
 from vocalis.ui.theme import mark_primary
 
 _RESTART_NOTE = " Restart Vocalis to use the new shortcuts."
 _AUTOMATIC_LABEL = "Automatic (recommended)"
 _AUTOMATIC_VALUE = "auto"
+_QWEN3_ENGINE = "qwen3_tts"
+_QWEN3_MISSING_LABEL = "Qwen3-TTS (not installed – add it below)"
 _ENGINE_CHOICES: tuple[tuple[str, str], ...] = (
     ("Automatic (recommended)", "auto"),
     ("Qwen3-TTS (best quality, needs a strong PC)", "qwen3_tts"),
@@ -91,6 +95,7 @@ class SettingsWindow(QWidget):
         output_names: Callable[[], list[str]] = lambda: [],
         on_test_sound: Callable[[str], str] = lambda _output: "",
         on_preview_voice: Callable[[], None] = lambda: None,
+        qwen3_panel: Qwen3Panel | None = None,
     ) -> None:
         """Build the window and fill it from the current settings.
 
@@ -104,6 +109,8 @@ class SettingsWindow(QWidget):
                 what happened.
             on_preview_voice: Reads a short sample using the saved voice
                 settings.
+            qwen3_panel: The add/remove panel for the optional Qwen3-TTS
+                voice (a real one is built when none is given).
         """
         super().__init__()
         self._settings = settings
@@ -124,6 +131,8 @@ class SettingsWindow(QWidget):
         for engine_combo in (self._quick_engine_combo, self._doc_engine_combo):
             for label, value in _ENGINE_CHOICES:
                 engine_combo.addItem(label, value)
+        self._qwen3_panel = qwen3_panel or Qwen3Panel(lambda: self._settings.config)
+        self._qwen3_panel.changed.connect(self._refresh_qwen3_state)
         self._kokoro_voice_combo = _combo(tuple(KOKORO_VOICES))
         self._output_combo = QComboBox()
         self._test_sound_button = QPushButton("Test sound")
@@ -201,7 +210,7 @@ class SettingsWindow(QWidget):
     def _voice_page(self) -> QWidget:
         """Voices, engines and speaking speed."""
         form = QFormLayout()
-        form.addRow("Voice", self._voice_combo)
+        form.addRow("Voice (Qwen3-TTS)", self._voice_combo)
         form.addRow("Quick Reader voice engine", self._quick_engine_combo)
         form.addRow("Document Reader voice engine", self._doc_engine_combo)
         form.addRow("Kokoro voice", self._kokoro_voice_combo)
@@ -209,7 +218,7 @@ class SettingsWindow(QWidget):
         speed_row.addWidget(self._speed_slider)
         speed_row.addWidget(self._speed_label)
         form.addRow("Speaking speed", speed_row)
-        return self._page(form, self._preview_button)
+        return self._page(form, self._qwen3_panel, self._preview_button)
 
     def _performance_page(self) -> QWidget:
         """Resource limits and the idle-unload time."""
@@ -286,6 +295,23 @@ class SettingsWindow(QWidget):
         self._idle_timeout_spin.setValue(round(config.model_idle_timeout_seconds))
         for field, edit in self._path_edits.items():
             edit.setText(getattr(config.engines, field))
+        self._qwen3_panel.refresh()
+        self._refresh_qwen3_state()
+
+    def _refresh_qwen3_state(self) -> None:
+        """Grey out the Qwen3-TTS choices while it is not installed."""
+        installed = self._qwen3_panel.is_installed()
+        self._voice_combo.setEnabled(installed)
+        for engine_combo in (self._quick_engine_combo, self._doc_engine_combo):
+            index = engine_combo.findData(_QWEN3_ENGINE)
+            model = engine_combo.model()
+            if index < 0 or not isinstance(model, QStandardItemModel):
+                continue
+            default_label = next(label for label, value in _ENGINE_CHOICES if value == _QWEN3_ENGINE)
+            engine_combo.setItemText(index, default_label if installed else _QWEN3_MISSING_LABEL)
+            item = model.item(index)
+            if item is not None:
+                item.setEnabled(installed)
 
     def present(self) -> None:
         """Bring the window to the front; refresh it from saved settings only if it was hidden."""

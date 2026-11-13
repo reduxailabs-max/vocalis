@@ -181,3 +181,74 @@ teardown() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"Could not finish switching to the processor-only speech runtime. Please check your internet connection and run the installer again."* ]]
 }
+
+# A fake venv python that logs its arguments and answers the qwen3_addon
+# commands from $QWEN3_ANSWER (one item per line).
+make_addon_python() {
+  export CALL_LOG
+  mkdir -p "$WORKDIR/venv/bin"
+  cat > "$WORKDIR/venv/bin/python" <<'PY_EOF'
+#!/bin/sh
+echo "PY: $*" >> "$CALL_LOG"
+[ -z "${QWEN3_FAIL:-}" ] || exit 4
+printf '%s' "${QWEN3_ANSWER:-}"
+PY_EOF
+  chmod +x "$WORKDIR/venv/bin/python"
+}
+
+@test "pyenv_snapshot_baseline asks the add-on to save the package list" {
+  make_addon_python
+  run pyenv_snapshot_baseline "$WORKDIR/venv" "$WORKDIR/base.txt"
+  [ "$status" -eq 0 ]
+  grep -q "PY: -m vocalis.qwen3_addon snapshot $WORKDIR/base.txt" "$CALL_LOG"
+}
+
+@test "pyenv_snapshot_baseline only prints a NOTE when saving fails" {
+  make_addon_python
+  QWEN3_FAIL=1 run pyenv_snapshot_baseline "$WORKDIR/venv" "$WORKDIR/base.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NOTE Could not save the package list"* ]]
+}
+
+@test "pyenv_install_qwen3 installs exactly the packages the add-on lists" {
+  make_addon_python
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  QWEN3_ANSWER=$'qwen-tts==0.1.1\ntorchaudio>=2.0,<3\n' run pyenv_install_qwen3 "$WORKDIR/venv"
+  [ "$status" -eq 0 ]
+  grep -q "CALLED: pip install --python $WORKDIR/venv/bin/python qwen-tts==0.1.1 torchaudio>=2.0,<3" "$CALL_LOG"
+}
+
+@test "pyenv_install_qwen3 fails with a plain message when the list cannot be read" {
+  make_addon_python
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  QWEN3_FAIL=1 run pyenv_install_qwen3 "$WORKDIR/venv"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"Could not read the Qwen3-TTS package list."* ]]
+  ! grep -q "CALLED" "$CALL_LOG"
+}
+
+@test "pyenv_install_qwen3 fails when the list is empty" {
+  make_addon_python
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  run pyenv_install_qwen3 "$WORKDIR/venv"
+  [ "$status" -ne 0 ]
+  ! grep -q "CALLED" "$CALL_LOG"
+}
+
+@test "pyenv_remove_qwen3 uninstalls only the packages added after the baseline" {
+  make_addon_python
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  QWEN3_ANSWER=$'torch\ntransformers\n' run pyenv_remove_qwen3 "$WORKDIR/venv" "$WORKDIR/base.txt"
+  [ "$status" -eq 0 ]
+  grep -q "PY: -m vocalis.qwen3_addon removable $WORKDIR/base.txt" "$CALL_LOG"
+  grep -q "CALLED: pip uninstall --python $WORKDIR/venv/bin/python torch transformers" "$CALL_LOG"
+}
+
+@test "pyenv_remove_qwen3 leaves everything alone when there is nothing to remove" {
+  make_addon_python
+  pyenv_run_uv() { echo "CALLED: $*" >> "$CALL_LOG"; }
+  run pyenv_remove_qwen3 "$WORKDIR/venv" "$WORKDIR/base.txt"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"NOTE No Qwen3-TTS helper programs to remove"* ]]
+  ! grep -q "CALLED" "$CALL_LOG"
+}

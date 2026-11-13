@@ -49,8 +49,11 @@ class Factory:
     def __init__(self, script: dict[str, list[tuple[list[str], int, bool]]]) -> None:
         self.script = script
         self.built: list[tuple[str, FakeRunner]] = []
+        self.args: list[tuple[str, tuple[str, ...]]] = []
 
-    def __call__(self, installer_dir: Path, phase: str, on_line: Callable[[str], None]) -> Any:
+    def __call__(self, installer_dir: Path, phase: str, on_line: Callable[[str], None],
+                 extra_args: Any = ()) -> Any:
+        self.args.append((phase, tuple(extra_args)))
         lines, code, block = self.script[phase].pop(0)
         runner = FakeRunner(on_line, lines, code, block)
         self.built.append((phase, runner))
@@ -123,6 +126,48 @@ def test_found_page_shows_the_plan_summary(qtbot, log_path, messages) -> None:  
     text = wizard.page(1).findChild(QLabel, "found_text").text()  # type: ignore[union-attr]
     assert "RTX 4090" in text
     assert "Qwen3-TTS" in text
+
+
+def test_found_page_offers_qwen3_unticked_and_explains_it(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
+    wizard = build(qtbot, Factory({"models": [ok()], "finish": [ok()]}))
+    wizard.next()
+    box = wizard.found_page.qwen3_checkbox
+    assert not box.isChecked()
+    assert box.isEnabled()
+    assert "optional" in box.text()
+    assert "Kokoro already sounds great" in wizard.found_page.qwen3_hint.text()
+
+
+def test_found_page_warns_when_the_graphics_card_is_too_small(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
+    wizard = SetupWizard(
+        Path("/unused"),
+        plan_reader=lambda: make_plan(InstalledGpu("Tiny", 2048)),
+        runner_factory=Factory({"models": [ok()]}),
+        mic_tester=lambda: MicResult("heard", 0.5, "Great"),
+    )
+    qtbot.addWidget(wizard)
+    wizard.show()
+    wizard.next()
+    assert wizard.found_page.qwen3_checkbox.isEnabled()
+    assert "Not recommended" in wizard.found_page.qwen3_hint.text()
+
+
+def test_models_phase_gets_no_flag_by_default(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
+    factory = Factory({"models": [ok()]})
+    wizard = build(qtbot, factory)
+    to_installing(wizard)
+    qtbot.waitUntil(lambda: bool(factory.args), timeout=5000)
+    assert factory.args == [("models", ())]
+
+
+def test_ticking_qwen3_passes_the_flag_to_the_models_phase(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]
+    factory = Factory({"models": [ok()]})
+    wizard = build(qtbot, factory)
+    wizard.next()
+    wizard.found_page.qwen3_checkbox.setChecked(True)
+    wizard.next()
+    qtbot.waitUntil(lambda: bool(factory.args), timeout=5000)
+    assert factory.args == [("models", ("--with-qwen3",))]
 
 
 def test_installing_page_shows_step_text_and_progress(qtbot, log_path, messages) -> None:  # type: ignore[no-untyped-def]

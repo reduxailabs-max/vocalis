@@ -199,7 +199,7 @@ def test_one_gpu_model_at_a_time_holds_across_features(qapp) -> None:  # type: i
     with (
         patch("vocalis.cli.ParakeetSTT", return_value=parakeet_engine),
         patch("vocalis.cli.MicRecorder", return_value=_FakeRecorder()),
-        patch("vocalis.cli.Qwen3TTS", return_value=qwen_engine),
+        patch("vocalis.engines.qwen3_tts.Qwen3TTS", return_value=qwen_engine),
         patch("vocalis.cli.PiperTTS", _FakePiper),
         patch("vocalis.cli.AudioPlayer") as mock_player_cls,
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
@@ -240,7 +240,7 @@ def test_switching_between_quick_reader_and_document_reader_reuses_the_loaded_en
 
     threads_before = set(threading.enumerate())
     with (
-        patch("vocalis.cli.Qwen3TTS", return_value=qwen_engine),
+        patch("vocalis.engines.qwen3_tts.Qwen3TTS", return_value=qwen_engine),
         patch("vocalis.cli.PiperTTS", _FakePiper),
         patch("vocalis.cli.AudioPlayer") as mock_player_cls,
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
@@ -280,7 +280,7 @@ def test_auto_picks_the_same_engine_for_both_readers_so_nothing_reloads(qapp) ->
 
     threads_before = set(threading.enumerate())
     with (
-        patch("vocalis.cli.Qwen3TTS", return_value=qwen_engine),
+        patch("vocalis.engines.qwen3_tts.Qwen3TTS", return_value=qwen_engine),
         patch("vocalis.cli.PiperTTS", _FakePiper),
         patch("vocalis.cli.AudioPlayer") as mock_player_cls,
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
@@ -320,7 +320,7 @@ def test_hotkeys_never_cross_trigger_another_features_handler(qapp) -> None:  # 
     with (
         patch("vocalis.cli.ParakeetSTT", return_value=_FakeEngine("p")),
         patch("vocalis.cli.MicRecorder", return_value=_FakeRecorder()),
-        patch("vocalis.cli.Qwen3TTS", return_value=_FakeEngine("q")),
+        patch("vocalis.engines.qwen3_tts.Qwen3TTS", return_value=_FakeEngine("q")),
         patch("vocalis.cli.PiperTTS", _FakePiper),
         patch("vocalis.cli.AudioPlayer", return_value=FakeAudioPlayer()),
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
@@ -406,7 +406,7 @@ def test_a_settings_change_is_picked_up_by_an_already_built_readers_next_reading
 
     threads_before = set(threading.enumerate())
     with (
-        patch("vocalis.cli.Qwen3TTS", side_effect=fake_qwen_tts),
+        patch("vocalis.engines.qwen3_tts.Qwen3TTS", side_effect=fake_qwen_tts),
         patch("vocalis.cli.PiperTTS", _FakePiper),
         patch("vocalis.cli.AudioPlayer") as mock_player_cls,
         patch("vocalis.cli.Notifier.notify", _quiet_notify),
@@ -456,7 +456,7 @@ def test_notifications_from_two_different_features_both_reach_the_shared_notifie
     with (
         patch("vocalis.cli.ParakeetSTT", return_value=_FakeEngine("p")),
         patch("vocalis.cli.MicRecorder", return_value=_FakeRecorder()),
-        patch("vocalis.cli.Qwen3TTS", return_value=_FakeEngine("q")),
+        patch("vocalis.engines.qwen3_tts.Qwen3TTS", return_value=_FakeEngine("q")),
         patch("vocalis.cli.PiperTTS", _FakePiper),
         patch("vocalis.cli.AudioPlayer") as mock_player_cls,
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),
@@ -506,7 +506,7 @@ def test_full_lifecycle_two_features_then_clean_shutdown(qapp) -> None:  # type:
     with (
         patch("vocalis.cli.ParakeetSTT", return_value=parakeet_engine),
         patch("vocalis.cli.MicRecorder", return_value=_FakeRecorder()),
-        patch("vocalis.cli.Qwen3TTS", return_value=qwen_engine),
+        patch("vocalis.engines.qwen3_tts.Qwen3TTS", return_value=qwen_engine),
         patch("vocalis.cli.PiperTTS", _FakePiper),
         patch("vocalis.cli.AudioPlayer") as mock_player_cls,
         patch("vocalis.cli.ClipboardReader", return_value=_FakeClipboardReader()),

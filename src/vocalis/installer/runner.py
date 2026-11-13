@@ -7,7 +7,7 @@ import os
 import signal
 import subprocess
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -17,7 +17,7 @@ _KILL_GRACE_SECONDS = 3.0
 
 
 class PhaseRunner:
-    """Runs `install.sh --phase <phase>`; terminate() is safe from another thread.
+    """Runs `install.sh --phase <phase> [extra flags]`; terminate() is safe from another thread.
 
     A runner is single-use: build a new one for each attempt.
     """
@@ -28,8 +28,10 @@ class PhaseRunner:
         phase: str,
         on_line: Callable[[str], None],
         popen: Callable[..., Any] = subprocess.Popen,
+        extra_args: Sequence[str] = (),
     ) -> None:
         self._installer_dir = installer_dir
+        self._extra_args = tuple(extra_args)
         self._phase = phase
         self._on_line = on_line
         self._popen = popen
@@ -39,7 +41,7 @@ class PhaseRunner:
 
     def run(self) -> int:
         """Run the phase to the end and return its exit code (non-zero if stopped)."""
-        command = ["bash", str(self._installer_dir / "install.sh"), "--phase", self._phase]
+        command = ["bash", str(self._installer_dir / "install.sh"), "--phase", self._phase, *self._extra_args]
         with self._lock:
             if self._terminated:
                 return _TERMINATED_STATUS

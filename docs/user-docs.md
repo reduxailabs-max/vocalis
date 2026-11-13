@@ -87,9 +87,14 @@ bash install.sh --no-wizard          # from the source folder
 ./install.run -- --no-wizard        # from the .run file (the extra -- matters)
 ```
 
-Without an NVIDIA graphics card (or with 4 GB of graphics memory
-or less) the installer skips the largest voice, Qwen3-TTS. Piper and Kokoro
-are still installed, so Vocalis can speak.
+The installer always installs Piper and Kokoro, so Vocalis can speak
+right away. **Qwen3-TTS** is an optional extra voice: on the "What we
+found" page you can tick "Also install Qwen3-TTS" (it is unticked by
+default; it needs a strong NVIDIA graphics card and about 8 GB of extra
+space, and Kokoro already sounds very natural). In the terminal, add
+`--with-qwen3` to do the same (for example `./install.run -- --with-qwen3`).
+You can add or remove Qwen3-TTS at any time in **Settings → Voice &
+Engine → Qwen3-TTS (optional extra voice)**.
 
 When it finishes you'll see a plain "Vocalis is installed and running"
 message. It's safe to run `install.sh` again any time — anything already
@@ -342,8 +347,9 @@ Vocalis can read aloud with three different voices, called "engines".
 They sound a little different and need different amounts of computer
 power:
 
-- **Qwen3-TTS** — the best-sounding voice. It needs a strong graphics
-  card and some free memory.
+- **Qwen3-TTS** — an optional extra voice. It needs a strong graphics
+  card and some free memory, and it is only there if you chose to install
+  it (see "Adding or removing Qwen3-TTS" below).
 - **Kokoro** — a lighter voice that still sounds natural. It works well on
   an ordinary PC and on smaller graphics cards.
 - **Piper** — the lightest voice. It runs on almost any PC and is always
@@ -352,9 +358,10 @@ power:
 **Automatic (recommended)** means Vocalis picks for you, each time you
 start a reading, based on how your PC is doing at that moment:
 
-- If you have a graphics card with more than 4 GB of memory, your PC is
-  not busy, and enough of the card's memory is free, Vocalis uses
-  **Qwen3-TTS**.
+- If Qwen3-TTS is installed, you have a graphics card with more than 4 GB
+  of memory, your PC is not busy, and enough of the card's memory is free,
+  Vocalis uses **Qwen3-TTS**. Without Qwen3-TTS installed, this case uses
+  **Kokoro**.
 - If your PC is busy (the processor is working hard, or free memory is
   low), or your graphics card is small or already in use by other
   programs, Vocalis uses **Kokoro**.

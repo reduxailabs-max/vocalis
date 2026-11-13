@@ -444,7 +444,7 @@ pick up the change automatically.
 
 `src/vocalis/installer/` holds the Python side of the installer: `plan.py`
 (reads `nvidia-smi`, decides GPU runtime and Qwen3-TTS; also a small command
-line `python -m vocalis.installer.plan gpu-runtime|fetch-flags`), `progress.py`
+line `python -m vocalis.installer.plan gpu-runtime`), `progress.py`
 (parses `STEP`/`NOTE` lines), `runner.py` (runs one `install.sh --phase X` in
 its own process group), `mic_test.py`, `wizard.py` + `wizard_pages.py` (the Qt
 window) and `app.py` (the `vocalis-setup` program).

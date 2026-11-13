@@ -1,7 +1,9 @@
-"""Decides what the installer should put on this PC, based on the graphics card.
+"""Decides how the installer should set up this PC, based on the graphics card.
 
 Pure apart from reading ``nvidia-smi``: every rule is unit-testable. The
-shell installer calls ``python -m vocalis.installer.plan <what>`` to ask.
+shell installer calls ``python -m vocalis.installer.plan gpu-runtime`` to ask
+which speech runtime to use. Qwen3-TTS is an optional extra the person
+chooses; the plan only says whether this PC is a good fit for it.
 """
 import argparse
 import subprocess
@@ -67,11 +69,11 @@ def read_gpu(run: Callable[[list[str]], str] = _run_nvidia_smi) -> "InstalledGpu
 
 @dataclass(frozen=True)
 class InstallPlan:
-    """What to install: which runtime flavour and whether to fetch Qwen3-TTS."""
+    """How to set up this PC: the runtime flavour and whether Qwen3-TTS suits it."""
 
     gpu: "InstalledGpu | None"
     gpu_runtime: bool
-    fetch_qwen3: bool
+    qwen3_suitable: bool
 
     def summary_lines(self) -> list[str]:
         """Plain-English lines describing this PC and what will be installed."""
@@ -79,17 +81,13 @@ class InstallPlan:
             lines = ["No NVIDIA graphics card found – using your processor"]
         else:
             lines = [f"Graphics card: {self.gpu.name} ({self.gpu.total_mb} MB memory)"]
-        lines.append(
-            "Voices to install: Piper, Kokoro, Qwen3-TTS (best quality)"
-            if self.fetch_qwen3
-            else "Voices to install: Piper and Kokoro"
-        )
+        lines.append("Voices to install: Piper and Kokoro")
         lines.append("Piper: fast, light voice that works on any PC")
         lines.append("Kokoro: natural voice, runs on the graphics card when there is room")
-        if self.fetch_qwen3:
-            lines.append("Qwen3-TTS: the best-sounding voice, needs a strong graphics card")
+        if self.qwen3_suitable:
+            lines.append("Qwen3-TTS (optional extra): your graphics card can run it, but it needs a lot of space")
         else:
-            lines.append("Qwen3-TTS: skipped, your graphics card is too small or missing")
+            lines.append("Qwen3-TTS (optional extra): not recommended, your graphics card is too small or missing")
         return lines
 
 
@@ -98,20 +96,16 @@ def make_plan(gpu: "InstalledGpu | None", policy: AutoPolicy = AutoPolicy()) -> 
     return InstallPlan(
         gpu=gpu,
         gpu_runtime=gpu is not None,
-        fetch_qwen3=gpu is not None and gpu.total_mb > policy.qwen3_min_gpu_total_mb,
+        qwen3_suitable=gpu is not None and gpu.total_mb > policy.qwen3_min_gpu_total_mb,
     )
 
 
 def main(argv: "list[str] | None" = None) -> int:
-    """Command line: print the installer's answer for ``gpu-runtime`` or ``fetch-flags``."""
+    """Command line: print ``yes`` or ``no`` for ``gpu-runtime`` (use the graphics-card runtime)."""
     parser = argparse.ArgumentParser(prog="python -m vocalis.installer.plan")
-    parser.add_argument("what", choices=["gpu-runtime", "fetch-flags"])
-    args = parser.parse_args(argv)
-    plan = make_plan(read_gpu())
-    if args.what == "gpu-runtime":
-        print("yes" if plan.gpu_runtime else "no")
-    else:
-        print("" if plan.fetch_qwen3 else "--skip-qwen3")
+    parser.add_argument("what", choices=["gpu-runtime"])
+    parser.parse_args(argv)
+    print("yes" if make_plan(read_gpu()).gpu_runtime else "no")
     return 0
 
 

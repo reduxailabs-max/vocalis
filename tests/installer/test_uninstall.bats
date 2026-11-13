@@ -143,6 +143,17 @@ STUB
   [ ! -e "$WORKDIR/.cache/vocalis/downloads" ]
 }
 
+@test "main removes the kept installer copy and the Qwen3 package list, with or without --purge" {
+  mkdir -p "$WORKDIR/.local/share/vocalis/installer/lib"
+  touch "$WORKDIR/.local/share/vocalis/installer/install.sh"
+  touch "$WORKDIR/.local/share/vocalis/qwen3-baseline.txt"
+  write_purge_python_stub
+  HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  [ ! -e "$WORKDIR/.local/share/vocalis/installer" ]
+  [ ! -e "$WORKDIR/.local/share/vocalis/qwen3-baseline.txt" ]
+}
+
 @test "main without --purge keeps the download cache" {
   mkdir -p "$WORKDIR/.cache/vocalis/downloads"
   write_purge_python_stub

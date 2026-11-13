@@ -3,6 +3,7 @@ import importlib.util
 import threading
 from pathlib import Path
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -95,7 +96,7 @@ def test_skip_qwen3_never_asks_for_it(fm, tmp_path: Path, capsys) -> None:  # ty
     (tmp_path / "qwen" / "model.safetensors").unlink()
     with patch.object(fm, "qwen3_repo_files", side_effect=AssertionError("no")):
         assert fm.plan_items(_config(tmp_path), True, None) == []
-    assert "NOTE Skipping the Qwen3-TTS voice" in capsys.readouterr().out
+    assert "NOTE Qwen3-TTS (optional extra voice) was not chosen" in capsys.readouterr().out
 
 
 def test_piper_voice_goes_to_flat_names(fm, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
@@ -216,8 +217,38 @@ def test_main_passes_flags_and_returns_zero(fm, tmp_path: Path) -> None:  # type
         fm, "plan_items", return_value=[]
     ) as plan, patch.object(fm, "run_downloads") as run:
         assert fm.main(["--skip-qwen3", "--piper-tarball", str(tmp_path / "p.tgz")]) == 0
-    assert plan.call_args.args[1:] == (True, tmp_path / "p.tgz")
+    assert plan.call_args.args[1:] == (True, tmp_path / "p.tgz", False)
     run.assert_called_once()
+
+
+def test_main_only_qwen3_flag_reaches_the_planner(fm, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    with patch.object(fm, "VocalisConfig", return_value=_config(tmp_path)), patch.object(
+        fm, "plan_items", return_value=[]
+    ) as plan, patch.object(fm, "run_downloads"):
+        assert fm.main(["--only-qwen3"]) == 0
+    assert plan.call_args.args[1:] == (False, None, True)
+
+
+def test_only_qwen3_plans_nothing_but_the_qwen3_files(fm, tmp_path: Path) -> None:  # type: ignore[no-untyped-def]
+    calls: list[tuple[str, str]] = []
+
+    def fake(repo: str, filename: str, target: Path, revision: str | None = None) -> Any:
+        calls.append((repo, filename))
+        return fm.DownloadItem("http://x/" + filename, target, 5)
+
+    with patch.object(fm, "hf_item", fake), patch.object(
+        fm, "qwen3_repo_files", return_value=("abc123", ["config.json", "model.safetensors"])
+    ), patch.object(fm, "head_size", side_effect=AssertionError("no")):
+        items = fm.plan_items(_config(tmp_path), False, tmp_path / "p.tgz", only_qwen3=True)
+    assert {repo for repo, _ in calls} == {fm.QWEN3_TTS_REPO}
+    assert [i.target.name for i in items] == ["config.json", "model.safetensors"]
+
+
+def test_only_qwen3_with_the_voice_already_there_plans_nothing(fm, tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]
+    _present_everything(fm, tmp_path)
+    with patch.object(fm, "qwen3_repo_files", side_effect=AssertionError("no")):
+        assert fm.plan_items(_config(tmp_path), False, None, only_qwen3=True) == []
+    assert "Qwen3-TTS model already present" in capsys.readouterr().out
 
 
 def test_main_reports_a_download_error_and_returns_one(fm, tmp_path: Path, capsys) -> None:  # type: ignore[no-untyped-def]

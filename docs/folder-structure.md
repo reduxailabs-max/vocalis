@@ -189,7 +189,7 @@ Stage 6b (gapless long reading) added `audio/speech_stream.py` and
 Stage 8 (installer wizard) added the `src/vocalis/installer/` package
 (`plan.py`, `progress.py`, `runner.py`, `mic_test.py`, `wizard.py`,
 `wizard_pages.py`, `app.py`) with five `tests/test_installer_*.py` files, the
-`vocalis-setup` script entry in `pyproject.toml`, and `--skip-qwen3` in
+`vocalis-setup` script entry in `pyproject.toml`, and the `--skip-qwen3`/`--only-qwen3` flags in
 `fetch_models.py`. It reshaped `install.sh` into three phases and extended
 `preflight.sh`, `pyenv.sh` and their `bats` tests in place. At run time the
 wizard writes `~/.local/share/vocalis/install.log` (outside the repo).

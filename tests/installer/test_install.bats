@@ -17,7 +17,7 @@ setup() {
   export CALL_LOG WORKDIR
   # No screen by default: main with no flags then runs every phase.
   export DISPLAY= WAYLAND_DISPLAY=
-  unset FAKE_GPU_ANSWER FAKE_GPU_FAIL FAKE_FETCH_FLAGS FAKE_FLAGS_FAIL FAKE_NO_SETUP FAKE_SETUP_EXIT
+  unset FAKE_GPU_ANSWER FAKE_GPU_FAIL FAKE_NO_SETUP FAKE_SETUP_EXIT
   source "${BATS_TEST_DIRNAME}/../../packaging/installer/install.sh"
 
   # Replace every real external effect with a call-logging stub.
@@ -34,6 +34,9 @@ setup() {
   pyenv_install_kokoro() { echo "pyenv_install_kokoro: $*" >> "$CALL_LOG"; }
   pyenv_prefer_gpu_onnxruntime() { echo "pyenv_prefer_gpu_onnxruntime: $*" >> "$CALL_LOG"; }
   pyenv_use_cpu_onnxruntime() { echo "pyenv_use_cpu_onnxruntime: $*" >> "$CALL_LOG"; }
+  pyenv_snapshot_baseline() { echo "pyenv_snapshot_baseline: $*" >> "$CALL_LOG"; }
+  pyenv_install_qwen3() { echo "pyenv_install_qwen3: $*" >> "$CALL_LOG"; }
+  pyenv_remove_qwen3() { echo "pyenv_remove_qwen3: $*" >> "$CALL_LOG"; }
   models_ensure_piper_binary() { echo "models_ensure_piper_binary: $*" >> "$CALL_LOG"; }
   service_substitute_unit() { echo "service_substitute_unit: $*" >> "$CALL_LOG"; }
   service_enable_and_start() { echo "service_enable_and_start" >> "$CALL_LOG"; }
@@ -41,7 +44,6 @@ setup() {
 
   # A fake interpreter that answers by looking at its arguments:
   #   plan gpu-runtime  -> $FAKE_GPU_ANSWER (default "yes"), fails if FAKE_GPU_FAIL is set
-  #   plan fetch-flags  -> $FAKE_FETCH_FLAGS (default empty), fails if FAKE_FLAGS_FAIL is set
   #   fetch_models.py   -> logs its arguments to the call log
   #   anything else     -> a path ($WORKDIR/qwen3 for the Qwen3 folder query)
   cat > "$WORKDIR/fake_python" <<'FAKE_EOF'
@@ -50,9 +52,6 @@ case "$*" in
   *"installer.plan gpu-runtime"*)
     [ -z "${FAKE_GPU_FAIL:-}" ] || exit 3
     echo "${FAKE_GPU_ANSWER:-yes}" ;;
-  *"installer.plan fetch-flags"*)
-    [ -z "${FAKE_FLAGS_FAIL:-}" ] || exit 3
-    echo "${FAKE_FETCH_FLAGS:-}" ;;
   *fetch_models.py*)
     echo "fetch_models: $*" >> "$CALL_LOG" ;;
   *qwen3_tts_model_dir*)
@@ -274,36 +273,143 @@ run_main() {
   ! grep -q "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG"
 }
 
-@test "models phase passes --skip-qwen3 when the plan says so" {
-  FAKE_FETCH_FLAGS=--skip-qwen3 run_main --phase models
-  [ "$status" -eq 0 ]
-  grep -q "fetch_models: .*-u .*fetch_models.py --skip-qwen3 --piper-tarball .*piper_linux_x86_64.tar.gz" "$CALL_LOG"
-}
-
-@test "models phase passes no extra flag when the plan prints nothing" {
+@test "models phase skips Qwen3 by default" {
   run_main --phase models
   [ "$status" -eq 0 ]
+  grep -q "fetch_models: .*-u .*fetch_models.py --skip-qwen3 --piper-tarball .*piper_linux_x86_64.tar.gz" "$CALL_LOG"
+  ! grep -q "pyenv_install_qwen3" "$CALL_LOG"
+}
+
+@test "models phase with --with-qwen3 installs the helper programs and downloads the voice" {
+  run_main --phase models --with-qwen3
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_install_qwen3: $WORKDIR/.local/share/vocalis/venv" "$CALL_LOG"
   grep -q "fetch_models.py --piper-tarball .*piper_linux_x86_64.tar.gz$" "$CALL_LOG"
+  ! grep -q "skip-qwen3" "$CALL_LOG"
+  [[ "$output" == *"STEP 1/3 Installing the Qwen3-TTS helper programs"* ]]
+  [[ "$output" == *"STEP 2/3 Downloading voices"* ]]
+  [[ "$output" == *"STEP 3/3 Unpacking the Piper speech program"* ]]
 }
 
-@test "a failing fetch-flags plan still skips Qwen3" {
-  FAKE_FLAGS_FAIL=1 run_main --phase models
+@test "after the Qwen3 helper programs the matching onnxruntime is put back" {
+  run_main --phase models --with-qwen3
   [ "$status" -eq 0 ]
-  grep -q "fetch_models.py --skip-qwen3" "$CALL_LOG"
+  local qwen gpu
+  qwen="$(grep -n "pyenv_install_qwen3" "$CALL_LOG" | cut -d: -f1)"
+  gpu="$(grep -n "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG" | cut -d: -f1)"
+  [ -n "$gpu" ]
+  [ "$qwen" -lt "$gpu" ]
 }
 
-@test "an odd fetch-flags answer still skips Qwen3" {
-  FAKE_FETCH_FLAGS="--something-else" run_main --phase models
-  [ "$status" -eq 0 ]
-  grep -q "fetch_models.py --skip-qwen3 --piper-tarball " "$CALL_LOG"
+@test "a failing Qwen3 package install stops the models phase before any download" {
+  pyenv_install_qwen3() { echo "pyenv_install_qwen3: $*" >> "$CALL_LOG"; return 1; }
+  run_main --phase models --with-qwen3
+  [ "$status" -ne 0 ]
+  ! grep -q "fetch_models:" "$CALL_LOG"
 }
 
 @test "models phase does not delete or touch an existing Qwen3 folder" {
   mkdir -p "$WORKDIR/qwen3"
   echo keep > "$WORKDIR/qwen3/model.bin"
-  FAKE_FETCH_FLAGS=--skip-qwen3 run_main --phase models
+  run_main --phase models
   [ "$status" -eq 0 ]
   [ "$(cat "$WORKDIR/qwen3/model.bin")" = "keep" ]
+}
+
+@test "phase qwen3-add installs the helper programs, then downloads only the voice" {
+  run_main --phase qwen3-add
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_install_qwen3" "$CALL_LOG"
+  grep -q "fetch_models: .*fetch_models.py --only-qwen3$" "$CALL_LOG"
+  [[ "$output" == *"STEP 1/2 Installing the Qwen3-TTS helper programs"* ]]
+  [[ "$output" == *"STEP 2/2 Downloading the Qwen3-TTS voice"* ]]
+  ! grep -q "models_ensure_piper_binary" "$CALL_LOG"
+}
+
+@test "phase qwen3-remove removes the helper programs and deletes the voice folder" {
+  mkdir -p "$WORKDIR/qwen3"
+  echo model > "$WORKDIR/qwen3/model.safetensors"
+  run_main --phase qwen3-remove
+  [ "$status" -eq 0 ]
+  grep -q "pyenv_remove_qwen3: $WORKDIR/.local/share/vocalis/venv $WORKDIR/.local/share/vocalis/qwen3-baseline.txt" "$CALL_LOG"
+  [ ! -e "$WORKDIR/qwen3" ]
+  grep -q "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG"
+  [ "$(grep -cE '^STEP [0-9]+/3 ' <<<"$output")" -eq 3 ]
+}
+
+@test "phase qwen3-remove never deletes the home folder or an empty path" {
+  mkdir -p "$WORKDIR/keepme"
+  echo keep > "$WORKDIR/keepme/file"
+  cat > "$WORKDIR/fake_python" <<'FAKE_EOF'
+#!/usr/bin/env bash
+case "$*" in
+  *qwen3_tts_model_dir*) echo "$FAKE_QWEN_DIR" ;;
+  *) echo "/fake/path" ;;
+esac
+FAKE_EOF
+  FAKE_QWEN_DIR="$WORKDIR" run_main --phase qwen3-remove
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"looks unsafe to delete"* ]]
+  [ -f "$WORKDIR/keepme/file" ]
+  FAKE_QWEN_DIR="" run_main --phase qwen3-remove
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"looks unsafe to delete (empty)"* ]]
+  FAKE_QWEN_DIR="/" run_main --phase qwen3-remove
+  [[ "$output" == *"looks unsafe to delete (/)"* ]]
+}
+
+@test "phase prepare saves the package list after the speech runtime is settled" {
+  run_main --phase prepare
+  [ "$status" -eq 0 ]
+  local gpu snap
+  gpu="$(grep -n "pyenv_prefer_gpu_onnxruntime" "$CALL_LOG" | cut -d: -f1)"
+  snap="$(grep -n "pyenv_snapshot_baseline" "$CALL_LOG" | cut -d: -f1)"
+  [ -n "$snap" ]
+  [ "$gpu" -lt "$snap" ]
+  grep -q "pyenv_snapshot_baseline: $WORKDIR/.local/share/vocalis/venv $WORKDIR/.local/share/vocalis/qwen3-baseline.txt" "$CALL_LOG"
+}
+
+@test "a brand-new environment forgets an older package list" {
+  mkdir -p "$WORKDIR/.local/share/vocalis"
+  echo stale > "$WORKDIR/.local/share/vocalis/qwen3-baseline.txt"
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main --phase prepare
+  [ "$status" -eq 0 ]
+  [ ! -e "$WORKDIR/.local/share/vocalis/qwen3-baseline.txt" ]
+}
+
+@test "an existing environment keeps its package list" {
+  make_fake_venv "$WORKDIR/.local/share/vocalis/venv"
+  mkdir -p "$WORKDIR/.local/share/vocalis"
+  echo kept > "$WORKDIR/.local/share/vocalis/qwen3-baseline.txt"
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main --phase prepare
+  [ "$status" -eq 0 ]
+  [ "$(cat "$WORKDIR/.local/share/vocalis/qwen3-baseline.txt")" = "kept" ]
+}
+
+@test "phase finish keeps a copy of the installer so Settings can add or remove Qwen3" {
+  mkdir -p "$WORKDIR/src_installer/lib"
+  echo "# installer" > "$WORKDIR/src_installer/install.sh"
+  echo "# lib" > "$WORKDIR/src_installer/lib/models.sh"
+  make_fake_venv "$WORKDIR/.local/share/vocalis/venv"
+  SCRIPT_DIR="$WORKDIR/src_installer" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main --phase finish
+  [ "$status" -eq 0 ]
+  [ -f "$WORKDIR/.local/share/vocalis/installer/install.sh" ]
+  [ -f "$WORKDIR/.local/share/vocalis/installer/lib/models.sh" ]
+}
+
+@test "a missing installer copy is only a NOTE, never a failed install" {
+  run_main --phase finish
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Settings will not be able to add or remove Qwen3-TTS"* ]]
+}
+
+@test "a default run with --with-qwen3 finishes in the terminal even with a display" {
+  install_launch_wizard() { echo "install_launch_wizard: $*" >> "$CALL_LOG"; }
+  DISPLAY=:0 run_main --with-qwen3
+  [ "$status" -eq 0 ]
+  ! grep -q "install_launch_wizard" "$CALL_LOG"
+  grep -q "pyenv_install_qwen3" "$CALL_LOG"
+  [[ "$output" == *"NOTE You chose Qwen3-TTS, so I will finish the installation here in the terminal."* ]]
 }
 
 @test "no flags and no display runs prepare, models and finish in the terminal" {
@@ -391,15 +497,14 @@ run_main() {
 }
 
 @test "a failing hardware plan prints a NOTE about the safe choice" {
-  FAKE_GPU_FAIL=1 FAKE_FLAGS_FAIL=1 run_main
+  FAKE_GPU_FAIL=1 run_main
   [ "$status" -eq 0 ]
   [[ "$output" == *"NOTE The hardware check did not work, so I will use the processor-only speech runtime"* ]]
-  [[ "$output" == *"NOTE The hardware check did not work, so I will skip the large Qwen3 voice"* ]]
 }
 
-@test "the Qwen3 checking line is not printed when Qwen3 is skipped" {
-  FAKE_FETCH_FLAGS=--skip-qwen3 run_main --phase models
-  [[ "$output" != *"Checking Qwen3-TTS"* ]]
+@test "the Qwen3 checking line is only printed when Qwen3 was chosen" {
   run_main --phase models
+  [[ "$output" != *"Checking Qwen3-TTS"* ]]
+  run_main --phase models --with-qwen3
   [[ "$output" == *"Checking Qwen3-TTS"* ]]
 }

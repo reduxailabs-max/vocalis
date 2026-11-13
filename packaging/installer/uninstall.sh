@@ -83,6 +83,11 @@ main() {
     rm -rf "$venv_dir"
   fi
 
+  # The kept copy of the installer and the "packages before Qwen3" list
+  # belong to the environment that was just removed.
+  rm -rf "${HOME}/.local/share/vocalis/installer"
+  rm -f "${HOME}/.local/share/vocalis/qwen3-baseline.txt"
+
   if [[ "$found_anything" -eq 0 ]]; then
     echo "Vocalis does not appear to be installed; nothing to remove."
     return 0

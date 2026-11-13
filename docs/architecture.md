@@ -1166,12 +1166,12 @@ call dies too. A runner is single-use.
 
 **Hardware plan.** `installer/plan.py` reads `nvidia-smi` (10-second
 timeout) and builds an `InstallPlan`: use the GPU `onnxruntime` only if a
-card was found; fetch Qwen3-TTS only if the card has more than
-`AutoPolicy.qwen3_min_gpu_total_mb` (4096 MB) of memory (the same strict rule as
-`auto_select.py`, so a 4 GB card skips it).
-`python -m vocalis.installer.plan gpu-runtime|fetch-flags` lets the shell
-ask; any error or odd answer means the safe choice (CPU runtime,
-`--skip-qwen3`) plus a `NOTE`. With no NVIDIA driver, `preflight_run`
+card was found, and `qwen3_suitable` (more than
+`AutoPolicy.qwen3_min_gpu_total_mb`, 4096 MB, the same strict rule as
+`auto_select.py`) only decides the hint shown next to the optional Qwen3-TTS
+checkbox (since Stage 10 Qwen3-TTS is never installed unless chosen).
+`python -m vocalis.installer.plan gpu-runtime` lets the shell ask; any error
+or odd answer means the safe choice (CPU runtime) plus a `NOTE`. With no NVIDIA driver, `preflight_run`
 prints a `NOTE` and continues, and `pyenv_use_cpu_onnxruntime` swaps in the
 plain CPU build.
 
@@ -1204,3 +1204,52 @@ network unplugged during the download, and a muted microphone.
 
 None at run time: the installer and `vocalis-setup` are not part of the
 daemon. The window adds PySide6 imports only when `vocalis-setup` runs.
+
+
+## Stage 10 addition: Qwen3-TTS is an optional add-on
+
+Qwen3-TTS needs a strong graphics card, about 8 GB of PyTorch/CUDA helper
+programs plus a 2.4 GB model, and Kokoro already sounds natural, so it is now
+something the person chooses.
+
+- **Packages.** `qwen-tts`, `transformers`, `accelerate`, `torchaudio` and
+  `einops` moved from `dependencies` to the optional `qwen3` extra in
+  `pyproject.toml`. `src/vocalis/qwen3_addon.py` answers "is it there?":
+  `qwen3_requirements()` reads the extra from Vocalis's own package data,
+  `qwen3_packages_installed()` looks for `qwen_tts` and `torch`,
+  `qwen3_model_present()` looks for the model files, and `qwen3_available()`
+  needs both. It also runs as a command for the shell
+  (`requirements`, `snapshot FILE`, `removable FILE`).
+- **Exact removal.** The prepare phase saves the names of the installed
+  packages to `~/.local/share/vocalis/qwen3-baseline.txt` (once, and only
+  while Qwen3 is not installed). Removing Qwen3-TTS uninstalls exactly the
+  packages that are in the environment now but not in that list, deletes the
+  model folder, and then re-runs the onnxruntime choice (qwen-tts brings a
+  plain `onnxruntime` that shares a folder with `onnxruntime-gpu`). With no
+  saved list, no packages are removed (guessing could break Vocalis).
+- **Installer.** `install.sh --with-qwen3` (the setup window's checkbox adds
+  it to the `models` phase) installs the helper programs first
+  (`STEP 1/3`), then downloads. Two new phases, `qwen3-add` and
+  `qwen3-remove`, are run later from Settings. The finish phase keeps a copy
+  of `install.sh` and `lib/` in `~/.local/share/vocalis/installer/` for that;
+  `uninstall.sh` removes the copy and the list. `fetch_models.py` gained
+  `--only-qwen3`.
+- **Runtime.** `cli.py` imports `Qwen3TTS` only when its factory first runs,
+  so the app starts without PyTorch. `EngineSelector` and `auto_select.decide`
+  take a live `qwen3_installed` check: Auto never plans Qwen3 without it, and
+  a forced Qwen3 choice falls straight to Kokoro. `hardware.query_gpu` and
+  `startup_checks._gpu_present` use `nvidia-smi` when PyTorch is missing. The
+  startup warning about a missing Qwen3 model only appears when the person
+  picked Qwen3-TTS.
+- **Settings.** `ui/qwen3_panel.py` (`Qwen3Panel`, `PhaseDialog`) shows the
+  status with **Download and install** and **Remove** buttons on the Voice &
+  Engine tab. They run the kept installer's phases through `PhaseRunner` and
+  show the same bar, speed and time left as the setup window, through the
+  shared `installer/progress_display.ProgressDisplay`. The Qwen3 entries of
+  the engine drop-downs and the Qwen3 speaker list are greyed out while it is
+  not installed.
+
+### Performance impact
+
+A smaller default install (no PyTorch/CUDA unless chosen) and a faster app
+start. No change at reading time.

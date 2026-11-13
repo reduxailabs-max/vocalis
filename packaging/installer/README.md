@@ -58,7 +58,27 @@ bash install.sh                       # prepare, then the setup window (or the t
 bash install.sh --no-wizard           # everything in the terminal, no window
 ./install.run -- --no-wizard          # the same, from the .run file (note the extra --)
 bash install.sh --phase prepare       # run one phase: prepare | models | finish | all
+bash install.sh --no-wizard --with-qwen3   # also install the optional Qwen3-TTS voice
 ```
+
+**Qwen3-TTS is optional.** It needs a strong NVIDIA graphics card and about
+8 GB more space (PyTorch/CUDA helper programs plus a 2.4 GB model), so it is
+only installed when you ask for it: tick "Also install Qwen3-TTS" in the
+setup window, or pass `--with-qwen3` (together with `--no-wizard` or
+`--phase models`). The default install has Piper and Kokoro only. Later,
+**Settings → Voice & Engine** can add or remove it; that runs two more
+phases from a copy of the installer kept in
+`~/.local/share/vocalis/installer/`:
+
+```
+bash install.sh --phase qwen3-add       # helper programs + voice model
+bash install.sh --phase qwen3-remove    # removes exactly what qwen3-add installed
+```
+
+To remove exactly the right packages, the `prepare` phase saves the list of
+installed packages to `~/.local/share/vocalis/qwen3-baseline.txt` (while
+Qwen3-TTS is not installed). `uninstall.sh` removes that list and the kept
+copy of the installer.
 
 With no flags, `install.sh` runs `prepare` and then opens the setup
 window when `DISPLAY` or `WAYLAND_DISPLAY` is set; otherwise it does

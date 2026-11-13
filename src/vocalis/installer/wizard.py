@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from PySide6.QtWidgets import QMessageBox, QWidget, QWizard
@@ -40,9 +40,11 @@ def _default_plan() -> InstallPlan:
     return make_plan(read_gpu())
 
 
-def _default_runner(installer_dir: Path, phase: str, on_line: Callable[[str], None]) -> PhaseRunner:
+def _default_runner(
+    installer_dir: Path, phase: str, on_line: Callable[[str], None], extra_args: Sequence[str] = ()
+) -> PhaseRunner:
     """Build the real runner for one installer phase."""
-    return PhaseRunner(installer_dir, phase, on_line)
+    return PhaseRunner(installer_dir, phase, on_line, extra_args=extra_args)
 
 
 def _default_settings_opener() -> int:
@@ -72,8 +74,10 @@ class SetupWizard(QWizard):
         self._closed = False
         self._failure_message = ""
         self._settings_thread: CallThread | None = None
+        self.found_page = FoundPage(plan_reader)
         self.installing_page = PhasePage(
-            "installing", "Installing", "models", "All set.", installer_dir, runner_factory)
+            "installing", "Installing", "models", "All set.", installer_dir, runner_factory,
+            extra_args=self.found_page.extra_args)
         self.microphone_page = MicrophonePage(mic_tester)
         self.done_page = PhasePage(
             "done", "Finishing up", "finish", "Vocalis is running", installer_dir, runner_factory)
@@ -81,7 +85,7 @@ class SetupWizard(QWizard):
             "welcome", "Welcome to Vocalis",
             "Vocalis reads text aloud and types what you say. Press Start and we will set "
             "everything up for you."))
-        self.addPage(FoundPage(plan_reader))
+        self.addPage(self.found_page)
         self.addPage(self.installing_page)
         self.addPage(self.microphone_page)
         self.addPage(self.done_page)

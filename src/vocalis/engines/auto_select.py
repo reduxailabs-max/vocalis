@@ -58,6 +58,7 @@ def decide(
     policy: AutoPolicy = AutoPolicy(),
     held_vram_mb: int = 0,
     max_own_ram_mb: "int | None" = None,
+    qwen3_installed: bool = True,
 ) -> AutoDecision:
     """Pick the engine order for the current hardware snapshot.
 
@@ -68,6 +69,8 @@ def decide(
             back to "free" so its own loaded model never counts as stress.
         max_own_ram_mb: The user's advisory RAM ceiling for Vocalis itself
             (None means no ceiling), checked against hw.own_process_ram_mb.
+        qwen3_installed: False when the optional Qwen3-TTS add-on is not
+            installed; the best voice is then Kokoro.
     """
     if hw.gpu is None:
         return AutoDecision((PIPER, KOKORO), "No graphics card was found, so Vocalis is using the lightest voice.")
@@ -81,6 +84,11 @@ def decide(
         return AutoDecision(
             (KOKORO, PIPER),
             "Other programs are using your graphics card, so Vocalis is using the lighter voice.",
+        )
+    if not qwen3_installed:
+        return AutoDecision(
+            (KOKORO, PIPER),
+            "Qwen3-TTS is not installed, so Vocalis is using the Kokoro voice.",
         )
     return AutoDecision(
         (QWEN3_TTS, KOKORO, PIPER),

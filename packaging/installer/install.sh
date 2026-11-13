@@ -33,6 +33,9 @@ source "${_INSTALL_SCRIPT_DIR}/lib/service.sh"
 # shellcheck disable=SC1091
 source "${_INSTALL_SCRIPT_DIR}/lib/desktop.sh"
 
+# 1 when the person chose the optional Qwen3-TTS voice (--with-qwen3).
+INSTALL_WITH_QWEN3=0
+
 # Where the private Python environment lives.
 install_venv_dir() {
   echo "${HOME}/.local/share/vocalis/venv"
@@ -69,30 +72,47 @@ install_plan_wants_gpu() {
 }
 
 # Fill the global array INSTALL_FETCH_FLAGS with the extra flags for
-# fetch_models.py. Only empty output or exactly "--skip-qwen3" is trusted;
-# a failing or odd answer means "--skip-qwen3" (plus a NOTE), so a failure
-# never causes the huge Qwen3-TTS download. Runs in the caller's shell (not
-# a subshell) so the array survives.
+# fetch_models.py. Qwen3-TTS is an optional extra voice: unless the person
+# chose it (--with-qwen3), it is skipped. Runs in the caller's shell (not a
+# subshell) so the array survives.
 install_fetch_flags() {
-  local venv_dir="$1"
-  local flags
   INSTALL_FETCH_FLAGS=()
-  local errors
-  errors="$(mktemp)" || errors=""
-  if ! flags="$("${venv_dir}/bin/python" -m vocalis.installer.plan fetch-flags 2>"${errors:-/dev/null}")"; then
-    echo "NOTE The hardware check did not work, so I will skip the large Qwen3 voice (the safe choice). $(install_first_line "$errors")"
-    [[ -n "$errors" ]] && rm -f "$errors"
+  if [[ "$INSTALL_WITH_QWEN3" -ne 1 ]]; then
     INSTALL_FETCH_FLAGS=("--skip-qwen3")
-    return 0
   fi
-  [[ -n "$errors" ]] && rm -f "$errors"
-  if [[ -z "$flags" ]]; then
-    return 0
+}
+
+# Pick the onnxruntime build that matches this PC (graphics card or
+# processor). Needed after anything that installs plain onnxruntime on top.
+install_fix_onnxruntime() {
+  local venv_dir="$1"
+  if install_plan_wants_gpu "$venv_dir"; then
+    pyenv_prefer_gpu_onnxruntime "$venv_dir"
+  else
+    pyenv_use_cpu_onnxruntime "$venv_dir"
   fi
-  if [[ "$flags" != "--skip-qwen3" ]]; then
-    echo "NOTE The hardware check gave an unexpected answer, so I will skip the large Qwen3 voice (the safe choice)."
-  fi
-  INSTALL_FETCH_FLAGS=("--skip-qwen3")
+}
+
+# Where the "packages before Qwen3" list is kept (see qwen3_addon.py).
+install_baseline_file() {
+  echo "${HOME}/.local/share/vocalis/qwen3-baseline.txt"
+}
+
+# Where a copy of this installer is kept so Settings can add or remove
+# Qwen3-TTS later.
+install_runtime_dir() {
+  echo "${HOME}/.local/share/vocalis/installer"
+}
+
+# Copy install.sh and lib/ to the runtime folder. Never stops the install.
+install_keep_installer() {
+  local script_dir="$1"
+  local target
+  target="$(install_runtime_dir)"
+  mkdir -p "$target" || return 1
+  rm -rf "${target:?}/lib"
+  cp -r "${script_dir}/lib" "${target}/lib" || return 1
+  cp "${script_dir}/install.sh" "${target}/install.sh" || return 1
 }
 
 # Run the setup wizard as a CHILD process (not exec) so the installer
@@ -136,14 +156,15 @@ install_phase_prepare() {
   wheel_path="$(pyenv_find_or_build_wheel "$script_dir" "$repo_root")"
 
   echo "STEP 4/5 Installing Vocalis"
+  if ! "${venv_dir}/bin/python" --version >/dev/null 2>&1; then
+    # A brand-new environment: any older "packages before Qwen3" list is stale.
+    rm -f "$(install_baseline_file)"
+  fi
   pyenv_create_venv "$venv_dir"
   pyenv_install_vocalis "$venv_dir" "$wheel_path"
   pyenv_install_kokoro "$venv_dir"
-  if install_plan_wants_gpu "$venv_dir"; then
-    pyenv_prefer_gpu_onnxruntime "$venv_dir"
-  else
-    pyenv_use_cpu_onnxruntime "$venv_dir"
-  fi
+  install_fix_onnxruntime "$venv_dir"
+  pyenv_snapshot_baseline "$venv_dir" "$(install_baseline_file)"
 
   echo "STEP 5/5 Adding the vocalis command"
   mkdir -p "${HOME}/.local/bin"
@@ -165,12 +186,20 @@ install_phase_models() {
   piper_voice="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.piper_voice_model_path)')"
   kokoro_model="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.kokoro_model_path)')"
 
-  install_fetch_flags "$venv_dir"
+  install_fetch_flags
 
   local download_dir="${HOME}/.cache/vocalis/downloads"
   local piper_tarball="${download_dir}/piper_linux_x86_64.tar.gz"
 
-  echo "STEP 1/2 Downloading voices, the dictation model and the Piper program (a few gigabytes – this can take a while; it continues where it stopped if interrupted)"
+  local step=1 total=2
+  if [[ "$INSTALL_WITH_QWEN3" -eq 1 ]]; then
+    total=3
+    echo "STEP ${step}/${total} Installing the Qwen3-TTS helper programs (several gigabytes – this can take a while)"
+    install_qwen3_packages_or_explain "$venv_dir" || return 1
+    step=2
+  fi
+
+  echo "STEP ${step}/${total} Downloading voices, the dictation model and the Piper program (a few gigabytes – this can take a while; it continues where it stopped if interrupted)"
   echo "Checking Parakeet model at ${parakeet_dir} ..."
   if [[ ${#INSTALL_FETCH_FLAGS[@]} -eq 0 ]]; then
     echo "Checking Qwen3-TTS model at ${qwen3_tts_dir} ..."
@@ -180,9 +209,54 @@ install_phase_models() {
   INSTALL_FETCH_FLAGS+=(--piper-tarball "$piper_tarball")
   "$venv_python" -u "${script_dir}/lib/fetch_models.py" "${INSTALL_FETCH_FLAGS[@]}"
 
-  echo "STEP 2/2 Unpacking the Piper speech program"
+  echo "STEP ${total}/${total} Unpacking the Piper speech program"
   echo "Checking Piper binary at ${piper_binary} ..."
   models_ensure_piper_binary "$piper_binary" "$piper_tarball"
+}
+
+# Install the Qwen3-TTS helper programs, then make sure the speech runtime
+# still matches this PC (they bring a plain onnxruntime along).
+install_qwen3_packages() {
+  local venv_dir="$1"
+  pyenv_install_qwen3 "$venv_dir" || return 1
+  install_fix_onnxruntime "$venv_dir"
+}
+
+# install_qwen3_packages, with a plain-English message on failure.
+install_qwen3_packages_or_explain() {
+  if ! install_qwen3_packages "$1"; then
+    echo "Could not install the Qwen3-TTS helper programs. Please check your internet connection and try again." >&2
+    return 1
+  fi
+}
+
+# Settings: add the optional Qwen3-TTS voice (helper programs + voice model).
+install_phase_qwen3_add() {
+  local script_dir="$1"
+  local venv_dir
+  venv_dir="$(install_venv_dir)"
+  echo "STEP 1/2 Installing the Qwen3-TTS helper programs (several gigabytes – this can take a while)"
+  install_qwen3_packages_or_explain "$venv_dir" || return 1
+  echo "STEP 2/2 Downloading the Qwen3-TTS voice (about 2.4 gigabytes; it continues where it stopped if interrupted)"
+  "${venv_dir}/bin/python" -u "${script_dir}/lib/fetch_models.py" --only-qwen3
+}
+
+# Settings: remove the optional Qwen3-TTS voice (helper programs + voice model).
+install_phase_qwen3_remove() {
+  local venv_dir venv_python qwen3_tts_dir
+  venv_dir="$(install_venv_dir)"
+  venv_python="${venv_dir}/bin/python"
+  qwen3_tts_dir="$("$venv_python" -c 'from vocalis.config import VocalisConfig; print(VocalisConfig().engines.qwen3_tts_model_dir)')"
+  echo "STEP 1/3 Removing the Qwen3-TTS helper programs"
+  pyenv_remove_qwen3 "$venv_dir" "$(install_baseline_file)"
+  echo "STEP 2/3 Deleting the Qwen3-TTS voice files"
+  if [[ "$qwen3_tts_dir" == /?* && "$qwen3_tts_dir" != "$HOME" && "$qwen3_tts_dir" != "${HOME}/" ]]; then
+    rm -rf "$qwen3_tts_dir"
+  else
+    echo "NOTE The Qwen3-TTS folder setting looks unsafe to delete (${qwen3_tts_dir:-empty}), so I left it alone."
+  fi
+  echo "STEP 3/3 Checking the speech runtime"
+  install_fix_onnxruntime "$venv_dir"
 }
 
 # Phase 3: background service, menu entry, final message.
@@ -210,6 +284,8 @@ install_phase_finish() {
   fi
   desktop_install_launcher "$desktop_template" "${HOME}/.local/bin/vocalis" "${HOME}/.local/share/applications/vocalis.desktop" \
     || echo "(The menu entry could not be added; Vocalis still works.)"
+  install_keep_installer "$script_dir" \
+    || echo "(Settings will not be able to add or remove Qwen3-TTS; Vocalis still works.)"
 
   echo ""
   echo "Vocalis is installed and running."
@@ -218,7 +294,7 @@ install_phase_finish() {
   echo "or choose \"Vocalis\" in your applications menu, or run: vocalis --settings"
 }
 
-# Usage: main [--phase prepare|models|finish|all] [--no-wizard]
+# Usage: main [--phase prepare|models|finish|qwen3-add|qwen3-remove|all] [--no-wizard] [--with-qwen3]
 main() {
   # Read fresh on every call (not computed once at source time) so a
   # test can override SCRIPT_DIR/REPO_ROOT in its own environment
@@ -232,7 +308,7 @@ main() {
     case "$1" in
       --phase)
         if [[ $# -lt 2 ]]; then
-          echo "--phase needs a value: prepare, models, finish or all." >&2
+          echo "--phase needs a value: prepare, models, finish, qwen3-add, qwen3-remove or all." >&2
           return 2
         fi
         phase="$2"
@@ -242,9 +318,13 @@ main() {
         no_wizard=1
         shift
         ;;
+      --with-qwen3)
+        INSTALL_WITH_QWEN3=1
+        shift
+        ;;
       *)
         echo "Unknown option: $1" >&2
-        echo "Usage: install.sh [--phase prepare|models|finish|all] [--no-wizard]" >&2
+        echo "Usage: install.sh [--phase prepare|models|finish|qwen3-add|qwen3-remove|all] [--no-wizard] [--with-qwen3]" >&2
         return 2
         ;;
     esac
@@ -258,10 +338,12 @@ main() {
     prepare) install_phase_prepare "$script_dir" "$repo_root" ;;
     models) install_phase_models "$script_dir" ;;
     finish) install_phase_finish "$script_dir" "$repo_root" ;;
+    qwen3-add) install_phase_qwen3_add "$script_dir" ;;
+    qwen3-remove) install_phase_qwen3_remove ;;
     all) install_run_all "$script_dir" "$repo_root" ;;
     "") install_run_default "$script_dir" "$repo_root" ;;
     *)
-      echo "Unknown phase: ${phase} (use prepare, models, finish or all)." >&2
+      echo "Unknown phase: ${phase} (use prepare, models, finish, qwen3-add, qwen3-remove or all)." >&2
       return 2
       ;;
   esac
@@ -295,7 +377,9 @@ install_run_default() {
 
   local venv_dir
   venv_dir="$(install_venv_dir)"
-  if [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
+  if [[ "$INSTALL_WITH_QWEN3" -eq 1 ]]; then
+    echo "NOTE You chose Qwen3-TTS, so I will finish the installation here in the terminal."
+  elif [[ -n "${DISPLAY:-}" || -n "${WAYLAND_DISPLAY:-}" ]]; then
     if [[ -x "${venv_dir}/bin/vocalis-setup" ]]; then
       echo "NOTE If no setup window opens, run the installer again with: bash install.sh --no-wizard (or ./install.run -- --no-wizard)"
       local wizard_status=0

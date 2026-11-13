@@ -1,8 +1,10 @@
 """Reads what the computer has right now (GPU memory, RAM, CPU load) so
 Vocalis can explain itself in the log today and pick a voice engine later.
 Every source is optional and injectable; nothing here ever raises."""
+import importlib.util
 import logging
 import os
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -11,6 +13,12 @@ logger = logging.getLogger("vocalis")
 
 _KB_PER_MB = 1024
 _BYTES_PER_MB = 1024 * 1024
+_NVIDIA_SMI_COMMAND = [
+    "nvidia-smi",
+    "--query-gpu=name,memory.total,memory.free",
+    "--format=csv,noheader,nounits",
+]
+_NVIDIA_SMI_TIMEOUT_SECONDS = 10
 
 
 @dataclass(frozen=True)
@@ -42,6 +50,47 @@ def query_gpu_with_torch() -> GpuInfo | None:
         return None
     free_bytes, total_bytes = torch.cuda.mem_get_info(0)
     return GpuInfo(torch.cuda.get_device_name(0), total_bytes // _BYTES_PER_MB, free_bytes // _BYTES_PER_MB)
+
+
+def parse_nvidia_smi_memory(output: str) -> GpuInfo | None:
+    """Read the first ``name, total, free`` line of nvidia-smi output, or None if unusable."""
+    for line in output.splitlines():
+        parts = line.rsplit(",", 2)
+        if len(parts) < 3:
+            continue
+        name, total, free = (part.strip() for part in parts)
+        if not (total.isascii() and total.isdigit() and free.isascii() and free.isdigit()):
+            return None
+        if not name or int(total) <= 0:
+            return None
+        return GpuInfo(name, int(total), int(free))
+    return None
+
+
+def query_gpu_with_nvidia_smi() -> GpuInfo | None:
+    """Ask nvidia-smi about the first graphics card (works without PyTorch); None if unavailable."""
+    try:
+        result = subprocess.run(
+            _NVIDIA_SMI_COMMAND,
+            capture_output=True,
+            text=True,
+            errors="replace",
+            check=True,
+            timeout=_NVIDIA_SMI_TIMEOUT_SECONDS,
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return parse_nvidia_smi_memory(result.stdout)
+
+
+def query_gpu() -> GpuInfo | None:
+    """Read the graphics card with PyTorch when it is installed, else with nvidia-smi.
+
+    PyTorch belongs to the optional Qwen3-TTS add-on, so it may be absent.
+    """
+    if importlib.util.find_spec("torch") is None:
+        return query_gpu_with_nvidia_smi()
+    return query_gpu_with_torch()
 
 
 def query_own_process_ram_mb(status_path: Path = Path("/proc/self/status")) -> "int | None":
@@ -92,7 +141,7 @@ def probe_hardware(
     own_ram_query: Callable[[], "int | None"] = query_own_process_ram_mb,
 ) -> HardwareInfo:
     """Take a snapshot of GPU, RAM, CPU and Vocalis's own memory use; unreadable parts become None."""
-    query = gpu_query if gpu_query is not None else query_gpu_with_torch
+    query = gpu_query if gpu_query is not None else query_gpu
     try:
         gpu = query()
     except Exception:

@@ -47,6 +47,7 @@ class EngineSelector:
         max_own_ram_mb: Callable[[], "int | None"] = lambda: None,
         now: Callable[[], float] = time.monotonic,
         downshift_hold_seconds: float = _DEFAULT_DOWNSHIFT_HOLD_SECONDS,
+        qwen3_installed: Callable[[], bool] = lambda: True,
     ) -> None:
         """Create a selector.
 
@@ -59,6 +60,8 @@ class EngineSelector:
             now: Monotonic clock, injectable for tests.
             downshift_hold_seconds: How long a downshift is held before Auto
                 is allowed to try climbing back to a better tier.
+            qwen3_installed: Whether the optional Qwen3-TTS add-on is
+                installed right now (read live; Settings can add it).
         """
         self._preference = preference
         self._hardware_probe = hardware_probe
@@ -67,12 +70,19 @@ class EngineSelector:
         self._max_own_ram_mb = max_own_ram_mb
         self._now = now
         self._downshift_hold_seconds = downshift_hold_seconds
+        self._qwen3_installed = qwen3_installed
         self._last_effective_tier: int | None = None
         self._last_downshift_time: float | None = None
 
     def plan(self) -> EnginePlan:
         """The engines to try for the next reading."""
         choice = self._preference()
+        installed = self._qwen3_installed()
+        if choice == QWEN3_TTS and not installed:
+            return EnginePlan(
+                FORCED_CHAINS[KOKORO],
+                "Qwen3-TTS is not installed (Settings can add it), so Vocalis is using Kokoro.",
+            )
         if choice in FORCED_CHAINS:
             return EnginePlan(FORCED_CHAINS[choice], f"You chose {_LABELS[choice]} in Settings.")
         try:
@@ -80,7 +90,9 @@ class EngineSelector:
         except Exception:
             logger.exception("Could not check the PC for the Auto voice choice")
             return EnginePlan((KOKORO, PIPER), "Vocalis could not check your PC, so it is using the lighter voice.")
-        decision = decide(hardware, self._policy, self._held_vram_mb(), self._max_own_ram_mb())
+        decision = decide(
+            hardware, self._policy, self._held_vram_mb(), self._max_own_ram_mb(), qwen3_installed=installed
+        )
         chain, reason = self._apply_hysteresis(decision.chain, decision.reason)
         logger.info("Voice engine plan: %s (%s)", " -> ".join(chain), reason)
         return EnginePlan(chain, reason)
