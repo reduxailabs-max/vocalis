@@ -12,7 +12,7 @@ import pytest
 
 from vocalis.engines.parakeet import ParakeetLoadError, ParakeetSTT
 
-REAL_MODEL_DIR = Path("/home/redx/.local/share/voxtype/models/parakeet-tdt-0.6b-v3-int8")
+REAL_MODEL_DIR = Path.home() / ".local/share/voxtype/models/parakeet-tdt-0.6b-v3-int8"
 _real_model_available = REAL_MODEL_DIR.exists()
 
 
