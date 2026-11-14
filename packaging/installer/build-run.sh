@@ -49,6 +49,8 @@ main() {
   cp "${repo_root}/packaging/systemd/vocalis.service" "$staging_dir/packaging/systemd/"
   mkdir -p "$staging_dir/packaging/desktop"
   cp "${repo_root}/packaging/desktop/vocalis.desktop" "$staging_dir/packaging/desktop/"
+  mkdir -p "$staging_dir/packaging/desktop/icons"
+  cp "${repo_root}"/src/vocalis/assets/icons/vocalis-[0-9]*.png "$staging_dir/packaging/desktop/icons/"
 
   build_run_run_makeself "Vocalis installer" "$staging_dir" "install.sh" "${script_dir}/install.run"
   build_run_run_makeself "Vocalis uninstaller" "$staging_dir" "uninstall.sh" "${script_dir}/uninstall.run"

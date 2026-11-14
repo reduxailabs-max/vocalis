@@ -1,0 +1,19 @@
+{
+  "name": "vocalis-logo",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Remotion project that draws the Vocalis logo (red and black). Output PNGs are turned into app icons by branding/make_icons.py.",
+  "scripts": {
+    "render": "remotion still src/index.ts Logo out/logo.png && remotion still src/index.ts LogoMark out/mark.png"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.528",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.528"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.12",
+    "typescript": "5.6.3"
+  }
+}

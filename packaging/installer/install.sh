@@ -294,6 +294,12 @@ install_phase_finish() {
   fi
   desktop_install_launcher "$desktop_template" "${HOME}/.local/bin/vocalis" "${HOME}/.local/share/applications/vocalis.desktop" \
     || echo "(The menu entry could not be added; Vocalis still works.)"
+  local icon_dir="${script_dir}/packaging/desktop/icons"
+  if [[ ! -d "$icon_dir" ]]; then
+    icon_dir="${repo_root}/src/vocalis/assets/icons"
+  fi
+  desktop_install_icons "$icon_dir" \
+    || echo "(The Vocalis icon could not be added; Vocalis still works.)"
   install_keep_installer "$script_dir" \
     || echo "(Settings will not be able to add or remove Qwen3-TTS; Vocalis still works.)"
 

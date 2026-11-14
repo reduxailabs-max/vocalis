@@ -29,3 +29,26 @@ teardown() { rm -rf "$WORKDIR"; }
   [ "$(cat "$out")" = "old" ]
   [ "$(find "$WORKDIR" -mindepth 1 | wc -l)" -eq 1 ]
 }
+
+@test "desktop_install_icons copies every size into the icon theme" {
+  mkdir -p "$WORKDIR/src"
+  touch "$WORKDIR/src/vocalis-16.png" "$WORKDIR/src/vocalis-256.png" "$WORKDIR/src/vocalis-mark.png"
+  desktop_install_icons "$WORKDIR/src" "$WORKDIR/hicolor"
+  [ -f "$WORKDIR/hicolor/16x16/apps/vocalis.png" ]
+  [ -f "$WORKDIR/hicolor/256x256/apps/vocalis.png" ]
+  [ ! -e "$WORKDIR/hicolor/mark" ]
+}
+
+@test "desktop_install_icons fails clearly when there are no icons" {
+  mkdir -p "$WORKDIR/empty"
+  run desktop_install_icons "$WORKDIR/empty" "$WORKDIR/hicolor"
+  [ "$status" -ne 0 ]
+}
+
+@test "desktop_remove_icons removes only the Vocalis icons" {
+  mkdir -p "$WORKDIR/hicolor/16x16/apps"
+  touch "$WORKDIR/hicolor/16x16/apps/vocalis.png" "$WORKDIR/hicolor/16x16/apps/other.png"
+  desktop_remove_icons "$WORKDIR/hicolor"
+  [ ! -e "$WORKDIR/hicolor/16x16/apps/vocalis.png" ]
+  [ -f "$WORKDIR/hicolor/16x16/apps/other.png" ]
+}

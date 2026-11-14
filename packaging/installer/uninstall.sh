@@ -78,6 +78,16 @@ main() {
     rm -f "$launcher"
   fi
 
+  # The icons the installer added to the user's icon theme.
+  local icon_root="${HOME}/.local/share/icons/hicolor"
+  if compgen -G "${icon_root}/*x*/apps/vocalis.png" >/dev/null; then
+    found_anything=1
+    rm -f "${icon_root}"/*x*/apps/vocalis.png
+    if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+      gtk-update-icon-cache -q -t -f "$icon_root" >/dev/null 2>&1 || true
+    fi
+  fi
+
   if [[ -d "$venv_dir" ]]; then
     found_anything=1
     rm -rf "$venv_dir"

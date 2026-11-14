@@ -19,6 +19,8 @@ setup() {
   touch "$WORKDIR/packaging/installer/lib/preflight.sh"
   touch "$WORKDIR/packaging/systemd/vocalis.service"
   touch "$WORKDIR/packaging/desktop/vocalis.desktop"
+  mkdir -p "$WORKDIR/src/vocalis/assets/icons"
+  touch "$WORKDIR/src/vocalis/assets/icons/vocalis-16.png" "$WORKDIR/src/vocalis/assets/icons/vocalis-256.png"
 }
 
 teardown() {
@@ -61,6 +63,7 @@ teardown() {
 @test "main stages the desktop launcher template for both .run files" {
   build_run_run_makeself() {
     [ -f "$2/packaging/desktop/vocalis.desktop" ] && echo DESKTOP_OK >> "$CALL_LOG"
+    [ -f "$2/packaging/desktop/icons/vocalis-256.png" ] && echo ICONS_OK >> "$CALL_LOG"
     touch "$4"
   }
   SCRIPT_DIR="$WORKDIR/packaging/installer" REPO_ROOT="$WORKDIR" run main

@@ -22,6 +22,7 @@ from vocalis.installer.wizard_pages import (
     log_hint,
     track_thread,
 )
+from vocalis.ui.branding import logo_pixmap
 
 STOPPED_MESSAGE = "Setup was stopped. Run the installer again to finish."
 SETTINGS_HINT = "Vocalis is running — open it from the tray icon or the applications menu."
@@ -68,6 +69,7 @@ class SetupWizard(QWizard):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Vocalis setup")
+        self.setPixmap(QWizard.WizardPixmap.LogoPixmap, logo_pixmap().scaledToHeight(48))
         self._settings_opener = settings_opener
         self._succeeded = False
         self._opening = False

@@ -343,10 +343,13 @@ def test_wizard_uses_the_theme_in_app_main(monkeypatch, tmp_path) -> None:  # ty
 
     monkeypatch.setattr(app_module, "_make_app", lambda argv: FakeApp())
     monkeypatch.setattr(app_module, "apply_theme", themed.append)
+    branded: list[object] = []
+    monkeypatch.setattr(app_module, "apply_branding", branded.append)
     monkeypatch.setattr(app_module, "SetupWizard", FakeWizard)
     assert app_module.main(["--installer-dir", str(tmp_path)]) == 0
     assert shown == [tmp_path]
     assert len(themed) == 1
+    assert len(branded) == 1
 
 
 def test_app_main_returns_one_and_prints_a_message_when_stopped(monkeypatch, capsys, tmp_path) -> None:  # type: ignore[no-untyped-def]
@@ -366,6 +369,7 @@ def test_app_main_returns_one_and_prints_a_message_when_stopped(monkeypatch, cap
 
     monkeypatch.setattr(app_module, "_make_app", lambda argv: FakeApp())
     monkeypatch.setattr(app_module, "apply_theme", lambda app: None)
+    monkeypatch.setattr(app_module, "apply_branding", lambda app: None)
     monkeypatch.setattr(app_module, "SetupWizard", FakeWizard)
     assert app_module.main(["--installer-dir", str(tmp_path)]) == 1
     assert "Setup was stopped." in capsys.readouterr().err

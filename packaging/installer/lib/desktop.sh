@@ -2,6 +2,36 @@
 # Installs the "Vocalis" entry in the desktop's application menu.
 set -uo pipefail
 
+# Copy the Vocalis icon PNGs (named vocalis-<size>.png) into the user's icon
+# theme so the menu entry and windows show the logo.
+desktop_install_icons() {
+  local source_dir="$1"
+  local icon_root="${2:-${HOME}/.local/share/icons/hicolor}"
+  local file size copied=0
+  for file in "$source_dir"/vocalis-[0-9]*.png; do
+    [[ -f "$file" ]] || continue
+    size="$(basename "$file" .png)"
+    size="${size#vocalis-}"
+    mkdir -p "${icon_root}/${size}x${size}/apps" || return 1
+    cp -f "$file" "${icon_root}/${size}x${size}/apps/vocalis.png" || return 1
+    copied=1
+  done
+  [[ "$copied" -eq 1 ]] || return 1
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f "$icon_root" >/dev/null 2>&1 || true
+  fi
+  return 0
+}
+
+# Remove the icons desktop_install_icons added.
+desktop_remove_icons() {
+  local icon_root="${1:-${HOME}/.local/share/icons/hicolor}"
+  rm -f "${icon_root}"/*x*/apps/vocalis.png
+  if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+    gtk-update-icon-cache -q -t -f "$icon_root" >/dev/null 2>&1 || true
+  fi
+}
+
 # Write output_path from the template with __VOCALIS_EXEC__ replaced by the
 # quoted exec_path. Atomic: a failure never leaves a broken launcher behind.
 desktop_install_launcher() {

@@ -41,6 +41,7 @@ setup() {
   service_substitute_unit() { echo "service_substitute_unit: $*" >> "$CALL_LOG"; }
   service_enable_and_start() { echo "service_enable_and_start" >> "$CALL_LOG"; }
   desktop_install_launcher() { echo "desktop_install_launcher: $*" >> "$CALL_LOG"; }
+  desktop_install_icons() { echo "desktop_install_icons: $*" >> "$CALL_LOG"; }
 
   # A fake interpreter that answers by looking at its arguments:
   #   plan gpu-runtime  -> $FAKE_GPU_ANSWER (default "yes"), fails if FAKE_GPU_FAIL is set

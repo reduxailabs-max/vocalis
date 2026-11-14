@@ -19,6 +19,7 @@ from PySide6.QtWidgets import QApplication
 
 from vocalis.installer.wizard import SetupWizard
 from vocalis.installer.wizard_pages import running_threads
+from vocalis.ui.branding import apply_branding
 from vocalis.ui.theme import apply_theme
 
 EXIT_OK = 0
@@ -90,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         app = _make_app(sys.argv[:1])
         apply_theme(app)
+        apply_branding(app)
         wizard = SetupWizard(args.installer_dir)
         wizard.show()
         install_signal_handlers(app, wizard)

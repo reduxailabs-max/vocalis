@@ -63,6 +63,7 @@ from vocalis.ui.settings_window import SettingsWindow
 if TYPE_CHECKING:
     from vocalis.engines.qwen3_tts import Qwen3TTS
 from vocalis.ui.status_hub import ReadingControls, StatusHub
+from vocalis.ui.branding import apply_branding
 from vocalis.ui.theme import apply_theme
 from vocalis.ui.tray import TrayIcon
 
@@ -913,6 +914,7 @@ def main() -> None:
     app = cast(QApplication, QApplication.instance() or QApplication(sys.argv))
     app.setQuitOnLastWindowClosed(False)
     apply_theme(app)
+    apply_branding(app)
     hub = StatusHub()
     bridge = _SettingsBridge()
     model_manager = ModelManager(idle_timeout_seconds=config.model_idle_timeout_seconds)
