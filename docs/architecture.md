@@ -48,9 +48,8 @@ behavior with `nvidia-smi`.
   a clear `ConfigError`, rather than causing a confusing failure deep
   inside a feature later.
 
-See `docs/superpowers/specs/2026-09-11-vocalis-design.md` for the full
-product design (all four features, UI, packaging) this architecture is
-building toward.
+This document describes the architecture of all four features, the UI and
+the packaging.
 
 ## Phase 2 addition: Dictation (STT)
 
@@ -117,9 +116,7 @@ Pressing Ctrl+Alt+R now works end-to-end:
 5. Notifications fire at each stage: reading, the text itself, done (or
    stopped early, or the specific failure reason).
 
-See `docs/superpowers/specs/2026-09-11-vocalis-design.md`'s Phase 3
-amendment for the full rationale, including two corrections made during
-brainstorming: the legacy tool actually used Piper (not Qwen3-TTS/
+The rationale includes two corrections made during design: the legacy tool actually used Piper (not Qwen3-TTS/
 fish-speech as originally assumed), and Qwen3-TTS's "Base" variant turned
 out to be a voice-cloning model — "CustomVoice" with a preset voice is
 what this feature actually uses.

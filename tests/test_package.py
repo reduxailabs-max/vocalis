@@ -4,4 +4,4 @@ import vocalis
 
 def test_package_exposes_version() -> None:
     assert isinstance(vocalis.__version__, str)
-    assert vocalis.__version__ == "0.1.0"
+    assert vocalis.__version__ == "1.0.0"

@@ -1,3 +1,5 @@
+<p align="center"><img src="src/vocalis/assets/icons/vocalis-128.png" alt="Vocalis logo" width="96"></p>
+
 # Vocalis
 
 An offline voice AI workstation: dictation, a quick-reader for anything
@@ -9,9 +11,21 @@ system packages once; the app itself makes no network calls.
 
 ## Installing
 
-See [`packaging/installer/README.md`](packaging/installer/README.md) for
-the one-command installer (works on Debian/Ubuntu-family Linux with an
-NVIDIA GPU).
+1. Download `install.run` from the
+   [latest release](https://github.com/reduxailabs-max/vocalis/releases/latest)
+   (and `SHA256SUMS.txt` if you want to check the download).
+2. Make it runnable and start it:
+   `chmod +x install.run && ./install.run`
+3. A setup window guides you through the rest: it downloads the voices,
+   lets you test your microphone, and starts Vocalis.
+
+Works on Debian/Ubuntu-family Linux. A graphics card from NVIDIA makes
+dictation faster but is not required. The extra **Qwen3-TTS** voice is
+optional (it needs a strong NVIDIA card and about 8 GB more); you can add
+or remove it later in Settings. To remove Vocalis, run `uninstall.run`.
+
+More detail, including terminal-only installs, is in
+[`packaging/installer/README.md`](packaging/installer/README.md).
 
 ## Using it
 

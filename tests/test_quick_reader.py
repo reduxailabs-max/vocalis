@@ -726,6 +726,8 @@ def test_each_reading_ends_exactly_once_even_when_stopped() -> None:
     wait_until(lambda: player.output.opened == 1)
     feature.on_trigger()
     for thread in set(threading.enumerate()) - threads_before:
+        if thread.ident is None:
+            continue  # created by someone else but not started yet; cannot be joined
         thread.join(timeout=5.0)  # bounded: a worker that never ends fails the checks below
 
     assert changes == [True, False]

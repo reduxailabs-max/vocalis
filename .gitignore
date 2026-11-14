@@ -15,12 +15,18 @@ dist/
 htmlcov/
 coverage.xml
 
-# Local tool folders
+# Local tool folders and internal development notes (kept on the developer's PC only)
 .superpowers/
 .remember/
-.claude/worktrees/
-.claude/settings.local.json
-.claude/scheduled_tasks*
+.claude/
+.impeccable/
+docs/superpowers/
+HANDOFF_*.md
+
+# Logo project: only the rendered icons in src/vocalis/assets are shipped
+branding/logo/node_modules/
+branding/logo/out/
+branding/reference/
 
 # Build output
 packaging/installer/*.run
