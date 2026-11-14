@@ -16,6 +16,11 @@ from vocalis.output.typer import TextOutput
 
 logger = logging.getLogger("vocalis")
 
+PHASE_LISTENING = "listening"
+PHASE_TRANSCRIBING = "transcribing"
+PHASE_DONE = "done"
+PHASE_FAILED = "failed"
+
 _ENGINE_ID = "parakeet"
 _TITLE = "Vocalis — Dictation"
 NO_AUDIO_MESSAGE = (
@@ -49,6 +54,8 @@ class DictationFeature:
         notifier: Notifier,
         sample_rate: int = 16000,
         on_listening_changed: Callable[[bool], None] | None = None,
+        on_phase: Callable[[str], None] | None = None,
+        quiet_notices: Callable[[], bool] | None = None,
     ) -> None:
         """Create a DictationFeature.
 
@@ -68,6 +75,11 @@ class DictationFeature:
             on_listening_changed: Called with True once recording has
                 started and False when the key is released. A callback
                 that raises is logged and ignored. None means no hook.
+            on_phase: Called with "listening", "transcribing", "done" or
+                "failed" (for the on-screen animation). Failures are ignored.
+            quiet_notices: When it returns True the routine progress
+                notifications (Listening, Transcribing, the text, Done) are
+                skipped because the animation shows them; errors still notify.
         """
         self._model_manager = model_manager
         self._engine_factory = engine_factory
@@ -76,6 +88,8 @@ class DictationFeature:
         self._notifier = notifier
         self._sample_rate = sample_rate
         self._on_listening_changed = on_listening_changed
+        self._on_phase = on_phase
+        self._quiet_notices = quiet_notices
         self._active_lock = threading.Lock()
         self._active = False
 
@@ -86,7 +100,7 @@ class DictationFeature:
                 logger.info("Ignoring duplicate NUMLOCK press while already recording")
                 return
             self._active = True
-        self._notifier.notify(_TITLE, "Listening...")
+        self._say("Listening...")
         try:
             self._recorder.start()
             started = True
@@ -98,6 +112,28 @@ class DictationFeature:
             started = False
         if started:
             self._report_listening(True)
+            self._report_phase(PHASE_LISTENING)
+        else:
+            self._report_phase(PHASE_FAILED)
+
+    def _say(self, message: str) -> None:
+        """A routine progress notification; skipped while the animation shows it."""
+        if self._quiet_notices is not None:
+            try:
+                if self._quiet_notices():
+                    return
+            except Exception:
+                logger.exception("quiet_notices hook failed")
+        self._notifier.notify(_TITLE, message)
+
+    def _report_phase(self, phase: str) -> None:
+        """Tell the optional phase hook; a failing hook never breaks dictation."""
+        if self._on_phase is None:
+            return
+        try:
+            self._on_phase(phase)
+        except Exception:
+            logger.exception("on_phase hook failed")
 
     def _report_listening(self, active: bool) -> None:
         """Tell the optional hook whether we are listening; a failing
@@ -122,13 +158,16 @@ class DictationFeature:
         except Exception:
             logger.exception("Failed to stop recording")
             self._notifier.notify(_TITLE, "Recording failed")
+            self._report_phase(PHASE_FAILED)
             return
 
         if audio.size == 0:
             self._notifier.notify(_TITLE, NO_AUDIO_MESSAGE)
+            self._report_phase(PHASE_FAILED)
             return
 
-        self._notifier.notify(_TITLE, "Transcribing...")
+        self._report_phase(PHASE_TRANSCRIBING)
+        self._say("Transcribing...")
         try:
             engine = self._model_manager.acquire(_ENGINE_ID, self._engine_factory)
             try:
@@ -138,15 +177,19 @@ class DictationFeature:
         except Exception:
             logger.exception("Transcription failed")
             self._notifier.notify(_TITLE, "Transcription failed")
+            self._report_phase(PHASE_FAILED)
             return
 
         if not text.strip():
-            self._notifier.notify(_TITLE, "(no speech detected)")
+            self._say("(no speech detected)")
+            self._report_phase(PHASE_FAILED)
             return
 
-        self._notifier.notify(_TITLE, text)
+        self._say(text)
         result = self._text_output.deliver(text)
         if result.method == "clipboard":
             self._notifier.notify(_TITLE, "Typing failed — copied to clipboard instead")
+            self._report_phase(PHASE_FAILED)
         else:
-            self._notifier.notify(_TITLE, "Done")
+            self._say("Done")
+            self._report_phase(PHASE_DONE)

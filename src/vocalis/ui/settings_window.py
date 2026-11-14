@@ -121,6 +121,7 @@ class SettingsWindow(QWidget):
         self.setWindowTitle("Vocalis — Settings")
         self._notifications_box = QCheckBox("Show desktop notifications")
         self._widget_box = QCheckBox("Show the floating widget while reading")
+        self._overlay_box = QCheckBox("Show an animation at the bottom of the screen while dictating")
         self._ptt_combo = _combo(PUSH_TO_TALK_CHOICES)
         self._quick_combo = _combo(CTRL_ALT_CHOICES)
         self._doc_combo = _combo(CTRL_ALT_CHOICES)
@@ -201,6 +202,7 @@ class SettingsWindow(QWidget):
         form = QFormLayout()
         form.addRow(self._notifications_box)
         form.addRow(self._widget_box)
+        form.addRow(self._overlay_box)
         output_row = QHBoxLayout()
         output_row.addWidget(self._output_combo)
         output_row.addWidget(self._test_sound_button)
@@ -264,6 +266,7 @@ class SettingsWindow(QWidget):
         defaults = ShortcutsConfig()
         self._notifications_box.setChecked(config.notifications_enabled)
         self._widget_box.setChecked(config.floating_widget_enabled)
+        self._overlay_box.setChecked(config.dictation_overlay_enabled)
         ptt = config.shortcuts.numlock_key.strip().upper()
         self._ptt_combo.setCurrentText(ptt if ptt in PUSH_TO_TALK_CHOICES else defaults.numlock_key)
         for combo, stored, default in (
@@ -420,6 +423,7 @@ class SettingsWindow(QWidget):
             update={
                 "notifications_enabled": self._notifications_box.isChecked(),
                 "floating_widget_enabled": self._widget_box.isChecked(),
+                "dictation_overlay_enabled": self._overlay_box.isChecked(),
                 "shortcuts": shortcuts,
                 "engines": engines,
                 "audio_output_device": self._selected_output_value(),

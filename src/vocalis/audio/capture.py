@@ -61,6 +61,7 @@ class MicRecorder:
         max_duration_seconds: float = 60.0,
         stream_factory: Callable[..., Any] | None = None,
         device: int | None = None,
+        on_level: Callable[[float], None] | None = None,
     ) -> None:
         """Create a MicRecorder.
 
@@ -75,7 +76,10 @@ class MicRecorder:
                 tests.
             device: Index of the input device to record from. None keeps
                 the system default.
+            on_level: Called with the loudness (0 to 1) of every audio block,
+                from the audio thread. A failing callback is logged and ignored.
         """
+        self._on_level = on_level
         self._device = device
         self._sample_rate = sample_rate
         self._max_duration_seconds = max_duration_seconds
@@ -156,6 +160,15 @@ class MicRecorder:
                 "Recording stream stopped (safety cutoff or explicit stop)"
             )
 
+    def _report_level(self, indata: npt.NDArray[np.float32]) -> None:
+        """Tell the optional level hook how loud this block was (root mean square)."""
+        if self._on_level is None or indata.size == 0:
+            return
+        try:
+            self._on_level(float(np.sqrt(np.mean(np.square(indata, dtype=np.float64)))))
+        except Exception:
+            logger.exception("on_level hook failed")
+
     def _on_audio(
         self, indata: npt.NDArray[np.float32], frames: int, time_info: object, status: object
     ) -> None:
@@ -164,3 +177,4 @@ class MicRecorder:
             logger.warning("Audio input status: %s", status)
         with self._lock:
             self._chunks.append(indata.copy().reshape(-1))
+        self._report_level(indata)

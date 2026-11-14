@@ -64,6 +64,7 @@ if TYPE_CHECKING:
     from vocalis.engines.qwen3_tts import Qwen3TTS
 from vocalis.ui.status_hub import ReadingControls, StatusHub
 from vocalis.ui.branding import apply_branding
+from vocalis.ui.dictation_overlay import DictationOverlay
 from vocalis.ui.theme import apply_theme
 from vocalis.ui.tray import TrayIcon
 
@@ -160,6 +161,13 @@ def resolve_shortcuts(config: VocalisConfig) -> ShortcutSet:
     except ShortcutError as exc:
         logger.error("Invalid shortcut in the config (%s); using the default shortcuts", exc)
         return DEFAULT_SHORTCUTS
+
+
+def _overlay_is_on(config: VocalisConfig, settings: LiveSettings | None) -> Callable[[], bool]:
+    """Whether the on-screen dictation animation is switched on (live when settings exist)."""
+    if settings is not None:
+        return settings.dictation_overlay_enabled
+    return lambda: config.dictation_overlay_enabled
 
 
 def _make_notifier(config: VocalisConfig, settings: LiveSettings | None) -> Notifier:
@@ -433,7 +441,11 @@ def build_dictation(
         """Build the speech-to-text engine."""
         return ParakeetSTT(model_dir=model_dir)
 
-    recorder = MicRecorder(max_duration_seconds=60.0, device=pick_input_device())
+    recorder = MicRecorder(
+        max_duration_seconds=60.0,
+        device=pick_input_device(),
+        on_level=hub.set_level if hub is not None else None,
+    )
     text_output = TextOutput()
     notifier = _make_notifier(config, settings)
     feature = DictationFeature(
@@ -443,6 +455,8 @@ def build_dictation(
         text_output=text_output,
         notifier=notifier,
         on_listening_changed=hub.set_listening if hub is not None else None,
+        on_phase=hub.set_dictation_phase if hub is not None else None,
+        quiet_notices=_overlay_is_on(config, settings) if hub is not None else None,
     )
     listener = NumlockListener(
         on_press=feature.on_press,
@@ -800,6 +814,10 @@ def build_ui(
         the tray and tears all three down.
     """
     widget = FloatingWidget(hub, settings.floating_widget_enabled)
+    overlay = DictationOverlay(settings.dictation_overlay_enabled)
+    hub.dictation_phase_changed.connect(overlay.set_phase)
+    hub.level_changed.connect(overlay.set_level)
+    widget._dictation_overlay = overlay  # type: ignore[attr-defined]  # keeps it alive with the widget
     document_reader = doc_popup._feature  # noqa: SLF001 - shared with Test sound / Preview voice
     if output_chooser is not None:
         settings_window = SettingsWindow(

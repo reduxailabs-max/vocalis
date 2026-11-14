@@ -1253,3 +1253,8 @@ something the person chooses.
 
 A smaller default install (no PyTorch/CUDA unless chosen) and a faster app
 start. No change at reading time.
+
+## Stage 11 addition: logo and dictation animation
+
+- **Logo.** `branding/logo/` is a small Remotion project (red/black) that renders `logo.png` (with a dark tile) and `mark.png` (transparent). `branding/make_icons.py` scales them into `src/vocalis/assets/icons/vocalis-<size>.png`, which are committed so building Vocalis does not need Node.js. `ui/branding.py` loads them (`app_icon`, `logo_pixmap`, `apply_branding`) for the app window icon, the setup wizard logo and the desktop name. The installer copies the PNGs into `~/.local/share/icons/hicolor/<n>x<n>/apps/vocalis.png` (`desktop_install_icons`) and the `.desktop` entry uses `Icon=vocalis`; `uninstall.sh` removes them.
+- **Dictation animation.** `MicRecorder(on_level=...)` reports the loudness of each audio block; `DictationFeature(on_phase=..., quiet_notices=...)` reports listening / transcribing / done / failed; `StatusHub` forwards both as Qt signals (`dictation_phase_changed`, `level_changed`). `ui/dictation_overlay.py` (`DictationOverlay`) is a frameless, click-through, always-on-top window at the bottom centre of the screen, painted at about 60 fps only while visible. Setting: `dictation_overlay_enabled` (default true); while it is on, routine notifications are skipped and errors still notify.

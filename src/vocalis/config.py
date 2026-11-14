@@ -124,6 +124,7 @@ class VocalisConfig(BaseModel):
     engines: EnginesConfig = EnginesConfig()
     notifications_enabled: bool = True
     floating_widget_enabled: bool = True
+    dictation_overlay_enabled: bool = True
     audio_output_device: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = "auto"
     speaking_speed: float = Field(default=1.15, ge=MIN_SPEED, le=MAX_SPEED)
     model_idle_timeout_seconds: float = Field(default=30.0, gt=0, le=3600)

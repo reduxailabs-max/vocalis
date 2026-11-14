@@ -70,6 +70,10 @@ class LiveSettings:
         """Whether the floating widget is currently switched on."""
         return self.config.floating_widget_enabled
 
+    def dictation_overlay_enabled(self) -> bool:
+        """Whether the dictation animation is currently switched on."""
+        return self.config.dictation_overlay_enabled
+
     def voice(self) -> str:
         """The TTS voice to use for the next reading."""
         return self.config.engines.qwen3_tts_speaker

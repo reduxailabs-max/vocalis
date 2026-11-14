@@ -404,6 +404,7 @@ Open the Settings window from the tray menu (**Settings…**). It has five tabs:
 
 - **Show desktop notifications** — applies immediately.
 - **Show the floating widget while reading** — applies immediately.
+- **Show an animation at the bottom of the screen while dictating** — while you hold the dictation key, a red-and-black pill with a glowing microphone appears at the bottom of the screen. Its waves move with your voice, it says "Transcribing…" after you let go, then fades away. While it is on, the "Listening…/Transcribing…/Done" desktop notifications are skipped (errors still notify).
 - **Sound output** and **Test sound** — see "Sound and speaking pace" above.
 
 **Voice & Engine tab**
@@ -573,6 +574,7 @@ Relevant settings:
 - `speaking_speed` — a number from `0.7` to `1.6` (default `1.15`).
   Anything outside that range is rejected when the file is loaded.
 - `floating_widget_enabled` — `false` hides the floating widget.
+- `dictation_overlay_enabled` — `false` hides the dictation animation and brings back the plain notifications.
 - `[shortcuts]` — `numlock_key`, `quick_reader`, `document_reader` and
   `ocr_reader`. These are really used now (see "Shortcuts" below). Changes
   made while Vocalis is running apply after a restart.

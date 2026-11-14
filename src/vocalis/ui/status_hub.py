@@ -48,6 +48,8 @@ class StatusHub(QObject):
     reading_started = Signal(str, bool)
     reading_finished = Signal()
     paused_changed = Signal(bool)
+    dictation_phase_changed = Signal(str)
+    level_changed = Signal(float)
 
     def __init__(self, parent: QObject | None = None) -> None:
         """Create an idle hub."""
@@ -59,6 +61,15 @@ class StatusHub(QObject):
         self._next_source: str | None = None
         self._paused = False
         self._last_state = IDLE
+
+    # -- dictation animation (thread-safe: only emits signals) --------------
+    def set_dictation_phase(self, phase: str) -> None:
+        """Announce a dictation phase (listening, transcribing, done, failed)."""
+        self.dictation_phase_changed.emit(phase)
+
+    def set_level(self, level: float) -> None:
+        """Announce the latest microphone loudness (0 to 1)."""
+        self.level_changed.emit(level)
 
     # -- queries -----------------------------------------------------------
     @property
