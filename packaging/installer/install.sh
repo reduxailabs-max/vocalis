@@ -300,6 +300,12 @@ install_phase_finish() {
   fi
   desktop_install_icons "$icon_dir" \
     || echo "(The Vocalis icon could not be added; Vocalis still works.)"
+  local autostart_template="${script_dir}/packaging/desktop/vocalis-autostart.desktop"
+  if [[ ! -f "$autostart_template" ]]; then
+    autostart_template="${repo_root}/packaging/desktop/vocalis-autostart.desktop"
+  fi
+  desktop_install_autostart "$autostart_template" "${HOME}/.config/autostart/vocalis.desktop" \
+    || echo "(Vocalis may not start automatically next time you log in; it still works now.)"
   install_keep_installer "$script_dir" \
     || echo "(Settings will not be able to add or remove Qwen3-TTS; Vocalis still works.)"
 

@@ -42,6 +42,7 @@ setup() {
   service_enable_and_start() { echo "service_enable_and_start" >> "$CALL_LOG"; }
   desktop_install_launcher() { echo "desktop_install_launcher: $*" >> "$CALL_LOG"; }
   desktop_install_icons() { echo "desktop_install_icons: $*" >> "$CALL_LOG"; }
+  desktop_install_autostart() { echo "desktop_install_autostart: $*" >> "$CALL_LOG"; }
 
   # A fake interpreter that answers by looking at its arguments:
   #   plan gpu-runtime  -> $FAKE_GPU_ANSWER (default "yes"), fails if FAKE_GPU_FAIL is set
@@ -162,6 +163,19 @@ teardown() {
   [[ "$output" == *"menu entry could not be added"* ]]
 }
 
+@test "main also adds a login autostart entry (belt-and-suspenders with systemd)" {
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  grep -q "desktop_install_autostart: .* $WORKDIR/.config/autostart/vocalis.desktop" "$CALL_LOG"
+}
+
+@test "a failing autostart entry does not fail the whole install" {
+  desktop_install_autostart() { return 1; }
+  SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"may not start automatically"* ]]
+}
+
 @test "main installs kokoro-onnx right after the Vocalis wheel" {
   SCRIPT_DIR="$WORKDIR" REPO_ROOT="$WORKDIR" HOME="$WORKDIR" run main
   [ "$status" -eq 0 ]
@@ -215,6 +229,7 @@ run_main() {
   grep -q "service_substitute_unit" "$CALL_LOG"
   grep -q "service_enable_and_start" "$CALL_LOG"
   grep -q "desktop_install_launcher" "$CALL_LOG"
+  grep -q "desktop_install_autostart" "$CALL_LOG"
   ! grep -q "preflight_run" "$CALL_LOG"
   ! grep -q "fetch_models" "$CALL_LOG"
   ! grep -q "models_ensure_piper_binary" "$CALL_LOG"

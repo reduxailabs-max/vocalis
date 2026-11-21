@@ -52,3 +52,26 @@ teardown() { rm -rf "$WORKDIR"; }
   [ ! -e "$WORKDIR/hicolor/16x16/apps/vocalis.png" ]
   [ -f "$WORKDIR/hicolor/16x16/apps/other.png" ]
 }
+
+@test "desktop_install_autostart copies the template as-is" {
+  local source="$WORKDIR/vocalis-autostart.desktop"
+  printf '[Desktop Entry]\nExec=systemctl --user start vocalis.service\n' > "$source"
+  local out="$WORKDIR/config/autostart/vocalis.desktop"
+  desktop_install_autostart "$source" "$out"
+  [ -f "$out" ]
+  grep -q "systemctl --user start vocalis.service" "$out"
+}
+
+@test "desktop_install_autostart fails clearly when the template is missing" {
+  run desktop_install_autostart "$WORKDIR/missing.desktop" "$WORKDIR/config/autostart/vocalis.desktop"
+  [ "$status" -ne 0 ]
+  [ ! -e "$WORKDIR/config/autostart/vocalis.desktop" ]
+}
+
+@test "desktop_remove_autostart deletes the entry" {
+  local out="$WORKDIR/config/autostart/vocalis.desktop"
+  mkdir -p "$(dirname "$out")"
+  touch "$out"
+  desktop_remove_autostart "$out"
+  [ ! -e "$out" ]
+}

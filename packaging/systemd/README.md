@@ -20,6 +20,18 @@ installer), not something this stage does or asks the user to do by hand.
   boot, before any desktop session — and before a display — exists.
   `xdg-desktop-autostart.target` starts once a desktop session is up, on
   any desktop environment (XFCE, GNOME, KDE, ...).
+- **Stage 13 addition:** `xdg-desktop-autostart.target` turned out to be
+  unreliable in practice — on one real machine it depends on systemd
+  thinking the login is "the" graphical session (logged as *"Current
+  graphical user session is inactive"*), which does not always happen,
+  so the service sometimes never starts after a reboot even though it is
+  enabled. The installer now also writes
+  `~/.config/autostart/vocalis-autostart.desktop` (from
+  `packaging/desktop/vocalis-autostart.desktop`), which every desktop
+  environment's own login autostart reads directly, independent of that
+  systemd signal. Its command, `systemctl --user start vocalis.service`,
+  does nothing if Vocalis is already running, so having both mechanisms
+  enabled is harmless.
 - `After=`/`Wants=` on PipeWire's three user services: Vocalis's sound
   output chooser (Stage 1) reads the list of sound devices once at
   startup and never refreshes it. Starting before the sound system is

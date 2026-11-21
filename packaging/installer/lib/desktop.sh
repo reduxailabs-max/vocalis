@@ -32,6 +32,34 @@ desktop_remove_icons() {
   fi
 }
 
+# Copies the static autostart template to output_path (no placeholders to
+# fill in). This is a second, independent way of starting Vocalis at login,
+# on top of the systemd unit's own WantedBy=: some desktops don't reliably
+# raise the signal systemd needs ("the graphical session is ready"), but
+# every desktop (KDE, XFCE, GNOME, ...) reads ~/.config/autostart/*.desktop
+# for itself. The command it runs (systemctl --user start vocalis.service)
+# does nothing if Vocalis is already running. Atomic, like the others here.
+desktop_install_autostart() {
+  local template_path="$1"
+  local output_path="$2"
+  local output_dir tmp_path
+  output_dir="$(dirname "$output_path")"
+  mkdir -p "$output_dir" || return 1
+  tmp_path="$(mktemp "${output_dir}/.vocalis.autostart.XXXXXX")" || return 1
+  if ! cp -f "$template_path" "$tmp_path" \
+    || ! chmod 644 "$tmp_path" \
+    || ! mv -f "$tmp_path" "$output_path"; then
+    rm -f "$tmp_path"
+    echo "Could not create the Vocalis autostart entry at ${output_path}." >&2
+    return 1
+  fi
+}
+
+# Remove the autostart entry desktop_install_autostart added.
+desktop_remove_autostart() {
+  rm -f "$1"
+}
+
 # Write output_path from the template with __VOCALIS_EXEC__ replaced by the
 # quoted exec_path. Atomic: a failure never leaves a broken launcher behind.
 desktop_install_launcher() {

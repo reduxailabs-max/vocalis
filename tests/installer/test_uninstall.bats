@@ -39,6 +39,14 @@ teardown() {
   [ ! -e "$WORKDIR/.local/share/applications/vocalis.desktop" ]
 }
 
+@test "main removes the login autostart entry" {
+  mkdir -p "$WORKDIR/.config/autostart"
+  touch "$WORKDIR/.config/autostart/vocalis.desktop"
+  HOME="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  [ ! -e "$WORKDIR/.config/autostart/vocalis.desktop" ]
+}
+
 @test "main without --purge keeps config and models and says so" {
   mkdir -p "$WORKDIR/.config/vocalis" "$WORKDIR/.local/share/vocalis/venv/bin"
   touch "$WORKDIR/.local/share/vocalis/venv/bin/python"

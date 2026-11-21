@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Vocalis (background service)
+Comment=Makes sure the Vocalis voice AI workstation is running
+Exec=systemctl --user start vocalis.service
+Terminal=false
+NoDisplay=true
+X-GNOME-Autostart-enabled=true
