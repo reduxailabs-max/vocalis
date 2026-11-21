@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "vocalis"
-version = "1.0.0"
+version = "1.0.1"
 description = "Offline voice AI workstation: dictation, quick reader, document reader, OCR reader"
 license = "MIT"
 license-files = ["LICENSE"]
