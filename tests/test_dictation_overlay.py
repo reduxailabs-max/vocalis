@@ -232,10 +232,15 @@ def run_dictation(
     return notes.messages, phases
 
 
-def test_success_reports_phases_and_stays_quiet() -> None:
+def test_success_reports_phases_and_only_notifies_when_finished() -> None:
     messages, phases = run_dictation()
     assert phases == [PHASE_LISTENING, PHASE_TRANSCRIBING, PHASE_DONE]
-    assert messages == []
+    assert messages == ["Done"]
+
+
+def test_pasted_text_says_so_even_when_quiet() -> None:
+    messages, _ = run_dictation(method="pasted")
+    assert messages == ["Done — pasted it"]
 
 
 def test_without_the_animation_notifications_still_appear() -> None:

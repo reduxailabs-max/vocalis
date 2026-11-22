@@ -405,7 +405,7 @@ Open the Settings window from the tray menu (**Settings…**). It has five tabs:
 - **Show desktop notifications** — applies immediately.
 - **Show the floating widget while reading** — applies immediately.
 - **Dictated text** — *Type it where my cursor is* (default) or *Only copy it to the clipboard*. When typing, short English text is typed key by key; long text and any language with accents or other alphabets is pasted instantly (Vocalis presses Ctrl+V, or Ctrl+Shift+V in a terminal). If typing ever fails, the text is always left on your clipboard so you can press Ctrl+V yourself.
-- **Show an animation at the bottom of the screen while dictating** — while you hold the dictation key, a red-and-black pill with a glowing microphone appears at the bottom of the screen. Its waves move with your voice, it says "Transcribing…" after you let go, then fades away. While it is on, the "Listening…/Transcribing…/Done" desktop notifications are skipped (errors still notify).
+- **Show an animation at the bottom of the screen while dictating** — while you hold the dictation key, a red-and-black pill with a glowing microphone appears at the bottom of the screen. Its waves move with your voice, it says "Transcribing…" after you let go, then fades away. While it is on, the "Listening…/Transcribing…" notifications are skipped, but you always get a notification when it finishes ("Done", "Done — pasted it", "Copied to the clipboard", or that typing failed and the text is on the clipboard).
 - **Sound output** and **Test sound** — see "Sound and speaking pace" above.
 
 **Voice & Engine tab**

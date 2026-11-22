@@ -200,5 +200,7 @@ class DictationFeature:
             self._notifier.notify(_TITLE, "Copied to the clipboard — press Ctrl+V to paste")
             self._report_phase(PHASE_DONE)
         else:
-            self._say("Done")
+            # Always tell the user it finished, even when the animation is on.
+            done = "Done — pasted it" if result.method == "pasted" else "Done"
+            self._notifier.notify(_TITLE, done)
             self._report_phase(PHASE_DONE)
