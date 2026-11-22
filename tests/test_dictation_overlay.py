@@ -256,7 +256,7 @@ def test_no_speech_fails_the_animation() -> None:
 
 def test_clipboard_fallback_notifies_and_fails_the_animation() -> None:
     messages, phases = run_dictation(method="clipboard")
-    assert any("copied to clipboard" in message for message in messages)
+    assert any("copied to the clipboard" in message for message in messages)
     assert phases[-1] == PHASE_FAILED
 
 

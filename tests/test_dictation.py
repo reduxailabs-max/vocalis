@@ -193,6 +193,24 @@ def test_clipboard_fallback_notifies_accordingly() -> None:
     assert any("clipboard" in message.lower() for _, message in notifier.messages)
 
 
+def test_clipboard_only_mode_notifies_it_was_copied() -> None:
+    engine = FakeEngine(transcript="hello")
+    audio = np.ones(1600, dtype=np.float32)
+    feature, _, _, notifier, _ = make_feature(engine, audio, output_method="copied")
+    feature.on_press()
+    feature.on_release()
+    assert any("Copied to the clipboard" in message for _, message in notifier.messages)
+
+
+def test_nothing_worked_notifies_the_user() -> None:
+    engine = FakeEngine(transcript="hello")
+    audio = np.ones(1600, dtype=np.float32)
+    feature, _, _, notifier, _ = make_feature(engine, audio, output_method="failed")
+    feature.on_press()
+    feature.on_release()
+    assert any("Couldn't type or copy" in message for _, message in notifier.messages)
+
+
 def test_recorder_stop_failure_notifies_and_does_not_crash() -> None:
     engine = FakeEngine()
     manager = ModelManager()

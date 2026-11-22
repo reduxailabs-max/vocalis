@@ -1569,3 +1569,21 @@ def test_the_kokoro_factory_builds_a_kokoro_engine_with_live_voice(tmp_path: Pat
     engine = _make_kokoro_factory(settings.config, settings, selector)()
     assert isinstance(engine, KokoroTTS)
     assert engine._current_voice() == "af_heart"  # noqa: SLF001
+
+
+# ---- dictation output mode (type vs clipboard only) -------------------------
+
+from vocalis.cli import _output_mode  # noqa: E402
+
+
+def test_output_mode_follows_live_settings_when_present(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    config = VocalisConfig()
+    settings = LiveSettings(config, tmp_path / "config.toml")
+    mode = _output_mode(config, settings)
+    assert mode() == "type"
+    settings.update(VocalisConfig(dictation_output="clipboard"))
+    assert mode() == "clipboard"
+
+
+def test_output_mode_without_settings_uses_the_config_value() -> None:
+    assert _output_mode(VocalisConfig(dictation_output="clipboard"), None)() == "clipboard"

@@ -125,6 +125,9 @@ class VocalisConfig(BaseModel):
     notifications_enabled: bool = True
     floating_widget_enabled: bool = True
     dictation_overlay_enabled: bool = True
+    # "type" = put the words at the cursor; "clipboard" = only copy them.
+    # Either way, the text is left on the clipboard if typing fails.
+    dictation_output: Literal["type", "clipboard"] = "type"
     audio_output_device: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = "auto"
     speaking_speed: float = Field(default=1.15, ge=MIN_SPEED, le=MAX_SPEED)
     model_idle_timeout_seconds: float = Field(default=30.0, gt=0, le=3600)

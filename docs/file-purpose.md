@@ -13,7 +13,7 @@
 | `src/vocalis/engines/parakeet.py` | `ParakeetSTT` — wraps `onnx-asr` running the existing Voxtype Parakeet TDT ONNX model; implements `ModelEngine`. |
 | `src/vocalis/audio/capture.py` | `MicRecorder` — sounddevice-based microphone capture with a safety-duration cutoff. |
 | `src/vocalis/hotkeys/numlock.py` | `NumlockListener` — evdev NUMLOCK push-to-talk detection; `list_numlock_capable_devices()` is the real device enumerator. |
-| `src/vocalis/output/typer.py` | `TextOutput` — types text via ydotool, falls back to clipboard (xclip) on any failure. |
+| `src/vocalis/output/typer.py` | `TextOutput` — delivers dictated text: short plain text is typed (ydotool); long or non-English text is pasted (clipboard + Ctrl+V, Ctrl+Shift+V in terminals); clipboard-only mode just copies. Anything that fails is left on the clipboard (xclip, then wl-copy). |
 | `src/vocalis/notify.py` | `Notifier` — desktop notifications via notify-send, no-op when disabled. |
 | `src/vocalis/features/dictation.py` | `DictationFeature` — wires NUMLOCK press/release to record → transcribe → deliver, with notifications at each stage. |
 | `src/vocalis/engines/qwen3_tts.py` | `Qwen3TTS` — wraps the `qwen-tts` package's CustomVoice model (preset voice, no cloning); implements `ModelEngine`. |

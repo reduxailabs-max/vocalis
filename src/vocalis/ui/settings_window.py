@@ -122,6 +122,12 @@ class SettingsWindow(QWidget):
         self._notifications_box = QCheckBox("Show desktop notifications")
         self._widget_box = QCheckBox("Show the floating widget while reading")
         self._overlay_box = QCheckBox("Show an animation at the bottom of the screen while dictating")
+        self._dictation_output_combo = QComboBox()
+        self._dictation_output_combo.addItem("Type it where my cursor is (recommended)", "type")
+        self._dictation_output_combo.addItem("Only copy it to the clipboard", "clipboard")
+        self._dictation_output_combo.setToolTip(
+            "If typing ever fails, the text is always saved to the clipboard."
+        )
         self._ptt_combo = _combo(PUSH_TO_TALK_CHOICES)
         self._quick_combo = _combo(CTRL_ALT_CHOICES)
         self._doc_combo = _combo(CTRL_ALT_CHOICES)
@@ -203,6 +209,7 @@ class SettingsWindow(QWidget):
         form.addRow(self._notifications_box)
         form.addRow(self._widget_box)
         form.addRow(self._overlay_box)
+        form.addRow("Dictated text", self._dictation_output_combo)
         output_row = QHBoxLayout()
         output_row.addWidget(self._output_combo)
         output_row.addWidget(self._test_sound_button)
@@ -267,6 +274,8 @@ class SettingsWindow(QWidget):
         self._notifications_box.setChecked(config.notifications_enabled)
         self._widget_box.setChecked(config.floating_widget_enabled)
         self._overlay_box.setChecked(config.dictation_overlay_enabled)
+        output_index = self._dictation_output_combo.findData(config.dictation_output)
+        self._dictation_output_combo.setCurrentIndex(max(output_index, 0))
         ptt = config.shortcuts.numlock_key.strip().upper()
         self._ptt_combo.setCurrentText(ptt if ptt in PUSH_TO_TALK_CHOICES else defaults.numlock_key)
         for combo, stored, default in (
@@ -424,6 +433,7 @@ class SettingsWindow(QWidget):
                 "notifications_enabled": self._notifications_box.isChecked(),
                 "floating_widget_enabled": self._widget_box.isChecked(),
                 "dictation_overlay_enabled": self._overlay_box.isChecked(),
+                "dictation_output": self._dictation_output_combo.currentData(),
                 "shortcuts": shortcuts,
                 "engines": engines,
                 "audio_output_device": self._selected_output_value(),

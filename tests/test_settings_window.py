@@ -492,3 +492,16 @@ def test_a_padded_model_location_is_saved_trimmed(qtbot, tmp_path) -> None:  # t
     w._path_edits["kokoro_model_path"].setText(f"  {model}  ")  # noqa: SLF001
     w._save_button.click()  # noqa: SLF001
     assert load_config(path).engines.kokoro_model_path == str(model)
+
+
+def test_dictation_output_choice_is_shown_and_saved(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, path = make(qtbot, tmp_path, config=VocalisConfig())
+    assert w._dictation_output_combo.currentData() == "type"  # noqa: SLF001
+    w._dictation_output_combo.setCurrentIndex(w._dictation_output_combo.findData("clipboard"))  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert load_config(path).dictation_output == "clipboard"
+
+
+def test_saved_clipboard_only_choice_is_loaded(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, _path = make(qtbot, tmp_path, config=VocalisConfig(dictation_output="clipboard"))
+    assert w._dictation_output_combo.currentData() == "clipboard"  # noqa: SLF001

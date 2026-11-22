@@ -25,6 +25,7 @@ def test_defaults_match_spec() -> None:
     assert config.engines.stt == "parakeet"
     assert config.notifications_enabled is True
     assert config.floating_widget_enabled is True
+    assert config.dictation_output == "type"
     assert config.model_idle_timeout_seconds == 30.0
     assert config.gpu_vram_ceiling_mb == 6144
 
@@ -251,3 +252,8 @@ def test_max_cpu_threads_rejects_a_negative_value() -> None:
 def test_max_ram_mb_rejects_a_negative_value() -> None:
     with pytest.raises(ValidationError):
         VocalisConfig(max_ram_mb=-1)
+
+
+def test_dictation_output_rejects_unknown_values() -> None:
+    with pytest.raises(ValidationError):
+        VocalisConfig(dictation_output="shout")  # type: ignore[arg-type]

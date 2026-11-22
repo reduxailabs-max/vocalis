@@ -74,6 +74,10 @@ class LiveSettings:
         """Whether the dictation animation is currently switched on."""
         return self.config.dictation_overlay_enabled
 
+    def dictation_output(self) -> str:
+        """How dictated text is delivered right now: "type" or "clipboard"."""
+        return self.config.dictation_output
+
     def voice(self) -> str:
         """The TTS voice to use for the next reading."""
         return self.config.engines.qwen3_tts_speaker

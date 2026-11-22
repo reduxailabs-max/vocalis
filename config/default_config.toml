@@ -23,6 +23,7 @@ notifications_enabled = true
 floating_widget_enabled = true
 # Show the animation at the bottom of the screen while you dictate.
 dictation_overlay_enabled = true
+dictation_output = "type"
 # Sound output: "auto" picks one that works, or give a device name.
 audio_output_device = "auto"
 # Speaking pace, 0.7 (slow) to 1.6 (fast).

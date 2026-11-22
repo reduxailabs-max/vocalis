@@ -21,13 +21,14 @@ def test_voices_are_the_nine_presets_with_ryan_default() -> None:
 def test_update_saves_the_file_then_changes_what_features_read(tmp_path: Path) -> None:
     settings = make(tmp_path)
     new = settings.config.model_copy(
-        update={"notifications_enabled": False, "floating_widget_enabled": False,
+        update={"notifications_enabled": False, "floating_widget_enabled": False, "dictation_output": "clipboard",
                 "engines": settings.config.engines.model_copy(update={"qwen3_tts_speaker": "Dylan"})}
     )
     settings.update(new)
     assert settings.notifications_enabled() is False
     assert settings.floating_widget_enabled() is False
     assert settings.voice() == "Dylan"
+    assert settings.dictation_output() == "clipboard"
     assert load_config(tmp_path / "config.toml").engines.qwen3_tts_speaker == "Dylan"
 
 

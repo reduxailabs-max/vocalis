@@ -170,6 +170,13 @@ def _overlay_is_on(config: VocalisConfig, settings: LiveSettings | None) -> Call
     return lambda: config.dictation_overlay_enabled
 
 
+def _output_mode(config: VocalisConfig, settings: LiveSettings | None) -> Callable[[], str]:
+    """How dictated text is delivered: "type" or "clipboard" (live when settings exist)."""
+    if settings is not None:
+        return settings.dictation_output
+    return lambda: config.dictation_output
+
+
 def _make_notifier(config: VocalisConfig, settings: LiveSettings | None) -> Notifier:
     """A Notifier that follows the live setting when there is one, else the config value."""
     if settings is not None:
@@ -446,7 +453,7 @@ def build_dictation(
         device=pick_input_device(),
         on_level=hub.set_level if hub is not None else None,
     )
-    text_output = TextOutput()
+    text_output = TextOutput(mode=_output_mode(config, settings))
     notifier = _make_notifier(config, settings)
     feature = DictationFeature(
         model_manager=model_manager,

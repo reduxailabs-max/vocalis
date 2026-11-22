@@ -188,8 +188,17 @@ class DictationFeature:
         self._say(text)
         result = self._text_output.deliver(text)
         if result.method == "clipboard":
-            self._notifier.notify(_TITLE, "Typing failed — copied to clipboard instead")
+            self._notifier.notify(
+                _TITLE, "Couldn't type it, so it was copied to the clipboard — press Ctrl+V to paste"
+            )
             self._report_phase(PHASE_FAILED)
+        elif result.method == "failed":
+            logger.error("Could not type or copy dictated text (%d characters)", len(text))
+            self._notifier.notify(_TITLE, "Couldn't type or copy the text. Is xclip installed?")
+            self._report_phase(PHASE_FAILED)
+        elif result.method == "copied":
+            self._notifier.notify(_TITLE, "Copied to the clipboard — press Ctrl+V to paste")
+            self._report_phase(PHASE_DONE)
         else:
             self._say("Done")
             self._report_phase(PHASE_DONE)
