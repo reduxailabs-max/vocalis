@@ -129,6 +129,14 @@ class SettingsWindow(QWidget):
         self._dictation_output_combo.setToolTip(
             "If typing ever fails, the text is always saved to the clipboard."
         )
+        self._alphabet_combo = QComboBox()
+        self._alphabet_combo.addItem(
+            "English and other Latin-alphabet languages (recommended)", "latin"
+        )
+        self._alphabet_combo.addItem("All languages (also Russian, Ukrainian, Greek…)", "all")
+        self._alphabet_combo.setToolTip(
+            "The first choice stops accented English from being heard as Russian."
+        )
         self._ptt_combo = _combo(PUSH_TO_TALK_CHOICES)
         self._quick_combo = _combo(CTRL_ALT_CHOICES)
         self._doc_combo = _combo(CTRL_ALT_CHOICES)
@@ -211,6 +219,7 @@ class SettingsWindow(QWidget):
         form.addRow(self._widget_box)
         form.addRow(self._overlay_box)
         form.addRow("Dictated text", self._dictation_output_combo)
+        form.addRow("Speech languages", self._alphabet_combo)
         output_row = QHBoxLayout()
         output_row.addWidget(self._output_combo)
         output_row.addWidget(self._test_sound_button)
@@ -277,6 +286,8 @@ class SettingsWindow(QWidget):
         self._overlay_box.setChecked(config.dictation_overlay_enabled)
         output_index = self._dictation_output_combo.findData(config.dictation_output)
         self._dictation_output_combo.setCurrentIndex(max(output_index, 0))
+        alphabet_index = self._alphabet_combo.findData(config.dictation_alphabet)
+        self._alphabet_combo.setCurrentIndex(max(alphabet_index, 0))
         ptt = config.shortcuts.numlock_key.strip().upper()
         self._ptt_combo.setCurrentText(ptt if ptt in PUSH_TO_TALK_CHOICES else defaults.numlock_key)
         for combo, stored, default in (
@@ -435,6 +446,7 @@ class SettingsWindow(QWidget):
                 "floating_widget_enabled": self._widget_box.isChecked(),
                 "dictation_overlay_enabled": self._overlay_box.isChecked(),
                 "dictation_output": self._dictation_output_combo.currentData(),
+                "dictation_alphabet": self._alphabet_combo.currentData(),
                 "shortcuts": shortcuts,
                 "engines": engines,
                 "audio_output_device": self._selected_output_value(),

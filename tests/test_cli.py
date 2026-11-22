@@ -1587,3 +1587,19 @@ def test_output_mode_follows_live_settings_when_present(tmp_path) -> None:  # ty
 
 def test_output_mode_without_settings_uses_the_config_value() -> None:
     assert _output_mode(VocalisConfig(dictation_output="clipboard"), None)() == "clipboard"
+
+
+from vocalis.cli import _latin_only  # noqa: E402
+
+
+def test_latin_only_follows_live_settings_when_present(tmp_path) -> None:  # type: ignore[no-untyped-def]
+    config = VocalisConfig()
+    settings = LiveSettings(config, tmp_path / "config.toml")
+    getter = _latin_only(config, settings)
+    assert getter() is True
+    settings.update(VocalisConfig(dictation_alphabet="all"))
+    assert getter() is False
+
+
+def test_latin_only_without_settings_uses_the_config_value() -> None:
+    assert _latin_only(VocalisConfig(dictation_alphabet="all"), None)() is False

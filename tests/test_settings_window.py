@@ -512,3 +512,11 @@ def test_type_and_copy_choice_can_be_saved(qtbot, tmp_path) -> None:  # type: ig
     w._dictation_output_combo.setCurrentIndex(w._dictation_output_combo.findData("both"))  # noqa: SLF001
     w._save_button.click()  # noqa: SLF001
     assert load_config(path).dictation_output == "both"
+
+
+def test_speech_languages_choice_is_shown_and_saved(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, path = make(qtbot, tmp_path, config=VocalisConfig())
+    assert w._alphabet_combo.currentData() == "latin"  # noqa: SLF001
+    w._alphabet_combo.setCurrentIndex(w._alphabet_combo.findData("all"))  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert load_config(path).dictation_alphabet == "all"

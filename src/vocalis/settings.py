@@ -78,6 +78,10 @@ class LiveSettings:
         """How dictated text is delivered right now: "type" or "clipboard"."""
         return self.config.dictation_output
 
+    def dictation_latin_only(self) -> bool:
+        """Whether dictation must stay in Latin letters right now."""
+        return self.config.dictation_alphabet == "latin"
+
     def voice(self) -> str:
         """The TTS voice to use for the next reading."""
         return self.config.engines.qwen3_tts_speaker

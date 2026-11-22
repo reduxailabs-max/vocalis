@@ -25,7 +25,10 @@ imported), not here, so the guard is not import-order-dependent.
 import ctypes
 import glob
 import logging
+import unicodedata
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import numpy.typing as npt
@@ -34,6 +37,14 @@ import onnx_asr
 logger = logging.getLogger("vocalis")
 
 _MODEL_TYPE = "nemo-parakeet-tdt-0.6b-v3"
+
+
+def _is_non_latin_token(token: str) -> bool:
+    """True if a vocabulary token contains a letter from a non-Latin alphabet."""
+    return any(
+        char.isalpha() and not unicodedata.name(char, "LATIN").startswith("LATIN")
+        for char in token
+    )
 
 
 class ParakeetLoadError(Exception):
@@ -48,6 +59,7 @@ class ParakeetSTT:
         model_dir: Path,
         quantization: str = "int8",
         use_gpu: bool = True,
+        latin_only: Callable[[], bool] | None = None,
     ) -> None:
         """Create a ParakeetSTT engine (does not load the model yet).
 
@@ -59,10 +71,16 @@ class ParakeetSTT:
                 e.g. "int8".
             use_gpu: If True, use CUDAExecutionProvider; if False, force
                 CPUExecutionProvider (useful for testing without a GPU).
+            latin_only: Returns True when the model must not write Cyrillic,
+                Greek or other non-Latin letters. The multilingual model
+                sometimes mistakes accented English for Russian; blocking
+                those letters makes it choose the Latin spelling. Read on
+                every transcription, so Settings changes apply at once.
         """
         self._model_dir = model_dir
         self._quantization = quantization
         self._use_gpu = use_gpu
+        self._latin_only: Callable[[], bool] = latin_only or (lambda: False)
         self._model: onnx_asr.adapters.TextResultsAsrAdapter | None = None
 
     @property
@@ -91,6 +109,35 @@ class ParakeetSTT:
             raise ParakeetLoadError(
                 f"Failed to load Parakeet model from {self._model_dir}: {exc}"
             ) from exc
+        self._install_alphabet_filter()
+
+    def _install_alphabet_filter(self) -> None:
+        """Wrap the model's decoder so non-Latin letters can be blocked.
+
+        The decoder returns a score per vocabulary token; setting the score
+        of every non-Latin token to -infinity makes it impossible to pick
+        one. If the model's internals look different (a future onnx-asr
+        version), the filter is skipped and a warning is logged.
+        """
+        asr: Any = getattr(self._model, "asr", None)
+        vocab = getattr(asr, "_vocab", None)
+        decode = getattr(asr, "_decode", None)
+        if not isinstance(vocab, dict) or decode is None:
+            logger.warning("Parakeet alphabet filter unavailable with this onnx-asr version")
+            return
+        blocked = np.array(
+            [index for index, token in vocab.items() if _is_non_latin_token(token)], dtype=np.int64
+        )
+
+        def filtered_decode(*args: Any, **kwargs: Any) -> Any:
+            """Run the real decoder, then hide non-Latin tokens if asked to."""
+            logits, step, state = decode(*args, **kwargs)
+            if self._latin_only() and blocked.size:
+                logits = np.array(logits, copy=True)
+                logits[blocked[blocked < logits.shape[-1]]] = -np.inf
+            return logits, step, state
+
+        asr._decode = filtered_decode
 
     def unload(self) -> None:
         """Release the model reference. Safe to call even if never loaded."""

@@ -199,3 +199,10 @@ def test_max_ram_mb_returns_the_configured_value(tmp_path: Path) -> None:
 def test_gpu_vram_ceiling_mb_returns_the_configured_value(tmp_path: Path) -> None:
     settings = make(tmp_path, VocalisConfig(gpu_vram_ceiling_mb=3000))
     assert settings.gpu_vram_ceiling_mb() == 3000
+
+
+def test_dictation_latin_only_follows_the_saved_choice(tmp_path: Path) -> None:
+    settings = make(tmp_path)
+    assert settings.dictation_latin_only() is True
+    settings.update(settings.config.model_copy(update={"dictation_alphabet": "all"}))
+    assert settings.dictation_latin_only() is False

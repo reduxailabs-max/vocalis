@@ -257,3 +257,10 @@ def test_max_ram_mb_rejects_a_negative_value() -> None:
 def test_dictation_output_rejects_unknown_values() -> None:
     with pytest.raises(ValidationError):
         VocalisConfig(dictation_output="shout")  # type: ignore[arg-type]
+
+
+def test_dictation_alphabet_defaults_to_latin_and_rejects_unknown_values() -> None:
+    assert VocalisConfig().dictation_alphabet == "latin"
+    assert VocalisConfig(dictation_alphabet="all").dictation_alphabet == "all"
+    with pytest.raises(ValidationError):
+        VocalisConfig(dictation_alphabet="klingon")  # type: ignore[arg-type]

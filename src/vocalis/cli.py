@@ -177,6 +177,13 @@ def _output_mode(config: VocalisConfig, settings: LiveSettings | None) -> Callab
     return lambda: config.dictation_output
 
 
+def _latin_only(config: VocalisConfig, settings: LiveSettings | None) -> Callable[[], bool]:
+    """Whether dictation is limited to Latin letters (live when settings exist)."""
+    if settings is not None:
+        return settings.dictation_latin_only
+    return lambda: config.dictation_alphabet == "latin"
+
+
 def _make_notifier(config: VocalisConfig, settings: LiveSettings | None) -> Notifier:
     """A Notifier that follows the live setting when there is one, else the config value."""
     if settings is not None:
@@ -446,7 +453,7 @@ def build_dictation(
 
     def engine_factory() -> ParakeetSTT:
         """Build the speech-to-text engine."""
-        return ParakeetSTT(model_dir=model_dir)
+        return ParakeetSTT(model_dir=model_dir, latin_only=_latin_only(config, settings))
 
     recorder = MicRecorder(
         max_duration_seconds=60.0,

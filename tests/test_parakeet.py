@@ -68,3 +68,65 @@ def test_load_and_transcribe_real_model_on_gpu() -> None:
         assert isinstance(result, str)
     finally:
         engine.unload()
+
+
+# ---- alphabet filter (stops accented English being heard as Russian) --------
+
+from vocalis.engines.parakeet import _is_non_latin_token  # noqa: E402
+
+
+class _FakeAsr:
+    """Mimics the parts of an onnx-asr TDT model the filter wraps."""
+
+    def __init__(self) -> None:
+        self._vocab = {0: " the", 1: " это", 2: " é", 3: " καλ", 4: "<blk>"}
+        self.calls = 0
+
+    def _decode(self, *_args: object, **_kwargs: object):  # type: ignore[no-untyped-def]
+        self.calls += 1
+        return np.array([0.1, 0.9, 0.2, 0.8, 0.0], dtype=np.float32), 1, "state"
+
+
+class _FakeModel:
+    def __init__(self, asr: object) -> None:
+        self.asr = asr
+
+
+def _engine_with(asr: object, latin_only) -> ParakeetSTT:  # type: ignore[no-untyped-def]
+    engine = ParakeetSTT(model_dir=REAL_MODEL_DIR, use_gpu=False, latin_only=latin_only)
+    engine._model = _FakeModel(asr)  # type: ignore[assignment]  # noqa: SLF001
+    engine._install_alphabet_filter()  # noqa: SLF001
+    return engine
+
+
+def test_non_latin_token_detection() -> None:
+    assert _is_non_latin_token(" это")
+    assert _is_non_latin_token(" καλ")
+    assert not _is_non_latin_token(" the")
+    assert not _is_non_latin_token(" é")
+    assert not _is_non_latin_token("<blk>")
+
+
+def test_filter_hides_non_latin_tokens_when_switched_on() -> None:
+    asr = _FakeAsr()
+    _engine_with(asr, lambda: True)
+    logits, step, state = asr._decode()
+    assert logits[1] == -np.inf and logits[3] == -np.inf
+    assert logits[0] == np.float32(0.1) and logits[2] == np.float32(0.2) and logits[4] == 0.0
+    assert (step, state) == (1, "state")
+
+
+def test_filter_does_nothing_when_switched_off_and_follows_changes_live() -> None:
+    asr = _FakeAsr()
+    flag = {"on": False}
+    _engine_with(asr, lambda: flag["on"])
+    assert np.isfinite(asr._decode()[0]).all()
+    flag["on"] = True
+    assert not np.isfinite(asr._decode()[0]).all()
+
+
+def test_filter_is_skipped_with_an_unknown_model_layout(caplog: pytest.LogCaptureFixture) -> None:
+    engine = ParakeetSTT(model_dir=REAL_MODEL_DIR, use_gpu=False, latin_only=lambda: True)
+    engine._model = _FakeModel(object())  # type: ignore[assignment]  # noqa: SLF001
+    engine._install_alphabet_filter()  # noqa: SLF001  - must not raise
+    assert "alphabet filter unavailable" in caplog.text

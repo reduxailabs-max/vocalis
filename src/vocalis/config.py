@@ -129,6 +129,9 @@ class VocalisConfig(BaseModel):
     # "both" = type them and also keep a copy on the clipboard.
     # Either way, the text is left on the clipboard if typing fails.
     dictation_output: Literal["type", "clipboard", "both"] = "type"
+    # "latin" = never write Cyrillic/Greek letters (stops accented English being
+    # heard as Russian); "all" = every language the speech model knows.
+    dictation_alphabet: Literal["latin", "all"] = "latin"
     audio_output_device: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)] = "auto"
     speaking_speed: float = Field(default=1.15, ge=MIN_SPEED, le=MAX_SPEED)
     model_idle_timeout_seconds: float = Field(default=30.0, gt=0, le=3600)
