@@ -124,6 +124,7 @@ class SettingsWindow(QWidget):
         self._overlay_box = QCheckBox("Show an animation at the bottom of the screen while dictating")
         self._dictation_output_combo = QComboBox()
         self._dictation_output_combo.addItem("Type it where my cursor is (recommended)", "type")
+        self._dictation_output_combo.addItem("Type it and also copy it to the clipboard", "both")
         self._dictation_output_combo.addItem("Only copy it to the clipboard", "clipboard")
         self._dictation_output_combo.setToolTip(
             "If typing ever fails, the text is always saved to the clipboard."

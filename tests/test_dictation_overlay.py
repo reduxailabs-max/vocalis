@@ -210,7 +210,7 @@ class Output:
         self.method = method
 
     def deliver(self, _text: str) -> object:
-        return type("R", (), {"method": self.method})()
+        return type("R", (), {"method": self.method, "also_copied": False})()
 
 
 def run_dictation(

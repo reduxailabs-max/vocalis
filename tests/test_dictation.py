@@ -69,19 +69,21 @@ class FakeRecorder:
 
 
 class FakeOutputResult:
-    def __init__(self, method: str, text: str) -> None:
+    def __init__(self, method: str, text: str, also_copied: bool = False) -> None:
         self.method = method
         self.text = text
+        self.also_copied = also_copied
 
 
 class FakeTextOutput:
     def __init__(self, method: str = "typed") -> None:
         self.method = method
+        self.also_copied = False
         self.delivered: list[str] = []
 
     def deliver(self, text: str) -> FakeOutputResult:
         self.delivered.append(text)
-        return FakeOutputResult(method=self.method, text=text)
+        return FakeOutputResult(method=self.method, text=text, also_copied=self.also_copied)
 
 
 class FakeNotifier:
@@ -200,6 +202,16 @@ def test_clipboard_only_mode_notifies_it_was_copied() -> None:
     feature.on_press()
     feature.on_release()
     assert any("Copied to the clipboard" in message for _, message in notifier.messages)
+
+
+def test_type_and_copy_mode_says_a_copy_was_kept() -> None:
+    engine = FakeEngine(transcript="hello")
+    audio = np.ones(1600, dtype=np.float32)
+    feature, _, text_output, notifier, _ = make_feature(engine, audio, output_method="typed")
+    text_output.also_copied = True
+    feature.on_press()
+    feature.on_release()
+    assert any("kept a copy on the clipboard" in message for _, message in notifier.messages)
 
 
 def test_nothing_worked_notifies_the_user() -> None:

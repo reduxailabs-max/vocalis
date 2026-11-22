@@ -505,3 +505,10 @@ def test_dictation_output_choice_is_shown_and_saved(qtbot, tmp_path) -> None:  #
 def test_saved_clipboard_only_choice_is_loaded(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
     _settings, w, _applied, _path = make(qtbot, tmp_path, config=VocalisConfig(dictation_output="clipboard"))
     assert w._dictation_output_combo.currentData() == "clipboard"  # noqa: SLF001
+
+
+def test_type_and_copy_choice_can_be_saved(qtbot, tmp_path) -> None:  # type: ignore[no-untyped-def]
+    _settings, w, _applied, path = make(qtbot, tmp_path, config=VocalisConfig())
+    w._dictation_output_combo.setCurrentIndex(w._dictation_output_combo.findData("both"))  # noqa: SLF001
+    w._save_button.click()  # noqa: SLF001
+    assert load_config(path).dictation_output == "both"

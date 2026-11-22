@@ -250,3 +250,38 @@ def test_default_runner_captures_output_when_no_input(monkeypatch: pytest.Monkey
 
 def test_real_sleep_helper_runs() -> None:
     _REAL_SLEEP(0)
+
+
+def test_both_mode_types_short_text_and_keeps_a_copy() -> None:
+    runner = FakeRunner()
+    result = _output(runner, mode="both").deliver("hello world")
+    assert result.method == "typed"
+    assert result.also_copied is True
+    assert runner.commands() == ["xclip", "ydotool"]
+
+
+def test_both_mode_pastes_long_text_and_reports_the_copy() -> None:
+    runner = FakeRunner()
+    result = _output(runner, mode="both").deliver("x" * 200)
+    assert result.method == "pasted"
+    assert result.also_copied is True
+
+
+def test_both_mode_typing_failure_still_leaves_text_on_clipboard() -> None:
+    runner = FakeRunner()
+    runner.returncodes["ydotool"] = 1
+    result = _output(runner, mode="both").deliver("hello world")
+    assert result.method == "clipboard"
+    assert runner.commands().count("xclip") == 1  # copied once, not twice
+
+
+def test_both_mode_still_types_when_the_copy_fails() -> None:
+    runner = FakeRunner()
+    runner.returncodes.update({"xclip": 1, "wl-copy": 1})
+    result = _output(runner, mode="both").deliver("hello world")
+    assert result.method == "typed"
+    assert result.also_copied is False
+
+
+def test_plain_type_mode_does_not_claim_a_copy() -> None:
+    assert _output(FakeRunner()).deliver("hello").also_copied is False

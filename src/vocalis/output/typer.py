@@ -18,6 +18,7 @@ logger = logging.getLogger("vocalis")
 
 MODE_TYPE = "type"
 MODE_CLIPBOARD = "clipboard"
+MODE_BOTH = "both"  # type/paste it AND keep a copy on the clipboard
 
 METHOD_TYPED = "typed"
 METHOD_PASTED = "pasted"
@@ -62,7 +63,7 @@ class CommandRunner(Protocol):
 class OutputResult:
     """Outcome of attempting to deliver transcribed text to the user."""
 
-    def __init__(self, method: str, text: str) -> None:
+    def __init__(self, method: str, text: str, also_copied: bool = False) -> None:
         """Create an OutputResult.
 
         Args:
@@ -71,9 +72,12 @@ class OutputResult:
                 (typing failed, text is on the clipboard) or "failed"
                 (not even the clipboard worked).
             text: The text that was delivered.
+            also_copied: True when the user asked for "type and also copy"
+                and the copy succeeded.
         """
         self.method = method
         self.text = text
+        self.also_copied = also_copied
 
 
 class TextOutput:
@@ -90,7 +94,7 @@ class TextOutput:
             command_runner: Callable(argv, input_bytes=None, timeout=None) ->
                 CompletedProcess, used to run ydotool / xclip / wl-copy /
                 xprop. Defaults to subprocess.run. Injectable for tests.
-            mode: Returns "type" (default) or "clipboard", read on every
+            mode: Returns "type" (default), "clipboard" or "both", read on every
                 delivery so Settings changes apply immediately.
         """
         self._run: CommandRunner = command_runner or _default_command_runner
@@ -109,18 +113,22 @@ class TextOutput:
         if not text:
             return OutputResult(method=METHOD_TYPED, text="")
 
-        if self._mode() == MODE_CLIPBOARD:
+        mode = self._mode()
+        if mode == MODE_CLIPBOARD:
             return OutputResult(METHOD_COPIED if self._copy(text) else METHOD_FAILED, text)
 
+        keep_copy = mode == MODE_BOTH
+
         if _is_simple_text(text):
+            copied = keep_copy and self._copy(text)
             if self._type(text):
-                return OutputResult(METHOD_TYPED, text)
-            return OutputResult(METHOD_CLIPBOARD if self._copy(text) else METHOD_FAILED, text)
+                return OutputResult(METHOD_TYPED, text, also_copied=copied)
+            return OutputResult(METHOD_CLIPBOARD if copied or self._copy(text) else METHOD_FAILED, text)
 
         if not self._copy(text):
             return OutputResult(METHOD_FAILED, text)
         if self._press_paste():
-            return OutputResult(METHOD_PASTED, text)
+            return OutputResult(METHOD_PASTED, text, also_copied=keep_copy)
         return OutputResult(METHOD_CLIPBOARD, text)
 
     def _type(self, text: str) -> bool:
