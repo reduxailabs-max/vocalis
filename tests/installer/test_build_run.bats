@@ -73,3 +73,16 @@ teardown() {
   [ "$(grep -c "DESKTOP_OK" "$CALL_LOG")" -eq 2 ]
   [ "$(grep -c "AUTOSTART_OK" "$CALL_LOG")" -eq 2 ]
 }
+
+@test "main bundles only the freshly built wheel, not older ones" {
+  mkdir -p "$WORKDIR/packaging/installer/dist"
+  touch "$WORKDIR/packaging/installer/dist/vocalis-0.0.1-py3-none-any.whl"
+  build_run_run_makeself() {
+    ls "$2/dist" >> "$CALL_LOG"
+    touch "$4"
+  }
+  SCRIPT_DIR="$WORKDIR/packaging/installer" REPO_ROOT="$WORKDIR" run main
+  [ "$status" -eq 0 ]
+  ! grep -q "0.0.1" "$CALL_LOG"
+  grep -q "vocalis-0.1.0" "$CALL_LOG"
+}

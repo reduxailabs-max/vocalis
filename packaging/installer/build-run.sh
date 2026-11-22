@@ -35,6 +35,8 @@ main() {
 
   local wheel_dist_dir="${script_dir}/dist"
   mkdir -p "$wheel_dist_dir"
+  # Drop wheels from earlier versions so only the freshly built one is bundled.
+  rm -f "$wheel_dist_dir"/vocalis-*.whl "${repo_root}"/dist/vocalis-*.whl
   pyenv_run_uv_build "$repo_root"
   cp "${repo_root}"/dist/vocalis-*.whl "$wheel_dist_dir/"
 
